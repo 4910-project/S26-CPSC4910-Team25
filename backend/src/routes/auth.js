@@ -53,4 +53,54 @@ router.post("/login", async (req, res) => {
   }
 });
 
+// FORGOT USERNAME
+router.post("/forgot-username", async (req, res) => {
+  try {
+    const { email } = req.body;
+    if (!email) return res.status(400).json({ error: "Invalid Email"});
+
+    const [rows] = await pool.querey(
+      "SELECT email FROM users WHERE email = ? LIMIT 1",
+      [email]
+    );
+
+    res.json({ message: "Your username has been sent to your email."});
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: "Server error"});
+  }
+});
+
+// CHANGE USERNAME
+router.patch("/users/:userID/username", async (req, res) => {
+  const newUsername = String(username).trim();
+  try {
+    const [result] = await pool.querey(
+      "UPDATE users SET username = WHERE id = ? LIMIT 1",
+      [newUsername, userID]
+    );
+
+    res.json({ message: "Username Updated"});
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: "Server error"});
+  }
+});
+
+// CHANGE EMAIL
+router.patch("/users/:userID/email", async (req, res) => {
+  const newEmail = String(email).trim().toLowerCase();
+  try {
+    const [result] = await pool.querey(
+      "UPDATE users SET email = WHERE id = ? LIMIT 1",
+      [newEmail, userID]
+    );
+
+    res.json({ message: "Email Updated"});
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: "Server error"});
+  }
+});
+
 module.exports = router;
