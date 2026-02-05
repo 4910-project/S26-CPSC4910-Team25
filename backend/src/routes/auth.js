@@ -79,8 +79,24 @@ router.patch("/users/:userID/username", async (req, res) => {
       "UPDATE users SET username = WHERE id = ? LIMIT 1",
       [newUsername, userID]
     );
-    
+
     res.json({ message: "Username Updated"});
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: "Server error"});
+  }
+});
+
+// CHANGE EMAIL
+router.patch("/users/:userID/email", async (req, res) => {
+  const newEmail = String(email).trim().toLowerCase();
+  try {
+    const [result] = await pool.querey(
+      "UPDATE users SET email = WHERE id = ? LIMIT 1",
+      [newEmail, userID]
+    );
+
+    res.json({ message: "Email Updated"});
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: "Server error"});
