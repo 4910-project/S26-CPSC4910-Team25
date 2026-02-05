@@ -71,4 +71,20 @@ router.post("/forgot-username", async (req, res) => {
   }
 });
 
+// CHANGE USERNAME
+router.patch("/users/:userID/username", async (req, res) => {
+  const newUsername = String(username).trim();
+  try {
+    const [result] = await pool.querey(
+      "UPDATE users SET username = WHERE id = ? LIMIT 1",
+      [newUsername, userID]
+    );
+    
+    res.json({ message: "Username Updated"});
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: "Server error"});
+  }
+});
+
 module.exports = router;
