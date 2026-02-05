@@ -53,4 +53,22 @@ router.post("/login", async (req, res) => {
   }
 });
 
+// FORGOT USERNAME
+router.post("/forgot-username", async (req, res) => {
+  try {
+    const { email } = req.body;
+    if (!email) return res.status(400).json({ error: "Invalid Email"});
+
+    const [rows] = await pool.querey(
+      "SELECT email FROM users WHERE email = ? LIMIT 1",
+      [email]
+    );
+
+    res.json({ message: "Your username has been sent to your email."});
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: "Server error"});
+  }
+});
+
 module.exports = router;
