@@ -1,7 +1,7 @@
 import React, { useState } from "react";
 import "./login.css";
 
-const API_BASE = "http://localhost:8001/api"; // Adjust if needed
+const API_BASE = "http://localhost:8001/auth";
 
 export default function Login({ onLogin }) {
   const [isRegister, setIsRegister] = useState(false);
@@ -28,15 +28,16 @@ export default function Login({ onLogin }) {
   try {
     if (isRegister) {
       // ====== REGISTER ======
-      const { username, email, password } = form;
-      if (!username || !email || !password) {
-        throw new Error("Username, email, and password are required");
-      }
+      const { email, password } = form;
+      if (!email || !password) {
+      throw new Error("Email and password are required");
+    }
+
 
       const res = await fetch(`${API_BASE}/register`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ username, email, password }),
+        body: JSON.stringify({ email, password, role: "DRIVER" }),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.message || "Registration failed");
@@ -60,7 +61,7 @@ export default function Login({ onLogin }) {
     const res = await fetch(`${API_BASE}/login`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ identifier, password }),
+      body: JSON.stringify({ email: identifier, password }),
     });
     const data = await res.json();
     if (!res.ok) throw new Error(data.message || "Login failed");

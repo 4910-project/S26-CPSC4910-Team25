@@ -1,3 +1,4 @@
+const jwt = require("jsonwebtoken");
 const express = require("express");
 const bcrypt = require("bcryptjs");
 const pool = require("../db");
@@ -43,10 +44,24 @@ router.post("/login", async (req, res) => {
     const ok = await bcrypt.compare(password, user.password_hash);
     if (!ok) return res.status(401).json({ error: "Invalid credentials" });
 
+    const jwt = require("jsonwebtoken"); // make sure this is at the top of the file
+
+    const token = jwt.sign(
+      { userId: user.id, role: user.role },
+      process.env.JWT_SECRET,
+      { expiresIn: "2h" }
+    );
+
     res.json({
       status: "ok",
-      user: { id: user.id, email: user.email, role: user.role },
+      token,
+      user: {
+        id: user.id,
+        email: user.email,
+        role: user.role,
+      },
     });
+
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: "Server error" });
