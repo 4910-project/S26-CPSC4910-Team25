@@ -5,6 +5,7 @@ const API_BASE = "http://localhost:8001/api"; // Adjust if needed
 
 export default function Login({ onLogin }) {
   const [isRegister, setIsRegister] = useState(false);
+  const [showPassword, setShowPassword] = useState(false);
   const [form, setForm] = useState({
     username: "",
     email: "",
@@ -75,7 +76,7 @@ export default function Login({ onLogin }) {
   return (
     <div className="login-container">
       <div className="login-card">
-        {/* 🔹 Heading visually shown, hidden from screen readers */}
+        {/* Heading visually shown, hidden from screen readers */}
         <h2 aria-hidden="true">
           {isRegister ? "Create Account" : "Log In"}
         </h2>
@@ -116,7 +117,7 @@ export default function Login({ onLogin }) {
             />
           )}
 
-          <input
+          {/*<input
             type="password"
             name="password"
             placeholder="Password"
@@ -125,6 +126,26 @@ export default function Login({ onLogin }) {
             required
             aria-label="Password"
           />
+          */}
+          <div className="password-field">
+            <input
+              type={showPassword ? "text" : "password"}
+              name="password"
+              placeholder="Password"
+              value={form.password}
+              onChange={handleChange}
+              required
+              aria-label="Password"
+            />
+            <button
+              type="button"
+              className="password-toggle"
+              onClick={() => setShowPassword((prev) => !prev)}
+              aria-label={showPassword ? "Hide password" : "Show password"}
+            >
+              {showPassword ? "Hide" : "Show"}
+            </button>
+          </div>
 
           {error && <p className="error">{error}</p>}
 
