@@ -1,10 +1,11 @@
 import React, { useState } from "react";
 import "./login.css";
-/*import { useNavigate } from 'react-router-dom';*/
+import { useNavigate } from 'react-router-dom';
 
 const API_BASE = "http://localhost:8001/auth";
 
 export default function Login({ onLogin, onForgotPassword }) {
+  const navigate = useNavigate();
   const [isRegister, setIsRegister] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
   const [form, setForm] = useState({
@@ -156,18 +157,27 @@ export default function Login({ onLogin, onForgotPassword }) {
           </button>
         </form>
 
-
-          {!isRegister && onForgotPassword && (
-          <div className="forgot-password">
+        {/* Forgot Password and Forgot Username*/}
+          {!isRegister && (
+            <div className="forgot-password">
             <button
               type="button"
-              onClick={onForgotPassword}
+              onClick={() => navigate("/forgot-username")}
               className="forgot-password-link"
+            >
+              Forgot Username?
+            </button>
+
+            <button
+              type="button"
+              onClick={() => navigate("/forgot-password")}
+              className="forgot-password-link"
+              style={{ marginLeft: 12 }}
             >
               Forgot Password?
             </button>
           </div>
-        )}
+          )}
 
         <p className="toggle-text">
           {isRegister ? "Already have an account?" : "Don't have an account?"}{" "}
