@@ -5,6 +5,9 @@ const mfaRoutes = require("./routes/mfa");
 const express = require("express");
 const pool = require("./db");
 
+const profileRoutes = require("./routes/profileRoutes");
+const passwordResetRoutes = require("./routes/passwordResetRoutes");
+
 const authRoutes = require("./routes/auth");
 const adminRoutes = require("./routes/admin");
 
@@ -47,6 +50,9 @@ app.get("/health", async (req, res) => {
 app.use("/auth", authRoutes);
 app.use("/admin", adminRoutes);
 app.use("/api", mfaRoutes);
+
+app.use("/api/profile", profileRoutes);
+app.use("/api/password-reset", passwordResetRoutes);
 
 const PORT = process.env.PORT || 3001;
 app.listen(PORT, () => {

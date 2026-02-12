@@ -1,9 +1,10 @@
 import React, { useState } from "react";
 import "./login.css";
+/*import { useNavigate } from 'react-router-dom';*/
 
 const API_BASE = "http://localhost:8001/auth";
 
-export default function Login({ onLogin }) {
+export default function Login({ onLogin, onForgotPassword }) {
   const [isRegister, setIsRegister] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
   const [form, setForm] = useState({
@@ -154,6 +155,19 @@ export default function Login({ onLogin }) {
             {loading ? "Loading…" : isRegister ? "Register" : "Log In"}
           </button>
         </form>
+
+
+          {!isRegister && onForgotPassword && (
+          <div className="forgot-password">
+            <button
+              type="button"
+              onClick={onForgotPassword}
+              className="forgot-password-link"
+            >
+              Forgot Password?
+            </button>
+          </div>
+        )}
 
         <p className="toggle-text">
           {isRegister ? "Already have an account?" : "Don't have an account?"}{" "}

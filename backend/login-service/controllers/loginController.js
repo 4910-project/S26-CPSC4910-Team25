@@ -26,7 +26,7 @@ const JWT_EXPIRES_IN = "30m"; // token expires in 30 minutes
  * @returns {JSON} JSON response with success message and new user info
  */
 const register = async (req, res) => {
-  const { username, email, password } = req.body;
+  const { username, email, password, role } = req.body;
 
   if (!username || !email || !password) {
     return res.status(400).json({ message: "Username, email, and password are required" });
@@ -42,6 +42,9 @@ const register = async (req, res) => {
 
     const hashedPassword = await hashPassword(password);
     const newUser = await userModel.createUser(username, email, hashedPassword);
+
+    const userRole = role || 'DRIVER';
+    await require("../models/profileModel").updateUserRole(newUser.id, userRole);
 
     res.status(201).json({
       message: "User registered successfully",
@@ -95,14 +98,16 @@ const login = async (req, res) => {
     const isMatch = await comparePassword(password, user.password);
     if (!isMatch) return res.status(401).json({ message: "Invalid credentials" });
 
+    const role = await require("../models/profileModel").getUserRole(user.id);
+
     // Include both email and username in JWT for flexibility
     const token = jwt.sign(
-      { id: user.id, username: user.username, email: user.email },
+      { id: user.id, username: user.username, email: user.email, role: role },
       JWT_SECRET,
       { expiresIn: JWT_EXPIRES_IN }
     );
 
-    res.json({ message: "Login successful", token });
+    res.json({ message: "Login successful", token, role });
   } catch (err) {
     console.error("Login error:", err);
     res.status(500).json({ message: "Internal server error" });
