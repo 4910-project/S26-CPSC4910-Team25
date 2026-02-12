@@ -3,7 +3,7 @@ import "./SponsorProfile.css";
 
 const API_BASE = "http://localhost:8001/api/profile";
 
-export default function SponsorProfile({ token, onLogout }) {
+export default function SponsorProfile({ token, onLogout, onChangeUsername }) {
   const [profile, setProfile] = useState({
     company_name: "",
     contact_name: "",
@@ -146,6 +146,16 @@ export default function SponsorProfile({ token, onLogout }) {
               Edit Profile
             </button>
           )}
+
+          {!isEditing && (
+            <button 
+              onClick={onChangeUsername} 
+              className="btn-edit"
+            >
+              Change Username
+            </button>
+          )}
+
           <button onClick={onLogout} className="btn-logout">
             Logout
           </button>

@@ -9,14 +9,15 @@ import PasswordReset from "./components/PasswordReset";
 import ChangePassword from "./components/ChangePassword";
 import ForgotPassword from "./components/ForgotPassword";
 import ForgotUsername from "./components/ForgotUsername";
+import ChangeUsername from "./components/ChangeUsername";
 
 function App() {
   const [token, setToken] = useState(null);
   const [userRole, setUserRole] = useState(null);
   const [screen, setScreen] = useState("login"); 
-  // Screens: "login", "mfa", "driver-profile", "sponsor-profile", "reset-password"
+  // Screens: "login", "mfa", "driver-profile", "sponsor-profile", "reset-password", "change username"
   const [showChangePassword, setShowChangePassword] = useState(false);
-
+  const [showChangeUsername, setShowChangeUsername] = useState(false);
   // Called after successful login
   const handleLogin = (t, role) => {
     console.log("Logged in token:", t, "Role:", role);
@@ -85,11 +86,19 @@ function App() {
           token={token}
           onLogout={handleLogout}
           onChangePassword={() => setShowChangePassword(true)}
+          onChangeUsername={() => setShowChangeUsername(true)}
         />
         {showChangePassword && (
           <ChangePassword
             token={token}
             onClose={() => setShowChangePassword(false)}
+          />
+        )}
+        
+        {showChangeUsername && (
+          <ChangeUsername
+            token={token}
+            onClose={() => setShowChangeUsername(false)}
           />
         )}
       </>
@@ -104,11 +113,19 @@ function App() {
           token={token}
           onLogout={handleLogout}
           onChangePassword={() => setShowChangePassword(true)}
+          onChangeUsername={() => setShowChangeUsername(true)}
         />
         {showChangePassword && (
           <ChangePassword
             token={token}
             onClose={() => setShowChangePassword(false)}
+          />
+        )}
+
+        {showChangeUsername && (
+          <ChangeUsername
+            token={token}
+            onClose={() => setShowChangeUsername(false)}
           />
         )}
       </>

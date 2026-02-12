@@ -3,7 +3,7 @@ import "./DriverProfile.css";
 
 const API_BASE = "http://localhost:8001/api/profile";
 
-export default function DriverProfile({ token, onLogout }) {
+export default function DriverProfile({ token, onLogout, onChangePassword, onChangeUsername }) {
   const [profile, setProfile] = useState({
     first_name: "",
     last_name: "",
@@ -137,6 +137,17 @@ export default function DriverProfile({ token, onLogout }) {
               Edit Profile
             </button>
           )}
+          
+          {!isEditing && (
+            <button 
+              onClick={onChangeUsername} 
+              className="btn-edit"
+            >
+              Change Username
+            </button>
+          )}
+          
+
           <button onClick={onLogout} className="btn-logout">
             Logout
           </button>
