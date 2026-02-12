@@ -4,7 +4,7 @@ import { useNavigate } from 'react-router-dom';
 
 const API_BASE = "http://localhost:8001/auth";
 
-export default function Login({ onLogin, onForgotPassword }) {
+export default function Login({ onLogin }) {
   const navigate = useNavigate();
   const [isRegister, setIsRegister] = useState(false);
   const [showPassword, setShowPassword] = useState(false);

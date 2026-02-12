@@ -1,11 +1,14 @@
 import "./App.css";
 import React, { useState } from "react";
+import { Routes, Route, Navigate } from "react-router-dom";
 import Login from "./login.js";
 import MFASettings from "./MFASettings";
 import DriverProfile from "./components/DriverProfile";
 import SponsorProfile from "./components/SponsorProfile";
 import PasswordReset from "./components/PasswordReset";
 import ChangePassword from "./components/ChangePassword";
+import ForgotPassword from "./components/ForgotPassword";
+import ForgotUsername from "./components/ForgotUsername";
 
 function App() {
   const [token, setToken] = useState(null);
@@ -49,10 +52,16 @@ function App() {
   // Not logged in → show Login
   if (!token) {
     return (
-      <Login
-        onLogin={handleLogin}
-        onForgotPassword={() => setScreen("reset-password")}
-      />
+      //<Login
+        //onLogin={handleLogin}
+        //onForgotPassword={() => setScreen("reset-password")}
+      ///>
+      <Routes>
+        <Route path="/login" element={<Login onLogin={handleLogin} />} />
+        <Route path="/forgot-password" element={<ForgotPassword />} />
+        <Route path="/forgot-username" element={<ForgotUsername />} />
+        <Route path="*" element={<Navigate to="/login" replace />} />
+      </Routes>
     );
   }
 
