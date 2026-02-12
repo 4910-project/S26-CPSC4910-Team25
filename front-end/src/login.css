@@ -1,4 +1,3 @@
-/* src/components/login/login.css */
 .login-container {
   min-height: 100vh;
   display: flex;
@@ -136,4 +135,46 @@
 
 .forgot-password-link:hover {
   text-decoration: underline;
+}
+
+/* Role Selection Styles */
+.role-selection {
+  width: 100%;
+  margin-bottom: 1rem;
+  text-align: left;
+}
+
+.role-label {
+  display: block;
+  margin-bottom: 0.5rem;
+  font-size: 0.9rem;
+  font-weight: 600;
+  color: #333;
+  padding-left: 0.25rem;
+}
+
+.role-select {
+  width: 100%;
+  padding: 0.85rem 1rem;
+  border: 1px solid #ddd;
+  border-radius: 8px;
+  font-size: 1rem;
+  background-color: #fff;
+  cursor: pointer;
+  transition: border 0.2s;
+  appearance: none;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath fill='%23333' d='M6 9L1 4h10z'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 1rem center;
+  padding-right: 2.5rem;
+}
+
+.role-select:focus {
+  outline: none;
+  border-color: #667eea;
+  box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.15);
+}
+
+.role-select:hover {
+  border-color: #667eea;
 }

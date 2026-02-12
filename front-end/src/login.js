@@ -13,6 +13,7 @@ export default function Login({ onLogin }) {
     email: "",
     password: "",
     identifier: "",
+    role: "DRIVER", // Default role
   });
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
@@ -23,58 +24,57 @@ export default function Login({ onLogin }) {
   };
 
   const handleSubmit = async (e) => {
-  e.preventDefault();
-  setError("");
-  setLoading(true);
+    e.preventDefault();
+    setError("");
+    setLoading(true);
 
-  try {
-    if (isRegister) {
-      // ====== REGISTER ======
-      const { email, password } = form;
-      if (!email || !password) {
-      throw new Error("Email and password are required");
-    }
+    try {
+      if (isRegister) {
+        // ====== REGISTER ======
+        const { username, email, password, role } = form;
+        if (!username || !email || !password) {
+          throw new Error("Username, email and password are required");
+        }
 
+        const res = await fetch(`${API_BASE}/register`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ username, email, password, role }),
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.message || "Registration failed");
 
-      const res = await fetch(`${API_BASE}/register`, {
+        // SUCCESS: Show alert, switch to login, reset form
+        alert("Account created! Please log in.");
+        setIsRegister(false);
+        setForm({ username: "", email: "", password: "", identifier: "", role: "DRIVER" });
+
+        // CRITICAL: Stop here — do NOT proceed to login logic
+        setLoading(false);
+        return; // ← PREVENTS FALL-THROUGH TO LOGIN
+      }
+
+      // ====== LOGIN (only runs if not registering) ======
+      const { identifier, password } = form;
+      if (!identifier || !password) {
+        throw new Error("Email/username and password required");
+      }
+
+      const res = await fetch(`${API_BASE}/login`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ email, password, role: "DRIVER" }),
+        body: JSON.stringify({ identifier, password }),
       });
       const data = await res.json();
-      if (!res.ok) throw new Error(data.message || "Registration failed");
+      if (!res.ok) throw new Error(data.message || "Login failed");
 
-      // SUCCESS: Show alert, switch to login, reset form
-      alert("Account created! Please log in.");
-      setIsRegister(false);
-      setForm({ username: "", email: "", password: "", identifier: "" });
-
-      // CRITICAL: Stop here — do NOT proceed to login logic
+      onLogin(data.token);
+    } catch (err) {
+      setError(err.message);
+    } finally {
       setLoading(false);
-      return; // ← PREVENTS FALL-THROUGH TO LOGIN
     }
-
-    // ====== LOGIN (only runs if not registering) ======
-    const { identifier, password } = form;
-    if (!identifier || !password) {
-      throw new Error("Email/username and password required");
-    }
-
-    const res = await fetch(`${API_BASE}/login`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ email: identifier, password }),
-    });
-    const data = await res.json();
-    if (!res.ok) throw new Error(data.message || "Login failed");
-
-    onLogin(data.token);
-  } catch (err) {
-    setError(err.message);
-  } finally {
-    setLoading(false);
-  }
-};
+  };
 
   return (
     <div className="login-container">
@@ -105,6 +105,25 @@ export default function Login({ onLogin }) {
                 required
                 aria-label="Email"
               />
+              
+              {/* Role Selection */}
+              <div className="role-selection">
+                <label htmlFor="role" className="role-label">
+                  Account Type
+                </label>
+                <select
+                  id="role"
+                  name="role"
+                  value={form.role}
+                  onChange={handleChange}
+                  className="role-select"
+                  aria-label="Account Type"
+                >
+                  <option value="DRIVER">Driver</option>
+                  <option value="SPONSOR">Sponsor</option>
+                  <option value="ADMIN">Admin</option>
+                </select>
+              </div>
             </>
           )}
 
@@ -120,16 +139,6 @@ export default function Login({ onLogin }) {
             />
           )}
 
-          {/*<input
-            type="password"
-            name="password"
-            placeholder="Password"
-            value={form.password}
-            onChange={handleChange}
-            required
-            aria-label="Password"
-          />
-          */}
           <div className="password-field">
             <input
               type={showPassword ? "text" : "password"}
@@ -158,8 +167,8 @@ export default function Login({ onLogin }) {
         </form>
 
         {/* Forgot Password and Forgot Username*/}
-          {!isRegister && (
-            <div className="forgot-password">
+        {!isRegister && (
+          <div className="forgot-password">
             <button
               type="button"
               onClick={() => navigate("/forgot-username")}
@@ -177,7 +186,7 @@ export default function Login({ onLogin }) {
               Forgot Password?
             </button>
           </div>
-          )}
+        )}
 
         <p className="toggle-text">
           {isRegister ? "Already have an account?" : "Don't have an account?"}{" "}
@@ -192,6 +201,7 @@ export default function Login({ onLogin }) {
                 email: "",
                 password: "",
                 identifier: "",
+                role: "DRIVER",
               });
             }}
           >
@@ -202,3 +212,4 @@ export default function Login({ onLogin }) {
     </div>
   );
 }
+

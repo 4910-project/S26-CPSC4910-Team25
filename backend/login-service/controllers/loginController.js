@@ -32,6 +32,10 @@ const register = async (req, res) => {
     return res.status(400).json({ message: "Username, email, and password are required" });
   }
 
+  // Validate role
+  const validRoles = ['DRIVER', 'SPONSOR', 'ADMIN'];
+  const userRole = role && validRoles.includes(role) ? role : 'DRIVER';
+
   try {
     const existingUser = await userModel.findUserByEmail(email);
     const existingUsername = await userModel.findUserByUsername(username);
@@ -43,18 +47,15 @@ const register = async (req, res) => {
     const hashedPassword = await hashPassword(password);
     const newUser = await userModel.createUser(username, email, hashedPassword);
 
-    const userRole = role || 'DRIVER';
     await require("../models/profileModel").updateUserRole(newUser.id, userRole);
 
     res.status(201).json({
       message: "User registered successfully",
-      user: { id: newUser.id, username: newUser.username, email: newUser.email },
+      user: { id: newUser.id, username: newUser.username, email: newUser.email, role: userRole },
     });
   } catch (err) {
     console.error("Register error:", err);
     
-    // CRITICAL FIX: Handle race condition where duplicate insert happens
-    // between our check and insert (concurrent requests)
     if (err.code === 'SQLITE_CONSTRAINT' || err.errno === 19) {
       return res.status(409).json({ message: "Username or email already exists" });
     }

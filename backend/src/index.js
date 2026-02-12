@@ -10,6 +10,7 @@ const passwordResetRoutes = require("./routes/passwordResetRoutes");
 
 const authRoutes = require("./routes/auth");
 const adminRoutes = require("./routes/admin");
+const accountRoutes = require("./routes/accountRoutes");
 
 const app = express();
 const cors = require("cors");
@@ -53,6 +54,7 @@ app.use("/api", mfaRoutes);
 
 app.use("/api/profile", profileRoutes);
 app.use("/api/password-reset", passwordResetRoutes);
+app.use("/api/account", accountRoutes);
 
 const PORT = process.env.PORT || 3001;
 app.listen(PORT, () => {
