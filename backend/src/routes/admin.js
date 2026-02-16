@@ -2,7 +2,11 @@ const express = require("express");
 const bcrypt = require("bcryptjs");
 const pool = require("../db");
 
+const requireActiveSession = require("../middleware/requireActiveSession");
+
+
 const router = express.Router();
+router.use(requireActiveSession);
 
 /**
  * If your DB uses different enum strings, change these constants ONLY.

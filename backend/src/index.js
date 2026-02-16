@@ -1,19 +1,28 @@
-require("dotenv").config();
+require("dotenv").config({ path: require("path").join(__dirname, "..", ".env") });
 
-const mfaRoutes = require("./routes/mfa");
+if (!process.env.JWT_SECRET) {
+  console.error("FATAL: JWT_SECRET is missing. Check backend/.env");
+  process.exit(1);
+}
 
 const express = require("express");
+const cors = require("cors");
 const pool = require("./db");
 
-const profileRoutes = require("./routes/profileRoutes");
-const passwordResetRoutes = require("./routes/passwordResetRoutes");
+// 🔹 NEW: Sponsor archive job
+const { runArchiveSponsorsJob } = require("./jobs/archiveSponsorsJob");
 
 const authRoutes = require("./routes/auth");
 const adminRoutes = require("./routes/admin");
-const accountRoutes = require("./routes/accountRoutes");
+const mfaRoutes = require("./routes/mfa");
+
+// These route files are NOT present in src/routes right now.
+// Leaving them commented prevents the server from crashing.
+// const profileRoutes = require("./routes/profileRoutes");
+// const passwordResetRoutes = require("./routes/passwordResetRoutes");
+// const accountRoutes = require("./routes/accountRoutes");
 
 const app = express();
-const cors = require("cors");
 
 app.use(
   cors({
@@ -24,7 +33,6 @@ app.use(
 );
 
 app.use(express.json());
-
 
 // Verify DB connection once at startup
 (async () => {
@@ -52,15 +60,15 @@ app.use("/auth", authRoutes);
 app.use("/admin", adminRoutes);
 app.use("/api", mfaRoutes);
 
-app.use("/api/profile", profileRoutes);
-app.use("/api/password-reset", passwordResetRoutes);
-app.use("/api/account", accountRoutes);
+// 🔹 NEW: Start sponsor archive background job
+const minutes = Number(process.env.SPONSOR_ARCHIVE_JOB_MINUTES || 10);
+setInterval(runArchiveSponsorsJob, minutes * 60 * 1000);
+
+// Optional: run once immediately at startup
+runArchiveSponsorsJob();
 
 const PORT = process.env.PORT || 3001;
 app.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`);
   console.log("src/index.js is running");
 });
-
-
-
