@@ -1,5 +1,5 @@
 
-
+/*
 .App {
   text-align: center;
 }
@@ -38,3 +38,27 @@
     transform: rotate(360deg);
   }
 }
+*/
+:root {
+  --bg: #ffffff;
+  --card: #ffffff;
+  --text: #111827;
+  --muted: #6b7280;
+  --border: #e5e7eb;
+  --primary: #4f46e5;
+}
+
+body.dark {
+  --bg: #0b1220;
+  --card: #111827;
+  --text: #f9fafb;
+  --muted: #9ca3af;
+  --border: #1f2937;
+  --primary: #8b5cf6;
+}
+
+body {
+  background: var(--bg);
+  color: var(--text);
+}
+

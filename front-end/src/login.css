@@ -1,50 +1,63 @@
+/* layout
+*/
 .login-container {
   min-height: 100vh;
   display: flex;
   align-items: center;
   justify-content: center;
-  background: linear-gradient(135deg, #6550f0 0%, #101114 100%);
+  background: var(--bg);
   padding: 1rem;
   font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  transition: background 0.3s ease;
 }
 
 .login-card {
-  background: #fff;
+  background: var(--card);
   padding: 2.5rem 2rem;
   border-radius: 12px;
+  border: 1px solid var(--border);
   box-shadow: 0 12px 30px rgba(0, 0, 0, 0.15);
   width: 100%;
   max-width: 380px;
   text-align: center;
+  transition: background 0.3s ease, color 0.3s ease;
 }
 
 .login-card h2 {
   margin: 0 0 1.5rem;
   font-size: 1.75rem;
-  color: #333;
+  color: var(--text);
 }
+
+/* inputs
+*/
 
 .login-form input {
   width: 90%;
   padding: 0.85rem 1rem;
   margin-bottom: 1rem;
-  border: 1px solid #ddd;
+  border: 1px solid var(--border);
   border-radius: 8px;
   font-size: 1rem;
-  transition: border 0.2s;
+  background: var(--bg);
+  color: var(--text);
+  transition: border 0.2s, background 0.3s, color 0.3s;
 }
 
 .login-form input:focus {
   outline: none;
-  border-color: #667eea;
+  border-color: var(--primary);
   box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.15);
 }
+
+/* buttons
+*/
 
 .submit-btn {
   width: 100%;
   padding: 0.9rem;
-  background: #667eea;
-  color: #fff;
+  background: var(--primary);
+  color: white;
   font-weight: 600;
   border: none;
   border-radius: 8px;
@@ -54,13 +67,16 @@
 }
 
 .submit-btn:hover:not(:disabled) {
-  background: #5a6fd8;
+  opacity: 0.9;
 }
 
 .submit-btn:disabled {
   background: #a0aec0;
   cursor: not-allowed;
 }
+
+/* error and toggle
+*/
 
 .error {
   color: #e53e3e;
@@ -71,27 +87,24 @@
 .toggle-text {
   margin-top: 1.5rem;
   font-size: 0.95rem;
-  color: #555;
+  color: var(--muted);
 }
 
 .toggle-link {
   background: none;
   border: none;
-  color: #667eea;
+  color: var(--primary);
   font-weight: 600;
   cursor: pointer;
   text-decoration: underline;
 }
 
 .toggle-link:hover {
-  color: #3634ad60;
+  opacity: 0.8;
 }
 
-@media (max-width: 480px) {
-  .login-card {
-    padding: 2rem 1.5rem;
-  }
-}
+/* password field
+*/
 
 .password-field {
   position: relative;
@@ -102,7 +115,7 @@
 
 .password-field input {
   width: 100%;
-  padding-right: 60px; 
+  padding-right: 60px;
 }
 
 .password-toggle {
@@ -112,9 +125,12 @@
   border: none;
   cursor: pointer;
   font-size: 0.9rem;
-  color: #4f46e5;
+  color: var(--primary);
   padding: 0;
 }
+
+/* forgot links
+*/
 
 .forgot-password {
   text-align: center;
@@ -125,7 +141,7 @@
 .forgot-password-link {
   background: none;
   border: none;
-  color: #667eea;
+  color: var(--primary);
   font-size: 14px;
   font-weight: 600;
   cursor: pointer;
@@ -137,7 +153,9 @@
   text-decoration: underline;
 }
 
-/* Role Selection Styles */
+/* role selection
+*/
+
 .role-selection {
   width: 100%;
   margin-bottom: 1rem;
@@ -149,21 +167,23 @@
   margin-bottom: 0.5rem;
   font-size: 0.9rem;
   font-weight: 600;
-  color: #333;
+  color: var(--text);
   padding-left: 0.25rem;
 }
 
 .role-select {
   width: 100%;
   padding: 0.85rem 1rem;
-  border: 1px solid #ddd;
+  border: 1px solid var(--border);
   border-radius: 8px;
   font-size: 1rem;
-  background-color: #fff;
+  background-color: var(--bg);
+  color: var(--text);
   cursor: pointer;
-  transition: border 0.2s;
+  transition: border 0.2s, background 0.3s, color 0.3s;
   appearance: none;
-  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath fill='%23333' d='M6 9L1 4h10z'/%3E%3C/svg%3E");
+
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath fill='%23f9fafb' d='M6 9L1 4h10z'/%3E%3C/svg%3E");
   background-repeat: no-repeat;
   background-position: right 1rem center;
   padding-right: 2.5rem;
@@ -171,10 +191,20 @@
 
 .role-select:focus {
   outline: none;
-  border-color: #667eea;
+  border-color: var(--primary);
   box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.15);
 }
 
 .role-select:hover {
-  border-color: #667eea;
+  border-color: var(--primary);
 }
+
+/* mobile
+*/
+
+@media (max-width: 480px) {
+  .login-card {
+    padding: 2rem 1.5rem;
+  }
+}
+

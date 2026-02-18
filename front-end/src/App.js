@@ -1,8 +1,10 @@
 import "./App.css";
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import { Routes, Route, Navigate } from "react-router-dom";
+
 import Login from "./login.js";
 import MFASettings from "./MFASettings";
+
 import DriverProfile from "./components/DriverProfile";
 import SponsorProfile from "./components/SponsorProfile";
 import PasswordReset from "./components/PasswordReset";
@@ -14,10 +16,47 @@ import ChangeUsername from "./components/ChangeUsername";
 function App() {
   const [token, setToken] = useState(null);
   const [userRole, setUserRole] = useState(null);
-  const [screen, setScreen] = useState("login"); 
-  // Screens: "login", "mfa", "driver-profile", "sponsor-profile", "reset-password", "change username"
+  const [screen, setScreen] = useState("login"); // "login" | "mfa" | "driver-profile" | "sponsor-profile" | "reset-password"
   const [showChangePassword, setShowChangePassword] = useState(false);
   const [showChangeUsername, setShowChangeUsername] = useState(false);
+
+  // ----- Dark Mode -----
+  const [dark, setDark] = useState(false);
+
+  useEffect(() => {
+    const saved = localStorage.getItem("theme");
+    if (saved === "dark") setDark(true);
+    else if (saved === "light") setDark(false);
+    else {
+      const prefersDark = window.matchMedia?.("(prefers-color-scheme: dark)")?.matches;
+      setDark(!!prefersDark);
+    }
+  }, []);
+
+  useEffect(() => {
+    document.body.classList.toggle("dark", dark);
+    localStorage.setItem("theme", dark ? "dark" : "light");
+  }, [dark]);
+
+  const DarkToggle = () => (
+    <div style={{ display: "flex", justifyContent: "flex-end", padding: 12 }}>
+      <button
+        type="button"
+        onClick={() => setDark((d) => !d)}
+        style={{
+          border: "1px solid var(--border)",
+          background: "var(--card)",
+          color: "var(--text)",
+          borderRadius: 10,
+          padding: "8px 12px",
+          cursor: "pointer",
+        }}
+      >
+        {dark ? "☀️ Light" : "🌙 Dark"}
+      </button>
+    </div>
+  );
+
   // Called after successful login
   const handleLogin = (t, role) => {
     console.log("Logged in token:", t, "Role:", role);
@@ -31,50 +70,52 @@ function App() {
     setUserRole(null);
     setScreen("login");
     setShowChangePassword(false);
+    setShowChangeUsername(false);
   };
 
   const handleMFAComplete = () => {
-    if (userRole === "DRIVER") {
-      setScreen("driver-profile");
-    } else if (userRole === "SPONSOR") {
-      setScreen("sponsor-profile");
-    } else {
-      setScreen("driver-profile"); // fallback
-    }
+    if (userRole === "DRIVER") setScreen("driver-profile");
+    else if (userRole === "SPONSOR") setScreen("sponsor-profile");
+    else setScreen("driver-profile");
   };
-
-  /* -------------------- SCREEN FLOW -------------------- */
 
   // Password Reset (not logged in)
   if (screen === "reset-password") {
-    return <PasswordReset onBack={() => setScreen("login")} />;
+    return (
+      <>
+        <DarkToggle />
+        <PasswordReset onBack={() => setScreen("login")} />
+      </>
+    );
   }
 
-  // Not logged in → show Login
+  // Not logged in → show auth routes
   if (!token) {
     return (
-      //<Login
-        //onLogin={handleLogin}
-        //onForgotPassword={() => setScreen("reset-password")}
-      ///>
-      <Routes>
-        <Route path="/login" element={<Login onLogin={handleLogin} />} />
-        <Route path="/forgot-password" element={<ForgotPassword />} />
-        <Route path="/forgot-username" element={<ForgotUsername />} />
-        <Route path="*" element={<Navigate to="/login" replace />} />
-      </Routes>
+      <>
+        <DarkToggle />
+        <Routes>
+          <Route path="/login" element={<Login onLogin={handleLogin} />} />
+          <Route path="/forgot-password" element={<ForgotPassword />} />
+          <Route path="/forgot-username" element={<ForgotUsername />} />
+          <Route path="*" element={<Navigate to="/login" replace />} />
+        </Routes>
+      </>
     );
   }
 
   // MFA Screen (logged in, before profile)
   if (screen === "mfa") {
     return (
-      <MFASettings
-        token={token}
-        onBack={() => setScreen("login")}
-        onLogout={handleLogout}
-        onContinue={handleMFAComplete} 
-      />
+      <>
+        <DarkToggle />
+        <MFASettings
+          token={token}
+          onBack={() => setScreen("login")}
+          onLogout={handleLogout}
+          onContinue={handleMFAComplete}
+        />
+      </>
     );
   }
 
@@ -82,24 +123,20 @@ function App() {
   if (screen === "driver-profile" && userRole === "DRIVER") {
     return (
       <>
+        <DarkToggle />
         <DriverProfile
           token={token}
           onLogout={handleLogout}
           onChangePassword={() => setShowChangePassword(true)}
           onChangeUsername={() => setShowChangeUsername(true)}
         />
+
         {showChangePassword && (
-          <ChangePassword
-            token={token}
-            onClose={() => setShowChangePassword(false)}
-          />
+          <ChangePassword token={token} onClose={() => setShowChangePassword(false)} />
         )}
-        
+
         {showChangeUsername && (
-          <ChangeUsername
-            token={token}
-            onClose={() => setShowChangeUsername(false)}
-          />
+          <ChangeUsername token={token} onClose={() => setShowChangeUsername(false)} />
         )}
       </>
     );
@@ -109,76 +146,32 @@ function App() {
   if (screen === "sponsor-profile" && userRole === "SPONSOR") {
     return (
       <>
+        <DarkToggle />
         <SponsorProfile
           token={token}
           onLogout={handleLogout}
           onChangePassword={() => setShowChangePassword(true)}
           onChangeUsername={() => setShowChangeUsername(true)}
         />
+
         {showChangePassword && (
-          <ChangePassword
-            token={token}
-            onClose={() => setShowChangePassword(false)}
-          />
+          <ChangePassword token={token} onClose={() => setShowChangePassword(false)} />
         )}
 
         {showChangeUsername && (
-          <ChangeUsername
-            token={token}
-            onClose={() => setShowChangeUsername(false)}
-          />
+          <ChangeUsername token={token} onClose={() => setShowChangeUsername(false)} />
         )}
       </>
     );
   }
 
-  // Fallback (shouldn't happen)
-  return <Login onLogin={handleLogin} />;
+  // Fallback
+  return (
+    <>
+      <DarkToggle />
+      <Login onLogin={handleLogin} />
+    </>
+  );
 }
 
 export default App;
-
-
-/*
-import "./App.css";
-import React, { useState } from "react";
-import Login from "./login.js";
-import MFASettings from "./MFASettings";
-
-function App() {
-  const [token, setToken] = useState(null);
-  const [userRole, setUserRole] = useState(null);
-  const [screen, setScreen] = useState("login"); 
-  
-
-
-  const handleLogin = (t) => {
-    console.log("Logged in token:", t);
-    setToken(t);
-    setScreen("mfa"); 
-  };
-
-  const handleLogout = () => {
-    setToken(null);
-    setScreen("login");
-  };
-
-  if (!token) {
-    return <Login onLogin={handleLogin} />;
-  }
-
-  if (screen === "mfa") {
-    return (
-      <MFASettings
-        token={token}
-        onBack={() => setScreen("login")}
-        onLogout={handleLogout}
-      />
-    );
-  }
-
-  return <Login onLogin={handleLogin} />;
-}
-
-export default App;
-*/
