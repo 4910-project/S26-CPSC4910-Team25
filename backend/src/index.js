@@ -1,3 +1,7 @@
+async function notifyAdmin(info){
+  console.log("ADMIN NOTIFICATION:", info);
+}
+
 require("dotenv").config({ path: require("path").join(__dirname, "..", ".env") });
 
 if (!process.env.JWT_SECRET) {
@@ -33,6 +37,28 @@ app.use(
 );
 
 app.use(express.json());
+
+// Notify Admin of API GET Error
+app.use((req, res, next) => {
+  res.on("finish", () => {
+    if (req.method === "GET" && res.statusCode >= 400) {
+      console.error(
+        "ADMIN ALERT:",
+        req.method,
+        req.originalUrl,
+        res.statusCode
+      );
+
+      notifyAdmin({
+        method: req.method,
+        url: req.originalUrl,
+        status: res.statusCode,
+        time: new Date().toISOString(),
+      });
+    }
+  });
+  next();
+});
 
 // Verify DB connection once at startup
 (async () => {
