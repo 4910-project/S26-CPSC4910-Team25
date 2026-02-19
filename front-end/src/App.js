@@ -5,6 +5,7 @@ import { Routes, Route, Navigate } from "react-router-dom";
 import Login from "./login.js";
 import MFASettings from "./MFASettings";
 
+import About from "./components/About";
 import DriverProfile from "./components/DriverProfile";
 import SponsorProfile from "./components/SponsorProfile";
 import PasswordReset from "./components/PasswordReset";
@@ -98,6 +99,7 @@ function App() {
           <Route path="/login" element={<Login onLogin={handleLogin} />} />
           <Route path="/forgot-password" element={<ForgotPassword />} />
           <Route path="/forgot-username" element={<ForgotUsername />} />
+          <Route path="/about" element={<About />} />
           <Route path="*" element={<Navigate to="/login" replace />} />
         </Routes>
       </>

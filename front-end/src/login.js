@@ -208,8 +208,19 @@ export default function Login({ onLogin }) {
             {isRegister ? "Log In" : "Register"}
           </button>
         </p>
+
+        {/* About Page Link */}
+        <div style={{ textAlign: "center", marginTop: 12 }}>
+          <button
+            type="button"
+            className="forgot-password-link"
+            onClick={() => navigate("/about")}
+          >
+            ℹ About this App
+          </button>
+        </div>
+
       </div>
     </div>
   );
 }
-

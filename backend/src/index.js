@@ -16,6 +16,7 @@ const pool = require("./db");
 // 🔹 NEW: Sponsor archive job
 const { runArchiveSponsorsJob } = require("./jobs/archiveSponsorsJob");
 
+const aboutRoutes = require("./routes/about");
 const authRoutes = require("./routes/auth");
 const adminRoutes = require("./routes/admin");
 const mfaRoutes = require("./routes/mfa");
@@ -59,6 +60,8 @@ app.use((req, res, next) => {
   });
   next();
 });
+
+app.use("/api/about", aboutRoutes);
 
 // Verify DB connection once at startup
 (async () => {
