@@ -9,12 +9,15 @@ const router = express.Router();
 const { authenticateToken } = require("../controllers/loginController");
 const {
   deleteAccount,
-  adminDeleteAccount
+  adminDeleteAccount,
+  adminRestoreAccount,      
+  adminListDeletedAccounts, 
 } = require("../controllers/accountController");
 
 
-router.delete("/", authenticateToken, deleteAccount);
+router.get("/admin/deleted", authenticateToken, adminListDeletedAccounts);
 
 router.delete("/admin/:userId", authenticateToken, adminDeleteAccount);
+router.post("/admin/:userId/restore", authenticateToken, adminRestoreAccount);
 
 module.exports = router;

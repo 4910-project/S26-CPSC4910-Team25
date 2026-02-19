@@ -59,7 +59,7 @@ const createUser = (username, email, hashedPassword) =>
  */
 const findUserByEmail = (email) => {
   return new Promise((resolve, reject) => {
-    const query = `SELECT * FROM users WHERE email = ?`;
+    const query = `SELECT * FROM users WHERE email = ? AND (is_deleted = 0 OR is_deleted IS NULL)`;
     db.get(query, [email], (err, row) => {
       if (err) reject(err);
       else resolve(row || null); // Return null if not found
@@ -74,11 +74,73 @@ const findUserByEmail = (email) => {
  */
 const findUserByUsername = (username) => {
   return new Promise((resolve, reject) => {
-    const query = `SELECT * FROM users WHERE username = ?`;
+    const query = `SELECT * FROM users WHERE username = ? AND (is_deleted = 0 OR is_deleted IS NULL)`;
     db.get(query, [username], (err, row) => {
       if (err) reject(err);
       else resolve(row || null); // Return null if not found
     });
+  });
+};
+
+const findUserByIdIncludeDeleted = (userId) => 
+{
+  return new Promise((resolve, reject) => 
+    {
+    db.get(`SELECT * FROM users WHERE id = ?`, [userId], (err, row) => 
+    {
+      if (err) reject(err);
+      else resolve(row || null);
+    });
+  });
+};
+
+const hideDeletedUser = (userId, deletedBy = null) => 
+{
+  return new Promise((resolve, reject) => 
+  {
+    db.run(
+      `UPDATE users SET is_deleted = 1, deleted_at = CURRENT_TIMESTAMP, deleted_by = ? WHERE id = ?`,
+      [deletedBy, userId],
+      function(err) 
+      {
+        if (err) reject(err);
+        else if (this.changes === 0) reject(new Error("User not found"));
+        else resolve();
+      }
+    );
+  });
+};
+
+const restoreUser = (userId) => 
+{
+  return new Promise((resolve, reject) => 
+  {
+    db.run(
+      `UPDATE users SET is_deleted = 0, deleted_at = NULL, deleted_by = NULL WHERE id = ?`,
+      [userId],
+      function(err) 
+      {
+        if (err) reject(err);
+        else if (this.changes === 0) reject(new Error("User not found"));
+        else resolve();
+      }
+    );
+  });
+};
+
+const listDeletedUsers = () => 
+{
+  return new Promise((resolve, reject) => 
+  {
+    db.all(
+      `SELECT id, username, email, role, deleted_at, deleted_by FROM users WHERE is_deleted = 1 ORDER BY deleted_at DESC`,
+      [],
+      (err, rows) => 
+      {
+        if (err) reject(err);
+        else resolve(rows || []);
+      }
+    );
   });
 };
 
@@ -87,5 +149,9 @@ module.exports = {
   createUser,
   findUserByEmail,
   findUserByUsername,
+  findUserByIdIncludeDeleted,
+  hideDeletedUser,  
+  restoreUser,  
+  listDeletedUsers,    
   db
 };

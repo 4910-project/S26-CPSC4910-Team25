@@ -23,6 +23,11 @@ const cors = require("cors");
 const loginRoutes = require("./routes/loginRoute");
 const registerRoutes = require("./routes/registerRoute");
 
+const sqlite3 = require("sqlite3").verbose();
+const accountRoutes = require("./routes/accountRoute");
+const profileRoutes = require("./routes/profileRoutes");
+const passwordResetRoutes = require("./routes/passwordResetRouts");
+
 // REMOVED: Duplicate database connection
 // loginModel.js already creates the DB connection
 // No need to create another one here
@@ -34,8 +39,40 @@ app.use(express.json());
 // REMOVED: app.set("db", db);
 // Use the db from loginModel instead
 
+const db = new sqlite3.Database(dbPath, (err) => 
+{
+  if (err) 
+  {
+    console.error("DB connection error:", err.message);
+  } 
+  else 
+  {
+    db.serialize(() => 
+    {
+      db.run(`ALTER TABLE users ADD COLUMN is_deleted INTEGER DEFAULT 0`, (err) => 
+      {
+        if (err && !err.message.includes("duplicate column")) console.error("Migration error:", err.message);
+        else console.log("is deleted ready");
+      });
+      db.run(`ALTER TABLE users ADD COLUMN deleted_at TIMESTAMP DEFAULT NULL`, (err) => 
+      {
+        if (err && !err.message.includes("duplicate column")) console.error("Migration error:", err.message);
+        else console.log(" deleted at ready");
+      });
+      db.run(`ALTER TABLE users ADD COLUMN deleted_by INTEGER DEFAULT NULL`, (err) => 
+      {
+        if (err && !err.message.includes("duplicate column")) console.error("Migration error:", err.message);
+        else console.log("deleted by ready");
+      });
+    });
+  }
+});
+
 app.use("/api/register", registerRoutes);
 app.use("/api/login", loginRoutes);
+app.use("/api/account", accountRoutes);
+app.use("/api/profile", profileRoutes);
+app.use("/api/password-reset", passwordResetRoutes);
 
 app.get("/api/me", (req, res) => 
 {
