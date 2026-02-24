@@ -19,7 +19,9 @@ const { runArchiveSponsorsJob } = require("./jobs/archiveSponsorsJob");
 const aboutRoutes = require("./routes/about");
 const authRoutes = require("./routes/auth");
 const adminRoutes = require("./routes/admin");
+const driverRoutes = require("./routes/driver");
 const mfaRoutes = require("./routes/mfa");
+const sponsorRoutes = require("./routes/sponsor");
 
 // These route files are NOT present in src/routes right now.
 // Leaving them commented prevents the server from crashing.
@@ -87,7 +89,9 @@ app.get("/health", async (req, res) => {
 // Mount routes BEFORE listen
 app.use("/auth", authRoutes);
 app.use("/admin", adminRoutes);
+app.use("/driver", driverRoutes);
 app.use("/api", mfaRoutes);
+app.use("/sponsor", sponsorRoutes);
 
 // 🔹 NEW: Start sponsor archive background job
 const minutes = Number(process.env.SPONSOR_ARCHIVE_JOB_MINUTES || 10);
