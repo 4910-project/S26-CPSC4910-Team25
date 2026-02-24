@@ -7,14 +7,31 @@ const requireActiveSession = require("../middleware/requireActiveSession");
 
 const router = express.Router();
 router.use(requireActiveSession);
+router.use((req, res, next) => {
+  if (req.user?.role !== "ADMIN") {
+    return res.status(403).json({ ok: false, error: "admin only" });
+  }
+  return next();
+});
 
 /**
  * If your DB uses different enum strings, change these constants ONLY.
  * (These match what you previously used in your code.)
  */
-const SPONSOR_DISABLED_STATUS = "DISABLED";
+const SPONSOR_DISABLED_STATUS = "DEACTIVATED";
 const USER_DISABLED_STATUS = "DISABLED";
 const DRIVER_DROPPED_STATUS = "DROPPED";
+
+function parsePositiveInt(value) {
+  const n = Number.parseInt(String(value), 10);
+  return Number.isInteger(n) && n > 0 ? n : null;
+}
+
+function parseLimit(value, fallback, max = 500) {
+  const parsed = parsePositiveInt(value);
+  if (!parsed) return fallback;
+  return Math.min(parsed, max);
+}
 
 /**
  * Small helper to write audit logs safely.
@@ -61,14 +78,18 @@ router.get("/ping", (req, res) => {
  */
 router.get("/drivers", async (req, res) => {
   const { sponsorId, status, email, limit } = req.query || {};
-  const lim = Math.min(parseInt(limit || "100", 10), 500);
+  const lim = parseLimit(limit, 100);
 
   let where = "WHERE u.role = 'DRIVER'";
   const params = [];
 
   if (sponsorId) {
+    const sponsorIdInt = parsePositiveInt(sponsorId);
+    if (!sponsorIdInt) {
+      return res.status(400).json({ ok: false, error: "invalid sponsorId" });
+    }
     where += " AND d.sponsor_id = ?";
-    params.push(Number(sponsorId));
+    params.push(sponsorIdInt);
   }
   if (status) {
     where += " AND d.status = ?";
@@ -114,7 +135,10 @@ router.get("/drivers", async (req, res) => {
  * GET /admin/drivers/:driverId
  */
 router.get("/drivers/:driverId", async (req, res) => {
-  const { driverId } = req.params;
+  const driverId = parsePositiveInt(req.params.driverId);
+  if (!driverId) {
+    return res.status(400).json({ ok: false, error: "invalid driverId" });
+  }
 
   try {
     const [rows] = await pool.query(
@@ -135,7 +159,7 @@ router.get("/drivers/:driverId", async (req, res) => {
       WHERE d.id = ?
       LIMIT 1
       `,
-      [Number(driverId)]
+      [driverId]
     );
 
     if (!rows[0]) return res.status(404).json({ ok: false, error: "driver not found" });
@@ -360,13 +384,16 @@ router.get("/api-error-logs", async (req, res) => {
  * DELETE /admin/sponsors/:sponsorId
  *
  * Safe “soft delete”:
- *  - sponsors.status -> DISABLED
+ *  - sponsors.status -> DEACTIVATED
  *  - users.status (where sponsor_id=...) -> DISABLED
  *  - drivers.status (where sponsor_id=...) -> DROPPED + reason + dropped_at
  *  - audit_logs category DELETE_SPONSOR
  */
 router.delete("/sponsors/:sponsorId", async (req, res) => {
-  const sponsorId = Number(req.params.sponsorId);
+  const sponsorId = parsePositiveInt(req.params.sponsorId);
+  if (!sponsorId) {
+    return res.status(400).json({ ok: false, error: "invalid sponsorId" });
+  }
 
   const conn = await pool.getConnection();
   try {
@@ -407,6 +434,7 @@ router.delete("/sponsors/:sponsorId", async (req, res) => {
 
     await writeAudit({
       category: "DELETE_SPONSOR",
+      actorUserId: req.user.id,
       sponsorId,
       success: 1,
       details: `soft-deleted sponsor=${sponsorId}; usersDisabled=${uUp.affectedRows}; driversDropped=${dUp.affectedRows}`,
@@ -426,6 +454,7 @@ router.delete("/sponsors/:sponsorId", async (req, res) => {
 
     await writeAudit({
       category: "DELETE_SPONSOR",
+      actorUserId: req.user.id,
       sponsorId,
       success: 0,
       details: `failed: ${err.message}`,
@@ -448,7 +477,7 @@ router.delete("/sponsors/:sponsorId", async (req, res) => {
  */
 router.get("/job-failures", async (req, res) => {
   const { from, to, limit } = req.query || {};
-  const lim = Math.min(parseInt(limit || "200", 10), 500);
+  const lim = parseLimit(limit, 200);
 
   let where = "WHERE category = 'JOB_RUN' AND success = 0";
   const params = [];
@@ -495,6 +524,7 @@ router.post("/jobs/simulate-failure", async (req, res) => {
   try {
     await writeAudit({
       category: "JOB_RUN",
+      actorUserId: req.user.id,
       success: 0,
       details: `job=${job}; error=${message}`,
     });
@@ -528,6 +558,7 @@ router.post("/sandboxes", async (req, res) => {
 
     await writeAudit({
       category: "CREATE_SANDBOX",
+      actorUserId: req.user.id,
       sponsorId,
       success: 1,
       details: `created sandbox sponsor=${sandboxName} (id=${sponsorId})`,
@@ -542,6 +573,7 @@ router.post("/sandboxes", async (req, res) => {
 
     await writeAudit({
       category: "CREATE_SANDBOX",
+      actorUserId: req.user.id,
       success: 0,
       details: `failed: ${err.message}`,
     });
