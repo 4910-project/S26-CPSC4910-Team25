@@ -63,12 +63,12 @@ export default function Login({ onLogin }) {
       const res = await fetch(`${API_BASE}/login`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ identifier, password }),
+        body: JSON.stringify({ email: identifier, password }),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.message || "Login failed");
 
-      onLogin(data.token);
+      onLogin(data.token, data.user?.role);
     } catch (err) {
       setError(err.message);
     } finally {

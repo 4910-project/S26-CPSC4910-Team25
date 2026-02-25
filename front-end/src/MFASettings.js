@@ -1,12 +1,12 @@
 import React, { useEffect, useState } from "react";
 
-const API_BASE = "http://localhost:8001/api"; // same base as login.js
+const API_BASE = "http://localhost:8001/api"; // same base as backend mfa routes
 
-export default function MFASettings({ token, onBack, onLogout }) {
+export default function MFASettings({ token, onBack, onLogout, onContinue }) {
   const [modes, setModes] = useState({
     email: true,
     sms: false,
-    totp: false, // optional: authenticator app
+    totp: false,
   });
 
   const [status, setStatus] = useState({ type: "", message: "" });
@@ -19,7 +19,7 @@ export default function MFASettings({ token, onBack, onLogout }) {
     setStatus({ type: "", message: "" });
   };
 
-  // Load saved preferences (works once backend exists; fails quietly for now)
+  // Load saved preferences
   useEffect(() => {
     if (!token) return;
 
@@ -39,7 +39,7 @@ export default function MFASettings({ token, onBack, onLogout }) {
           });
         }
       } catch {
-        // ignore until backend is ready
+        // ignore
       }
     })();
   }, [token]);
@@ -67,11 +67,13 @@ export default function MFASettings({ token, onBack, onLogout }) {
         body: JSON.stringify({ modes: selected }),
       });
 
-      if (!res.ok) {
-        throw new Error("Couldn’t save yet (backend not connected).");
-      }
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data?.error || "Couldn’t save MFA preferences.");
 
       setStatus({ type: "success", message: "MFA preferences saved." });
+
+      // ✅ THIS IS THE KEY: move to next screen
+      if (onContinue) onContinue();
     } catch (e) {
       setStatus({ type: "error", message: e.message });
     } finally {
@@ -82,7 +84,7 @@ export default function MFASettings({ token, onBack, onLogout }) {
   return (
     <div style={{ maxWidth: 420, margin: "40px auto", padding: 20 }}>
       <h2 style={{ marginBottom: 8 }}>MFA Settings</h2>
-      <p style={{ marginTop: 0, color: "#6b7280" }}>
+      <p style={{ marginTop: 0, color: "var(--muted)" }}>
         Choose how you want to receive verification codes.
       </p>
 
@@ -157,7 +159,7 @@ export default function MFASettings({ token, onBack, onLogout }) {
         </button>
       </div>
 
-      <div style={{ marginTop: 10, color: "#6b7280", fontSize: 12 }}>
+      <div style={{ marginTop: 10, color: "var(--muted)", fontSize: 12 }}>
         Selected: {selectedCount}
       </div>
     </div>
@@ -169,11 +171,13 @@ const rowStyle = {
   gap: 10,
   alignItems: "flex-start",
   padding: 12,
-  border: "1px solid #e5e7eb",
+  border: "1px solid var(--border)",
   borderRadius: 10,
+  background: "var(--card)",
+  color: "var(--text)",
 };
 
-const subStyle = { color: "#6b7280", fontSize: 12, marginTop: 2 };
+const subStyle = { color: "var(--muted)", fontSize: 12, marginTop: 2 };
 
 const btnPrimary = {
   flex: 1,
@@ -181,13 +185,15 @@ const btnPrimary = {
   borderRadius: 10,
   border: "none",
   cursor: "pointer",
+  background: "var(--primary)",
+  color: "white",
 };
 
 const btnSecondary = {
   padding: "10px 12px",
   borderRadius: 10,
-  border: "1px solid #e5e7eb",
-  background: "white",
+  border: "1px solid var(--border)",
+  background: "var(--card)",
+  color: "var(--text)",
   cursor: "pointer",
 };
-

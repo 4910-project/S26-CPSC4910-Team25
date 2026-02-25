@@ -1,290 +1,131 @@
-import React, { useState, useEffect } from "react";
-import "./DriverProfile.css";
+import React, { useEffect, useState } from "react";
 
-const API_BASE = "http://localhost:8001/api/profile";
+const API_BASE = "http://localhost:8001/api";
 
 export default function DriverProfile({ token, onLogout, onChangePassword, onChangeUsername }) {
-  const [profile, setProfile] = useState({
-    first_name: "",
-    last_name: "",
-    phone: "",
-    license_number: "",
-    address: "",
-    city: "",
-    state: "",
-    zip_code: ""
-  });
+  const [points, setPoints] = useState(null);
   const [loading, setLoading] = useState(true);
-  const [saving, setSaving] = useState(false);
-  const [error, setError] = useState("");
-  const [success, setSuccess] = useState("");
-  const [isEditing, setIsEditing] = useState(false);
+  const [err, setErr] = useState("");
 
-  // Fetch profile on component mount
   useEffect(() => {
-    fetchProfile();
-  }, []);
+    if (!token) return;
 
-  const fetchProfile = async () => {
-    try {
+    (async () => {
       setLoading(true);
-      const res = await fetch(`${API_BASE}/driver`, {
-        headers: {
-          "Authorization": `Bearer ${token}`
-        }
-      });
+      setErr("");
 
-      const data = await res.json();
-
-      if (res.ok && data.profile) {
-        setProfile({
-          first_name: data.profile.first_name || "",
-          last_name: data.profile.last_name || "",
-          phone: data.profile.phone || "",
-          license_number: data.profile.license_number || "",
-          address: data.profile.address || "",
-          city: data.profile.city || "",
-          state: data.profile.state || "",
-          zip_code: data.profile.zip_code || ""
+      try {
+        // ✅ Pick ONE endpoint to standardize later.
+        // If your backend doesn't have this yet, you'll see the friendly error.
+        const res = await fetch(`${API_BASE}/driver/points`, {
+          headers: { Authorization: `Bearer ${token}` },
         });
-        setIsEditing(false);
-      } else if (res.status === 404) {
-        // Profile doesn't exist yet - enable editing mode
-        setIsEditing(true);
-      } else {
-        throw new Error(data.message || "Failed to fetch profile");
+
+        if (!res.ok) {
+          throw new Error("Points endpoint not available yet.");
+        }
+
+        const data = await res.json();
+        // expected: { points: number } (or similar)
+        const p = typeof data.points === "number" ? data.points : 0;
+
+        setPoints(p);
+      } catch (e) {
+        setPoints(null);
+        setErr(e.message);
+      } finally {
+        setLoading(false);
       }
-    } catch (err) {
-      setError(err.message);
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const handleChange = (e) => {
-    setProfile({
-      ...profile,
-      [e.target.name]: e.target.value
-    });
-    setError("");
-    setSuccess("");
-  };
-
-  const handleSubmit = async (e) => {
-    e.preventDefault();
-    setError("");
-    setSuccess("");
-    setSaving(true);
-
-    try {
-      // Validate required fields
-      if (!profile.first_name || !profile.last_name) {
-        throw new Error("First name and last name are required");
-      }
-
-      const res = await fetch(`${API_BASE}/driver`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "Authorization": `Bearer ${token}`
-        },
-        body: JSON.stringify(profile)
-      });
-
-      const data = await res.json();
-
-      if (!res.ok) {
-        throw new Error(data.message || "Failed to save profile");
-      }
-
-      setSuccess(data.message);
-      setIsEditing(false);
-      
-      // Refresh profile data
-      await fetchProfile();
-    } catch (err) {
-      setError(err.message);
-    } finally {
-      setSaving(false);
-    }
-  };
-
-  const handleCancel = () => {
-    fetchProfile(); // Reset to original data
-    setIsEditing(false);
-    setError("");
-    setSuccess("");
-  };
-
-  if (loading) {
-    return (
-      <div className="profile-container">
-        <div className="loading">Loading profile...</div>
-      </div>
-    );
-  }
+    })();
+  }, [token]);
 
   return (
-    <div className="profile-container">
-      <div className="profile-header">
-        <h1>Driver Profile</h1>
-        <div className="header-actions">
-          {!isEditing && (
-            <button 
-              onClick={() => setIsEditing(true)}
-              className="btn-edit"
-            >
-              Edit Profile
-            </button>
-          )}
-          
-          {!isEditing && (
-            <button 
-              onClick={onChangeUsername} 
-              className="btn-edit"
-            >
-              Change Username
-            </button>
-          )}
-          
+    <div style={{ maxWidth: 900, margin: "30px auto", padding: 20 }}>
+      <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "center" }}>
+        <h1 style={{ margin: 0 }}>Driver Dashboard</h1>
 
-          <button onClick={onLogout} className="btn-logout">
-            Logout
+        <div style={{ display: "flex", gap: 10 }}>
+          <button style={btnSecondary} onClick={onChangeUsername} type="button">
+            Change Username
+          </button>
+          <button style={btnSecondary} onClick={onChangePassword} type="button">
+            Change Password
+          </button>
+          <button style={btnDanger} onClick={onLogout} type="button">
+            Log out
           </button>
         </div>
       </div>
 
-      {error && <div className="error-message">{error}</div>}
-      {success && <div className="success-message">{success}</div>}
+      <div style={{ marginTop: 18, display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(260px, 1fr))", gap: 14 }}>
+        {/* Current Points Card */}
+        <div style={card}>
+          <div style={{ color: "var(--muted)", fontSize: 12 }}>Current Points</div>
 
-      <form onSubmit={handleSubmit} className="profile-form">
-        <div className="form-row">
-          <div className="form-group">
-            <label htmlFor="first_name">First Name *</label>
-            <input
-              type="text"
-              id="first_name"
-              name="first_name"
-              value={profile.first_name}
-              onChange={handleChange}
-              disabled={!isEditing}
-              required
-            />
-          </div>
+          {loading ? (
+            <div style={{ marginTop: 10, color: "var(--muted)" }}>Loading…</div>
+          ) : err ? (
+            <div style={{ marginTop: 10, color: "#b91c1c" }}>
+              {err}
+              <div style={{ marginTop: 8, color: "var(--muted)", fontSize: 12 }}>
+                Once backend is ready, create <code>/api/driver/points</code> to return <code>{`{ points: 123 }`}</code>.
+              </div>
+            </div>
+          ) : (
+            <div style={{ marginTop: 10, fontSize: 48, fontWeight: 800, letterSpacing: -1 }}>
+              {points}
+            </div>
+          )}
 
-          <div className="form-group">
-            <label htmlFor="last_name">Last Name *</label>
-            <input
-              type="text"
-              id="last_name"
-              name="last_name"
-              value={profile.last_name}
-              onChange={handleChange}
-              disabled={!isEditing}
-              required
-            />
+          <div style={{ marginTop: 10, color: "var(--muted)", fontSize: 13 }}>
+            Points reflect your latest approved driving performance events.
           </div>
         </div>
 
-        <div className="form-row">
-          <div className="form-group">
-            <label htmlFor="phone">Phone Number</label>
-            <input
-              type="tel"
-              id="phone"
-              name="phone"
-              value={profile.phone}
-              onChange={handleChange}
-              disabled={!isEditing}
-              placeholder="(555) 123-4567"
-            />
-          </div>
-
-          <div className="form-group">
-            <label htmlFor="license_number">License Number</label>
-            <input
-              type="text"
-              id="license_number"
-              name="license_number"
-              value={profile.license_number}
-              onChange={handleChange}
-              disabled={!isEditing}
-            />
+        {/* Placeholder cards you can build next */}
+        <div style={card}>
+          <div style={{ color: "var(--muted)", fontSize: 12 }}>Status</div>
+          <div style={{ marginTop: 10, fontSize: 18, fontWeight: 700 }}>Active</div>
+          <div style={{ marginTop: 6, color: "var(--muted)", fontSize: 13 }}>
+            Add driver status, sponsor, tier, etc.
           </div>
         </div>
 
-        <div className="form-group">
-          <label htmlFor="address">Address</label>
-          <input
-            type="text"
-            id="address"
-            name="address"
-            value={profile.address}
-            onChange={handleChange}
-            disabled={!isEditing}
-          />
-        </div>
-
-        <div className="form-row">
-          <div className="form-group">
-            <label htmlFor="city">City</label>
-            <input
-              type="text"
-              id="city"
-              name="city"
-              value={profile.city}
-              onChange={handleChange}
-              disabled={!isEditing}
-            />
-          </div>
-
-          <div className="form-group">
-            <label htmlFor="state">State</label>
-            <input
-              type="text"
-              id="state"
-              name="state"
-              value={profile.state}
-              onChange={handleChange}
-              disabled={!isEditing}
-              maxLength="2"
-              placeholder="SC"
-            />
-          </div>
-
-          <div className="form-group">
-            <label htmlFor="zip_code">ZIP Code</label>
-            <input
-              type="text"
-              id="zip_code"
-              name="zip_code"
-              value={profile.zip_code}
-              onChange={handleChange}
-              disabled={!isEditing}
-              maxLength="10"
-            />
+        <div style={card}>
+          <div style={{ color: "var(--muted)", fontSize: 12 }}>Rewards</div>
+          <div style={{ marginTop: 10, fontSize: 18, fontWeight: 700 }}>Coming soon</div>
+          <div style={{ marginTop: 6, color: "var(--muted)", fontSize: 13 }}>
+            Later: catalog + redeem flow.
           </div>
         </div>
-
-        {isEditing && (
-          <div className="form-actions">
-            <button 
-              type="submit" 
-              disabled={saving}
-              className="btn-save"
-            >
-              {saving ? "Saving..." : "Save Profile"}
-            </button>
-            <button 
-              type="button" 
-              onClick={handleCancel}
-              className="btn-cancel"
-            >
-              Cancel
-            </button>
-          </div>
-        )}
-      </form>
+      </div>
     </div>
   );
 }
+
+const card = {
+  border: "1px solid var(--border)",
+  background: "var(--card)",
+  color: "var(--text)",
+  borderRadius: 14,
+  padding: 16,
+  boxShadow: "0 10px 25px rgba(0,0,0,0.08)",
+};
+
+const btnSecondary = {
+  border: "1px solid var(--border)",
+  background: "var(--card)",
+  color: "var(--text)",
+  borderRadius: 10,
+  padding: "8px 12px",
+  cursor: "pointer",
+};
+
+const btnDanger = {
+  border: "1px solid #ef4444",
+  background: "#ef4444",
+  color: "white",
+  borderRadius: 10,
+  padding: "8px 12px",
+  cursor: "pointer",
+};

@@ -93,6 +93,9 @@ app.use("/driver", driverRoutes);
 app.use("/api", mfaRoutes);
 app.use("/sponsor", sponsorRoutes);
 
+const driverRoutes = require("./routes/driver");
+app.use("/api", driverRoutes);
+
 // 🔹 NEW: Start sponsor archive background job
 const minutes = Number(process.env.SPONSOR_ARCHIVE_JOB_MINUTES || 10);
 setInterval(runArchiveSponsorsJob, minutes * 60 * 1000);

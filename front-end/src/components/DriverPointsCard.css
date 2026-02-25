@@ -1,0 +1,47 @@
+.points-card {
+  background: var(--card);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  padding: 18px 18px;
+  max-width: 520px;
+  box-shadow: 0 12px 30px rgba(0, 0, 0, 0.08);
+}
+
+.points-card__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.points-card__title {
+  margin: 0;
+  font-size: 1.05rem;
+  font-weight: 700;
+}
+
+.points-card__pill {
+  font-size: 0.8rem;
+  border: 1px solid var(--border);
+  color: var(--muted);
+  padding: 4px 10px;
+  border-radius: 999px;
+}
+
+.points-card__value {
+  margin-top: 10px;
+  font-size: 2.6rem;
+  font-weight: 800;
+  letter-spacing: -0.02em;
+}
+
+.points-card__sub {
+  margin: 6px 0 0;
+  color: var(--muted);
+  font-size: 0.95rem;
+}
+
+.points-card__error p {
+  margin: 6px 0;
+}

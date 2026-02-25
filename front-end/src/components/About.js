@@ -1,8 +1,11 @@
 import React, { useState, useEffect } from "react";
 import "./About.css";
 
-const API_BASE = process.env.REACT_APP_API_URL || "http://Team-25-app-env.eba-mghj3gwy.us-east-1.elasticbeanstalk.com";
+const API_BASE =
+  process.env.REACT_APP_API_URL ||
+  "http://Team-25-app-env.eba-mghj3gwy.us-east-1.elasticbeanstalk.com";
 
+  
 export default function About({ onBack }) {
   const [info, setInfo] = useState(null);
   const [loading, setLoading] = useState(true);

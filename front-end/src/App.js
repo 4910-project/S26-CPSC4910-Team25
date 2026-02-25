@@ -107,19 +107,19 @@ function App() {
   }
 
   // MFA Screen (logged in, before profile)
-  if (screen === "mfa") {
-    return (
-      <>
-        <DarkToggle />
-        <MFASettings
-          token={token}
-          onBack={() => setScreen("login")}
-          onLogout={handleLogout}
-          onContinue={handleMFAComplete}
-        />
-      </>
-    );
-  }
+if (screen === "mfa") {
+  return (
+    <>
+      <DarkToggle />
+      <MFASettings
+        token={token}
+        onBack={handleLogout} 
+        onLogout={handleLogout}
+        onContinue={handleMFAComplete}
+      />
+    </>
+  );
+}
 
   // Driver Profile
   if (screen === "driver-profile" && userRole === "DRIVER") {
