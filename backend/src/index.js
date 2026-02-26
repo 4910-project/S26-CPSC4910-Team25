@@ -70,11 +70,11 @@ app.use("/auth", authRoutes);
 // Admin
 app.use("/admin", adminRoutes);
 
-// Driver routes 
-app.use("/api", driverRoutes);
-
 // MFA routes
 app.use("/api", mfaRoutes);
+
+// Driver routes 
+app.use("/api", driverRoutes);
 
 // Sponsor routes
 app.use("/sponsor", sponsorRoutes);

@@ -24,10 +24,14 @@ async function runArchiveSponsorsJob() {
     );
 
     await writeAudit(`archived sponsors: affectedRows=${res.affectedRows}`, 1);
-  } catch (err) {
-    console.error("archiveSponsorsJob failed:", err);
+ } catch (err) {
+  console.error("archiveSponsorsJob failed:", err);
+  try {
     await writeAudit(`failed: ${err.message}`, 0);
+  } catch (auditErr) {
+    console.error("writeAudit also failed:", auditErr.message);
   }
+}
 }
 
 module.exports = { runArchiveSponsorsJob };

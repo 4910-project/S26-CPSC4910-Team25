@@ -305,4 +305,180 @@ router.get("/drivers", async (req, res) => {
   }
 });
 
+// ---------------------------------------------------------------------------
+// Helper: write audit log entry
+// ---------------------------------------------------------------------------
+async function writeAudit({ category, actorUserId = null, targetUserId = null, sponsorId = null, success = 0, details = "", conn = null }) {
+  const q = `INSERT INTO audit_logs (category, actor_user_id, target_user_id, sponsor_id, success, details) VALUES (?, ?, ?, ?, ?, ?)`;
+  const params = [category, actorUserId, targetUserId, sponsorId, success ? 1 : 0, details];
+  if (conn) return conn.query(q, params);
+  return pool.query(q, params);
+}
+
+/**
+ * POST /sponsor/drivers/:driverId/block
+ * Story #4 — Sponsor blocks a driver.
+ * Body: { reason: "string" }  (required)
+ */
+router.post("/drivers/:driverId/block", async (req, res) => {
+  const sponsorId = getSponsorIdFromSession(req);
+  if (!sponsorId) return res.status(400).json({ ok: false, error: "sponsor account is not linked" });
+
+  const driverId = parsePositiveInt(req.params.driverId);
+  if (!driverId) return res.status(400).json({ ok: false, error: "invalid driverId" });
+
+  const reason = String(req.body?.reason || "").trim();
+  if (!reason) return res.status(400).json({ ok: false, error: "reason is required to block a driver" });
+
+  const conn = await pool.getConnection();
+  try {
+    await conn.beginTransaction();
+
+    const [dRows] = await conn.query(
+      "SELECT id, user_id, status FROM drivers WHERE id = ? AND sponsor_id = ? LIMIT 1 FOR UPDATE",
+      [driverId, sponsorId]
+    );
+    if (!dRows[0]) {
+      await conn.rollback();
+      return res.status(404).json({ ok: false, error: "driver not found under your sponsor" });
+    }
+    if (dRows[0].status === "BLOCKED") {
+      await conn.rollback();
+      return res.status(409).json({ ok: false, error: "driver is already blocked" });
+    }
+
+    await conn.query(
+      "UPDATE drivers SET status = 'BLOCKED', dropped_reason = ?, dropped_at = NOW() WHERE id = ?",
+      [reason, driverId]
+    );
+
+    await writeAudit({
+      category: "DRIVER_BLOCKED",
+      actorUserId: req.user.id,
+      targetUserId: dRows[0].user_id,
+      sponsorId,
+      success: 1,
+      details: `sponsor blocked driverId=${driverId}; reason=${reason}`,
+      conn,
+    });
+
+    await conn.commit();
+    return res.json({ ok: true, message: "Driver blocked successfully" });
+  } catch (err) {
+    await conn.rollback();
+    console.error(err);
+    return res.status(500).json({ ok: false, error: "failed to block driver" });
+  } finally {
+    conn.release();
+  }
+});
+
+/**
+ * POST /sponsor/drivers/:driverId/unblock
+ * Story #5 — Sponsor unblocks a driver.
+ */
+router.post("/drivers/:driverId/unblock", async (req, res) => {
+  const sponsorId = getSponsorIdFromSession(req);
+  if (!sponsorId) return res.status(400).json({ ok: false, error: "sponsor account is not linked" });
+
+  const driverId = parsePositiveInt(req.params.driverId);
+  if (!driverId) return res.status(400).json({ ok: false, error: "invalid driverId" });
+
+  const conn = await pool.getConnection();
+  try {
+    await conn.beginTransaction();
+
+    const [dRows] = await conn.query(
+      "SELECT id, user_id, status FROM drivers WHERE id = ? AND sponsor_id = ? LIMIT 1 FOR UPDATE",
+      [driverId, sponsorId]
+    );
+    if (!dRows[0]) {
+      await conn.rollback();
+      return res.status(404).json({ ok: false, error: "driver not found under your sponsor" });
+    }
+    if (dRows[0].status !== "BLOCKED") {
+      await conn.rollback();
+      return res.status(409).json({ ok: false, error: "driver is not currently blocked" });
+    }
+
+    await conn.query(
+      "UPDATE drivers SET status = 'ACTIVE', dropped_reason = NULL, dropped_at = NULL WHERE id = ?",
+      [driverId]
+    );
+
+    await writeAudit({
+      category: "DRIVER_UNBLOCKED",
+      actorUserId: req.user.id,
+      targetUserId: dRows[0].user_id,
+      sponsorId,
+      success: 1,
+      details: `sponsor unblocked driverId=${driverId}`,
+      conn,
+    });
+
+    await conn.commit();
+    return res.json({ ok: true, message: "Driver unblocked successfully" });
+  } catch (err) {
+    await conn.rollback();
+    console.error(err);
+    return res.status(500).json({ ok: false, error: "failed to unblock driver" });
+  } finally {
+    conn.release();
+  }
+});
+
+/**
+ * POST /sponsor/driver-applications/:applicationId/reopen
+ * Story #1 — Sponsor reopens a rejected application.
+ */
+router.post("/driver-applications/:applicationId/reopen", async (req, res) => {
+  const sponsorId = getSponsorIdFromSession(req);
+  if (!sponsorId) return res.status(400).json({ ok: false, error: "sponsor account is not linked" });
+
+  const applicationId = parsePositiveInt(req.params.applicationId);
+  if (!applicationId) return res.status(400).json({ ok: false, error: "invalid applicationId" });
+
+  const conn = await pool.getConnection();
+  try {
+    await conn.beginTransaction();
+
+    const [aRows] = await conn.query(
+      "SELECT id, driver_user_id, status FROM driver_applications WHERE id = ? AND sponsor_id = ? LIMIT 1 FOR UPDATE",
+      [applicationId, sponsorId]
+    );
+    if (!aRows[0]) {
+      await conn.rollback();
+      return res.status(404).json({ ok: false, error: "application not found" });
+    }
+    if (aRows[0].status !== "REJECTED") {
+      await conn.rollback();
+      return res.status(409).json({ ok: false, error: "only REJECTED applications can be reopened" });
+    }
+
+    await conn.query(
+      "UPDATE driver_applications SET status = 'PENDING', decided_at = NULL, decided_by_user_id = NULL WHERE id = ?",
+      [applicationId]
+    );
+
+    await writeAudit({
+      category: "APPLICATION_STATUS_CHANGE",
+      actorUserId: req.user.id,
+      targetUserId: aRows[0].driver_user_id,
+      sponsorId,
+      success: 1,
+      details: `sponsor reopened applicationId=${applicationId} (REJECTED -> PENDING)`,
+      conn,
+    });
+
+    await conn.commit();
+    return res.json({ ok: true, message: "Application reopened successfully" });
+  } catch (err) {
+    await conn.rollback();
+    console.error(err);
+    return res.status(500).json({ ok: false, error: "failed to reopen application" });
+  } finally {
+    conn.release();
+  }
+});
+
 module.exports = router;
