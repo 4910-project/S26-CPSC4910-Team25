@@ -13,6 +13,7 @@ import ChangePassword from "./components/ChangePassword";
 import ForgotPassword from "./components/ForgotPassword";
 import ForgotUsername from "./components/ForgotUsername";
 import ChangeUsername from "./components/ChangeUsername";
+import SponsorRules from "./components/SponsorRules"; 
 
 function App() {
   const [token, setToken] = useState(null);
@@ -144,6 +145,30 @@ if (screen === "mfa") {
     );
   }
 
+  // Sponsor Rules Page
+if (screen === "sponsor-rules" && userRole === "SPONSOR") {
+  return (
+    <>
+      <DarkToggle />
+      <SponsorRules token={token} />
+      <div style={{ maxWidth: 900, margin: "0 auto", padding: 20 }}>
+        <button
+          onClick={() => setScreen("sponsor-profile")}
+          style={{
+            border: "1px solid var(--border)",
+            background: "var(--card)",
+            color: "var(--text)",
+            borderRadius: 10,
+            padding: "10px 12px",
+            cursor: "pointer",
+          }}
+        >
+          ← Back to Sponsor Profile
+        </button>
+      </div>
+    </>
+  );
+}
   // Sponsor Profile
   if (screen === "sponsor-profile" && userRole === "SPONSOR") {
     return (
@@ -154,6 +179,7 @@ if (screen === "mfa") {
           onLogout={handleLogout}
           onChangePassword={() => setShowChangePassword(true)}
           onChangeUsername={() => setShowChangeUsername(true)}
+          onManageRules={() => setScreen("sponsor-rules")}
         />
 
         {showChangePassword && (

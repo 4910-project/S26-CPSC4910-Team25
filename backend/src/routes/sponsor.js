@@ -304,5 +304,131 @@ router.get("/drivers", async (req, res) => {
     return res.status(500).json({ ok: false, error: "failed to fetch sponsor drivers" });
   }
 });
+/**
+ * GET /sponsor/rules
+ */
+router.get("/rules", async (req, res) => {
+  const sponsorId = getSponsorIdFromSession(req);
+  if (!sponsorId) {
+    return res.status(400).json({ ok: false, error: "sponsor account is not linked" });
+  }
+
+  try {
+    const [rows] = await pool.query(
+      "SELECT id, name, points, active FROM sponsor_rules WHERE sponsor_id = ? ORDER BY id DESC",
+      [sponsorId]
+    );
+    return res.json({ rules: rows });
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({ ok: false, error: "failed to load rules" });
+  }
+});
+
+/**
+ * POST /sponsor/rules
+ * Body: { name, points, active }
+ */
+router.post("/rules", async (req, res) => {
+  const sponsorId = getSponsorIdFromSession(req);
+  if (!sponsorId) {
+    return res.status(400).json({ ok: false, error: "sponsor account is not linked" });
+  }
+
+  const name = String(req.body?.name || "").trim();
+  const points = Number(req.body?.points ?? 0);
+  const active = req.body?.active === false ? 0 : 1;
+
+  if (!name) {
+    return res.status(400).json({ ok: false, error: "name is required" });
+  }
+  if (!Number.isFinite(points)) {
+    return res.status(400).json({ ok: false, error: "points must be a number" });
+  }
+
+  try {
+    await pool.query(
+      "INSERT INTO sponsor_rules (sponsor_id, name, points, active) VALUES (?, ?, ?, ?)",
+      [sponsorId, name, points, active]
+    );
+    return res.status(201).json({ ok: true });
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({ ok: false, error: "failed to create rule" });
+  }
+});
+
+/**
+ * PUT /sponsor/rules/:id
+ */
+router.put("/rules/:id", async (req, res) => {
+  const sponsorId = getSponsorIdFromSession(req);
+  if (!sponsorId) {
+    return res.status(400).json({ ok: false, error: "sponsor account is not linked" });
+  }
+
+  const ruleId = parsePositiveInt(req.params.id);
+  if (!ruleId) {
+    return res.status(400).json({ ok: false, error: "invalid rule id" });
+  }
+
+  const name = String(req.body?.name || "").trim();
+  const points = Number(req.body?.points ?? 0);
+  const active = req.body?.active ? 1 : 0;
+
+  if (!name) {
+    return res.status(400).json({ ok: false, error: "name is required" });
+  }
+  if (!Number.isFinite(points)) {
+    return res.status(400).json({ ok: false, error: "points must be a number" });
+  }
+
+  try {
+    const [result] = await pool.query(
+      "UPDATE sponsor_rules SET name=?, points=?, active=? WHERE id=? AND sponsor_id=?",
+      [name, points, active, ruleId, sponsorId]
+    );
+
+    if (result.affectedRows === 0) {
+      return res.status(404).json({ ok: false, error: "rule not found" });
+    }
+
+    return res.json({ ok: true });
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({ ok: false, error: "failed to update rule" });
+  }
+});
+
+/**
+ * DELETE /sponsor/rules/:id
+ */
+router.delete("/rules/:id", async (req, res) => {
+  const sponsorId = getSponsorIdFromSession(req);
+  if (!sponsorId) {
+    return res.status(400).json({ ok: false, error: "sponsor account is not linked" });
+  }
+
+  const ruleId = parsePositiveInt(req.params.id);
+  if (!ruleId) {
+    return res.status(400).json({ ok: false, error: "invalid rule id" });
+  }
+
+  try {
+    const [result] = await pool.query(
+      "DELETE FROM sponsor_rules WHERE id=? AND sponsor_id=?",
+      [ruleId, sponsorId]
+    );
+
+    if (result.affectedRows === 0) {
+      return res.status(404).json({ ok: false, error: "rule not found" });
+    }
+
+    return res.json({ ok: true });
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({ ok: false, error: "failed to delete rule" });
+  }
+});
 
 module.exports = router;

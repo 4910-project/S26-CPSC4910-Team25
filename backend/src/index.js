@@ -14,6 +14,7 @@ if (!process.env.JWT_SECRET) {
 const express = require("express");
 const cors = require("cors");
 const pool = require("./db");
+const profileRoutes = require("../login-service/routes/profileRoutes");
 
 const { runArchiveSponsorsJob } = require("./jobs/archiveSponsorsJob");
 
@@ -70,14 +71,16 @@ app.use("/auth", authRoutes);
 // Admin
 app.use("/admin", adminRoutes);
 
-// Driver routes 
-app.use("/api", driverRoutes);
-
 // MFA routes
 app.use("/api", mfaRoutes);
 
+// Driver routes 
+app.use("/api/driver", driverRoutes);
+
 // Sponsor routes
 app.use("/sponsor", sponsorRoutes);
+
+app.use("/api/profile", profileRoutes);
 
 
 app.get("/health", async (req, res) => {

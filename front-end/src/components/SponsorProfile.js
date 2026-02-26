@@ -3,7 +3,12 @@ import "./SponsorProfile.css";
 
 const API_BASE = "http://localhost:8001/api/profile";
 
-export default function SponsorProfile({ token, onLogout, onChangeUsername }) {
+export default function SponsorProfile({
+  token,
+  onLogout,
+  onChangeUsername,
+  onManageRules
+}) {
   const [profile, setProfile] = useState({
     company_name: "",
     contact_name: "",
@@ -14,13 +19,13 @@ export default function SponsorProfile({ token, onLogout, onChangeUsername }) {
     zip_code: "",
     point_value: "0.01"
   });
+
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
   const [success, setSuccess] = useState("");
   const [isEditing, setIsEditing] = useState(false);
 
-  // Fetch profile on component mount
   useEffect(() => {
     fetchProfile();
   }, []);
@@ -28,9 +33,10 @@ export default function SponsorProfile({ token, onLogout, onChangeUsername }) {
   const fetchProfile = async () => {
     try {
       setLoading(true);
+
       const res = await fetch(`${API_BASE}/sponsor`, {
         headers: {
-          "Authorization": `Bearer ${token}`
+          Authorization: `Bearer ${token}`
         }
       });
 
@@ -49,7 +55,6 @@ export default function SponsorProfile({ token, onLogout, onChangeUsername }) {
         });
         setIsEditing(false);
       } else if (res.status === 404) {
-        // Profile doesn't exist yet - enable editing mode
         setIsEditing(true);
       } else {
         throw new Error(data.message || "Failed to fetch profile");
@@ -77,12 +82,10 @@ export default function SponsorProfile({ token, onLogout, onChangeUsername }) {
     setSaving(true);
 
     try {
-      // Validate required fields
       if (!profile.company_name) {
         throw new Error("Company name is required");
       }
 
-      // Validate point value
       const pointValue = parseFloat(profile.point_value);
       if (isNaN(pointValue) || pointValue < 0) {
         throw new Error("Point value must be a valid positive number");
@@ -92,7 +95,7 @@ export default function SponsorProfile({ token, onLogout, onChangeUsername }) {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
-          "Authorization": `Bearer ${token}`
+          Authorization: `Bearer ${token}`
         },
         body: JSON.stringify({
           ...profile,
@@ -108,8 +111,6 @@ export default function SponsorProfile({ token, onLogout, onChangeUsername }) {
 
       setSuccess(data.message);
       setIsEditing(false);
-      
-      // Refresh profile data
       await fetchProfile();
     } catch (err) {
       setError(err.message);
@@ -119,7 +120,7 @@ export default function SponsorProfile({ token, onLogout, onChangeUsername }) {
   };
 
   const handleCancel = () => {
-    fetchProfile(); // Reset to original data
+    fetchProfile();
     setIsEditing(false);
     setError("");
     setSuccess("");
@@ -137,9 +138,10 @@ export default function SponsorProfile({ token, onLogout, onChangeUsername }) {
     <div className="sponsor-profile-container">
       <div className="profile-header">
         <h1>Sponsor Profile</h1>
+
         <div className="header-actions">
           {!isEditing && (
-            <button 
+            <button
               onClick={() => setIsEditing(true)}
               className="btn-edit"
             >
@@ -148,15 +150,27 @@ export default function SponsorProfile({ token, onLogout, onChangeUsername }) {
           )}
 
           {!isEditing && (
-            <button 
-              onClick={onChangeUsername} 
+            <button
+              onClick={onChangeUsername}
               className="btn-edit"
             >
               Change Username
             </button>
           )}
 
-          <button onClick={onLogout} className="btn-logout">
+          {!isEditing && (
+            <button
+              onClick={onManageRules}
+              className="btn-edit"
+            >
+              Manage Behavior Rules
+            </button>
+          )}
+
+          <button
+            onClick={onLogout}
+            className="btn-logout"
+          >
             Logout
           </button>
         </div>
@@ -168,12 +182,11 @@ export default function SponsorProfile({ token, onLogout, onChangeUsername }) {
       <form onSubmit={handleSubmit} className="profile-form">
         <div className="form-section">
           <h2>Company Information</h2>
-          
+
           <div className="form-group">
-            <label htmlFor="company_name">Company Name *</label>
+            <label>Company Name *</label>
             <input
               type="text"
-              id="company_name"
               name="company_name"
               value={profile.company_name}
               onChange={handleChange}
@@ -184,10 +197,9 @@ export default function SponsorProfile({ token, onLogout, onChangeUsername }) {
 
           <div className="form-row">
             <div className="form-group">
-              <label htmlFor="contact_name">Contact Name</label>
+              <label>Contact Name</label>
               <input
                 type="text"
-                id="contact_name"
                 name="contact_name"
                 value={profile.contact_name}
                 onChange={handleChange}
@@ -196,15 +208,13 @@ export default function SponsorProfile({ token, onLogout, onChangeUsername }) {
             </div>
 
             <div className="form-group">
-              <label htmlFor="phone">Phone Number</label>
+              <label>Phone Number</label>
               <input
                 type="tel"
-                id="phone"
                 name="phone"
                 value={profile.phone}
                 onChange={handleChange}
                 disabled={!isEditing}
-                placeholder="(555) 123-4567"
               />
             </div>
           </div>
@@ -212,12 +222,11 @@ export default function SponsorProfile({ token, onLogout, onChangeUsername }) {
 
         <div className="form-section">
           <h2>Address</h2>
-          
+
           <div className="form-group">
-            <label htmlFor="address">Street Address</label>
+            <label>Street Address</label>
             <input
               type="text"
-              id="address"
               name="address"
               value={profile.address}
               onChange={handleChange}
@@ -227,10 +236,9 @@ export default function SponsorProfile({ token, onLogout, onChangeUsername }) {
 
           <div className="form-row">
             <div className="form-group">
-              <label htmlFor="city">City</label>
+              <label>City</label>
               <input
                 type="text"
-                id="city"
                 name="city"
                 value={profile.city}
                 onChange={handleChange}
@@ -239,29 +247,25 @@ export default function SponsorProfile({ token, onLogout, onChangeUsername }) {
             </div>
 
             <div className="form-group">
-              <label htmlFor="state">State</label>
+              <label>State</label>
               <input
                 type="text"
-                id="state"
                 name="state"
                 value={profile.state}
                 onChange={handleChange}
                 disabled={!isEditing}
                 maxLength="2"
-                placeholder="SC"
               />
             </div>
 
             <div className="form-group">
-              <label htmlFor="zip_code">ZIP Code</label>
+              <label>ZIP Code</label>
               <input
                 type="text"
-                id="zip_code"
                 name="zip_code"
                 value={profile.zip_code}
                 onChange={handleChange}
                 disabled={!isEditing}
-                maxLength="10"
               />
             </div>
           </div>
@@ -269,12 +273,11 @@ export default function SponsorProfile({ token, onLogout, onChangeUsername }) {
 
         <div className="form-section">
           <h2>Point Settings</h2>
-          
+
           <div className="form-group">
-            <label htmlFor="point_value">Point Value (Dollar per Point)</label>
+            <label>Point Value (Dollar per Point)</label>
             <input
               type="number"
-              id="point_value"
               name="point_value"
               value={profile.point_value}
               onChange={handleChange}
@@ -282,23 +285,21 @@ export default function SponsorProfile({ token, onLogout, onChangeUsername }) {
               step="0.01"
               min="0"
             />
-            <small className="form-hint">
-              Default: $0.01 per point. This determines the dollar value of driver points.
-            </small>
           </div>
         </div>
 
         {isEditing && (
           <div className="form-actions">
-            <button 
-              type="submit" 
+            <button
+              type="submit"
               disabled={saving}
               className="btn-save"
             >
               {saving ? "Saving..." : "Save Profile"}
             </button>
-            <button 
-              type="button" 
+
+            <button
+              type="button"
               onClick={handleCancel}
               className="btn-cancel"
             >
