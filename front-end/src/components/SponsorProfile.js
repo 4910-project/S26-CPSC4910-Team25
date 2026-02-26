@@ -2,7 +2,7 @@ import React, { useState, useEffect, useCallback } from "react";
 import "./SponsorProfile.css";
 
 const API_BASE = "http://localhost:8001/api/profile";
-const SPONSOR_API = "http://localhost:3001/sponsor"; // main backend
+const SPONSOR_API = "http://localhost:8001/sponsor";
 
 export default function SponsorProfile({ token, onLogout, onChangeUsername }) {
   // ─── Existing profile state (unchanged) ────────────────────────────────────
@@ -215,7 +215,7 @@ export default function SponsorProfile({ token, onLogout, onChangeUsername }) {
       ACCEPTED: { bg: "#d1fae5", color: "#065f46" },
       REJECTED: { bg: "#fee2e2", color: "#991b1b" },
     };
-    const style = colors[status] || { bg: "#f3f4f6", color: "#374151" };
+    const style = colors[status?.toUpperCase()] || { bg: "#f3f4f6", color: "#374151" };
     return (
       <span style={{
         padding: "2px 10px", borderRadius: 12, fontSize: 12, fontWeight: 600,
