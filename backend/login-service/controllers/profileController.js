@@ -1,6 +1,18 @@
 const profileModel = require("../models/profileModel");
 const { hashPassword } = require("../utils/hash");
 
+const insertAuditLog = ({ userId, actionType, details, ipAddress }) =>
+  new Promise((resolve, reject) => {
+    const query = `
+      INSERT INTO audit_log (user_id, action_type, details, ip_address)
+      VALUES (?, ?, ?, ?)
+    `;
+    profileModel.db.run(query, [userId, actionType, details, ipAddress || null], function(err) {
+      if (err) reject(err);
+      else resolve();
+    });
+  });
+
 // ============================
 // Driver Profile Controllers
 // ============================
@@ -202,19 +214,37 @@ const changePassword = async (req, res) => {
       });
     });
 
+    const actorRole = String(req.user?.role || "").toUpperCase();
+    const sourceIp = req.ip || req.headers["x-forwarded-for"] || null;
+
     // Log password change in audit log
-    await new Promise((resolve, reject) => {
-      const query = `
-        INSERT INTO audit_log (user_id, action_type, details)
-        VALUES (?, 'PASSWORD_CHANGE', 'User changed password')
-      `;
-      profileModel.db.run(query, [userId], function(err) {
-        if (err) reject(err);
-        else resolve();
-      });
+    await insertAuditLog({
+      userId,
+      actionType: "PASSWORD_CHANGE",
+      details: "User changed password",
+      ipAddress: sourceIp,
     });
 
-    res.json({ message: "Password changed successfully" });
+    // Story 10773: sponsor notification when password is changed.
+    let notification = null;
+    if (actorRole === "SPONSOR") {
+      notification = {
+        type: "PASSWORD_CHANGED",
+        message: "Security notice: your sponsor password was changed.",
+        createdAt: new Date().toISOString(),
+      };
+      await insertAuditLog({
+        userId,
+        actionType: "PASSWORD_CHANGE_NOTIFICATION",
+        details: notification.message,
+        ipAddress: sourceIp,
+      });
+    }
+
+    return res.json({
+      message: "Password changed successfully",
+      notification,
+    });
   } catch (err) {
     console.error("Change password error:", err);
     res.status(500).json({ message: "Failed to change password" });
