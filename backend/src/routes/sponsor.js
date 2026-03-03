@@ -6,10 +6,32 @@ const router = express.Router();
 
 const APP_STATUSES = new Set(["PENDING", "APPROVED", "REJECTED"]);
 const DRIVER_FILTERS = new Set(["ACTIVE", "DROPPED", "PENDING"]);
+const DECISION_MESSAGE_MAX = 500;
 
 function parsePositiveInt(value) {
   const n = Number.parseInt(String(value), 10);
   return Number.isInteger(n) && n > 0 ? n : null;
+}
+
+function parseNonNegativeInt(value) {
+  const n = Number.parseInt(String(value), 10);
+  return Number.isInteger(n) && n >= 0 ? n : null;
+}
+
+function normalizeSearchTerm(value) {
+  const s = String(value || "").trim().toLowerCase();
+  return s ? `%${s}%` : "";
+}
+
+function getDriverNameFilter(searchTerm) {
+  if (!searchTerm) {
+    return { clause: "", params: [] };
+  }
+  return {
+    clause:
+      " AND (LOWER(SUBSTRING_INDEX(u.email, '@', 1)) LIKE ? OR LOWER(u.email) LIKE ?)",
+    params: [searchTerm, searchTerm],
+  };
 }
 
 function getSponsorIdFromSession(req) {
@@ -88,8 +110,10 @@ router.get("/driver-applications", async (req, res) => {
         SUBSTRING_INDEX(u.email, '@', 1) AS name,
         u.email,
         da.status,
+        da.decision_message AS decisionMessage,
         da.applied_at AS appliedAt,
-        da.decided_at AS decidedAt
+        da.decided_at AS decidedAt,
+        d.starting_points AS startingPoints
       FROM driver_applications da
       JOIN users u ON u.id = da.driver_user_id
       LEFT JOIN drivers d ON d.user_id = da.driver_user_id
@@ -108,7 +132,7 @@ router.get("/driver-applications", async (req, res) => {
 
 /**
  * PATCH /sponsor/driver-applications/:applicationId
- * Body: { action: "approve" | "reject" }
+ * Body: { action: "approve" | "reject", message?: string, startingPoints?: number }
  */
 router.patch("/driver-applications/:applicationId", async (req, res) => {
   const sponsorId = getSponsorIdFromSession(req);
@@ -124,6 +148,31 @@ router.patch("/driver-applications/:applicationId", async (req, res) => {
   const action = String(req.body?.action || "").trim().toLowerCase();
   if (action !== "approve" && action !== "reject") {
     return res.status(400).json({ ok: false, error: "action must be approve or reject" });
+  }
+
+  const messageRaw = req.body?.message;
+  let decisionMessage = null;
+  if (messageRaw !== undefined && messageRaw !== null) {
+    if (typeof messageRaw !== "string") {
+      return res.status(400).json({ ok: false, error: "message must be a string" });
+    }
+    const cleaned = messageRaw.trim();
+    if (cleaned.length > DECISION_MESSAGE_MAX) {
+      return res.status(400).json({
+        ok: false,
+        error: `message must be ${DECISION_MESSAGE_MAX} characters or fewer`,
+      });
+    }
+    decisionMessage = cleaned || null;
+  }
+
+  const hasStartingPoints = req.body?.startingPoints !== undefined && req.body?.startingPoints !== null;
+  const startingPoints = hasStartingPoints ? parseNonNegativeInt(req.body.startingPoints) : null;
+  if (hasStartingPoints && startingPoints === null) {
+    return res.status(400).json({ ok: false, error: "startingPoints must be a non-negative integer" });
+  }
+  if (action === "reject" && hasStartingPoints) {
+    return res.status(400).json({ ok: false, error: "startingPoints can only be set when approving" });
   }
 
   const conn = await pool.getConnection();
@@ -157,26 +206,45 @@ router.patch("/driver-applications/:applicationId", async (req, res) => {
     await conn.query(
       `
       UPDATE driver_applications
-      SET status = ?, decided_at = NOW(), decided_by_user_id = ?
+      SET status = ?, decided_at = NOW(), decided_by_user_id = ?, decision_message = ?
       WHERE id = ?
       `,
-      [targetStatus, req.user.id, applicationId]
+      [targetStatus, req.user.id, decisionMessage, applicationId]
     );
 
     if (targetStatus === "APPROVED") {
-      await conn.query(
-        `
-        INSERT INTO drivers (user_id, sponsor_id, status, joined_on, dropped_reason, dropped_at)
-        VALUES (?, ?, 'ACTIVE', NOW(), NULL, NULL)
-        ON DUPLICATE KEY UPDATE
-          sponsor_id = VALUES(sponsor_id),
-          status = 'ACTIVE',
-          joined_on = VALUES(joined_on),
-          dropped_reason = NULL,
-          dropped_at = NULL
-        `,
-        [app.driver_user_id, sponsorId]
-      );
+      if (hasStartingPoints) {
+        await conn.query(
+          `
+          INSERT INTO drivers (
+            user_id, sponsor_id, status, joined_on, dropped_reason, dropped_at, starting_points
+          )
+          VALUES (?, ?, 'ACTIVE', NOW(), NULL, NULL, ?)
+          ON DUPLICATE KEY UPDATE
+            sponsor_id = VALUES(sponsor_id),
+            status = 'ACTIVE',
+            joined_on = VALUES(joined_on),
+            dropped_reason = NULL,
+            dropped_at = NULL,
+            starting_points = VALUES(starting_points)
+          `,
+          [app.driver_user_id, sponsorId, startingPoints]
+        );
+      } else {
+        await conn.query(
+          `
+          INSERT INTO drivers (user_id, sponsor_id, status, joined_on, dropped_reason, dropped_at)
+          VALUES (?, ?, 'ACTIVE', NOW(), NULL, NULL)
+          ON DUPLICATE KEY UPDATE
+            sponsor_id = VALUES(sponsor_id),
+            status = 'ACTIVE',
+            joined_on = VALUES(joined_on),
+            dropped_reason = NULL,
+            dropped_at = NULL
+          `,
+          [app.driver_user_id, sponsorId]
+        );
+      }
 
       await conn.query(
         "UPDATE users SET sponsor_id = ? WHERE id = ? LIMIT 1",
@@ -187,14 +255,17 @@ router.patch("/driver-applications/:applicationId", async (req, res) => {
     const [updatedRows] = await conn.query(
       `
       SELECT
-        id AS applicationId,
-        driver_user_id AS driverUserId,
-        sponsor_id AS sponsorId,
-        status,
-        applied_at AS appliedAt,
-        decided_at AS decidedAt
-      FROM driver_applications
-      WHERE id = ?
+        da.id AS applicationId,
+        da.driver_user_id AS driverUserId,
+        da.sponsor_id AS sponsorId,
+        da.status,
+        da.decision_message AS decisionMessage,
+        da.applied_at AS appliedAt,
+        da.decided_at AS decidedAt,
+        d.starting_points AS startingPoints
+      FROM driver_applications da
+      LEFT JOIN drivers d ON d.user_id = da.driver_user_id AND d.sponsor_id = da.sponsor_id
+      WHERE da.id = ?
       LIMIT 1
       `,
       [applicationId]
@@ -224,6 +295,8 @@ router.get("/drivers", async (req, res) => {
   if (requestedStatusRaw && !DRIVER_FILTERS.has(requestedStatusRaw)) {
     return res.status(400).json({ ok: false, error: "invalid status filter" });
   }
+  const searchTerm = normalizeSearchTerm(req.query?.name || req.query?.q);
+  const { clause: nameFilterClause, params: nameFilterParams } = getDriverNameFilter(searchTerm);
 
   try {
     if (requestedStatusRaw === "PENDING") {
@@ -234,13 +307,15 @@ router.get("/drivers", async (req, res) => {
           SUBSTRING_INDEX(u.email, '@', 1) AS name,
           u.email,
           'pending' AS status,
-          NULL AS joinedOn
+          NULL AS joinedOn,
+          NULL AS startingPoints
         FROM driver_applications da
         JOIN users u ON u.id = da.driver_user_id
         WHERE da.sponsor_id = ? AND da.status = 'PENDING'
+        ${nameFilterClause}
         ORDER BY da.applied_at DESC
         `,
-        [sponsorId]
+        [sponsorId, ...nameFilterParams]
       );
 
       return res.json({ drivers: pendingRows });
@@ -254,13 +329,15 @@ router.get("/drivers", async (req, res) => {
           SUBSTRING_INDEX(u.email, '@', 1) AS name,
           u.email,
           LOWER(d.status) AS status,
-          d.joined_on AS joinedOn
+          d.joined_on AS joinedOn,
+          d.starting_points AS startingPoints
         FROM drivers d
         JOIN users u ON u.id = d.user_id
         WHERE d.sponsor_id = ? AND d.status = ?
+        ${nameFilterClause}
         ORDER BY d.id DESC
         `,
-        [sponsorId, requestedStatusRaw]
+        [sponsorId, requestedStatusRaw, ...nameFilterParams]
       );
 
       return res.json({ drivers: rows });
@@ -273,13 +350,15 @@ router.get("/drivers", async (req, res) => {
         SUBSTRING_INDEX(u.email, '@', 1) AS name,
         u.email,
         LOWER(d.status) AS status,
-        d.joined_on AS joinedOn
+        d.joined_on AS joinedOn,
+        d.starting_points AS startingPoints
       FROM drivers d
       JOIN users u ON u.id = d.user_id
       WHERE d.sponsor_id = ?
+      ${nameFilterClause}
       ORDER BY d.id DESC
       `,
-      [sponsorId]
+      [sponsorId, ...nameFilterParams]
     );
 
     const [pendingRows] = await pool.query(
@@ -289,13 +368,15 @@ router.get("/drivers", async (req, res) => {
         SUBSTRING_INDEX(u.email, '@', 1) AS name,
         u.email,
         'pending' AS status,
-        NULL AS joinedOn
+        NULL AS joinedOn,
+        NULL AS startingPoints
       FROM driver_applications da
       JOIN users u ON u.id = da.driver_user_id
       WHERE da.sponsor_id = ? AND da.status = 'PENDING'
+      ${nameFilterClause}
       ORDER BY da.applied_at DESC
       `,
-      [sponsorId]
+      [sponsorId, ...nameFilterParams]
     );
 
     return res.json({ drivers: driverRows.concat(pendingRows) });
@@ -478,6 +559,65 @@ router.post("/driver-applications/:applicationId/reopen", async (req, res) => {
     return res.status(500).json({ ok: false, error: "failed to reopen application" });
   } finally {
     conn.release();
+  }
+});
+
+/**
+ * PATCH /sponsor/drivers/:driverId/starting-points
+ * Body: { startingPoints: number }
+ */
+router.patch("/drivers/:driverId/starting-points", async (req, res) => {
+  const sponsorId = getSponsorIdFromSession(req);
+  if (!sponsorId) {
+    return res.status(400).json({ ok: false, error: "sponsor account is not linked" });
+  }
+
+  const driverId = parsePositiveInt(req.params.driverId);
+  if (!driverId) {
+    return res.status(400).json({ ok: false, error: "invalid driverId" });
+  }
+
+  const startingPoints = parseNonNegativeInt(req.body?.startingPoints);
+  if (startingPoints === null) {
+    return res.status(400).json({ ok: false, error: "startingPoints must be a non-negative integer" });
+  }
+
+  try {
+    const [updateResult] = await pool.query(
+      `
+      UPDATE drivers
+      SET starting_points = ?
+      WHERE id = ? AND sponsor_id = ?
+      LIMIT 1
+      `,
+      [startingPoints, driverId, sponsorId]
+    );
+
+    if (!updateResult.affectedRows) {
+      return res.status(404).json({ ok: false, error: "driver not found for sponsor" });
+    }
+
+    const [rows] = await pool.query(
+      `
+      SELECT
+        d.id AS driverId,
+        SUBSTRING_INDEX(u.email, '@', 1) AS name,
+        u.email,
+        LOWER(d.status) AS status,
+        d.joined_on AS joinedOn,
+        d.starting_points AS startingPoints
+      FROM drivers d
+      JOIN users u ON u.id = d.user_id
+      WHERE d.id = ? AND d.sponsor_id = ?
+      LIMIT 1
+      `,
+      [driverId, sponsorId]
+    );
+
+    return res.json(rows[0]);
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({ ok: false, error: "failed to set starting points" });
   }
 });
 
