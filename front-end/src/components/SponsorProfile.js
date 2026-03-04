@@ -80,15 +80,20 @@ export default function SponsorProfile({ token, onLogout, onChangeUsername }) {
     setSaving(true);
     try {
       if (!profile.company_name) throw new Error("Company name is required");
-      const pointValue = parseFloat(profile.point_value);
-      if (isNaN(pointValue) || pointValue < 0) throw new Error("Point value must be a valid positive number");
+
       const res = await fetch(`${SPONSOR_API}/org`, {
-        method: "POST",
+        method: "PATCH",
         headers: { "Content-Type": "application/json", "Authorization": `Bearer ${token}` },
-        body: JSON.stringify({ ...profile, point_value: pointValue })
+        body: JSON.stringify({
+          name:         profile.company_name,
+          contactName:  profile.contact_name,
+          contactPhone: profile.phone,
+          address:      [profile.address, profile.city, profile.state, profile.zip_code]
+                          .filter(Boolean).join(", "),
+        })
       });
       const data = await res.json();
-      if (!res.ok) throw new Error(data.message || "Failed to save profile");
+      if (!res.ok) throw new Error(data.error || data.message || "Failed to save profile");
       setSuccess(data.message);
       setIsEditing(false);
       await fetchProfile();
