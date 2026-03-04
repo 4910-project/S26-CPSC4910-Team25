@@ -38,7 +38,6 @@ function PreAuthToggle({ dark, onToggleDark }) {
 // ── Authenticated layout: Navbar + page content ────────────────────────────
 function AuthLayout({ userRole, onLogout, dark, onToggleDark, children }) {
   const navigate = useNavigate();
-
   return (
     <>
       <Navbar
@@ -57,51 +56,16 @@ function AuthLayout({ userRole, onLogout, dark, onToggleDark, children }) {
   );
 }
 
-// ── Login page wrapper: navigates after successful login ───────────────────
-function LoginPage({ onLogin, dark, onToggleDark }) {
-  const navigate = useNavigate();
-
-  const handleLogin = (t, role) => {
-    onLogin(t, role);
-    navigate("/mfa", { replace: true });
-  };
-
-  return (
-    <>
-      <PreAuthToggle dark={dark} onToggleDark={onToggleDark} />
-      <Login onLogin={handleLogin} />
-    </>
-  );
-}
-
-// ── MFA page wrapper: navigates to dashboard after completion ──────────────
-function MFAPage({ token, userRole, onLogout, dark, onToggleDark }) {
-  const navigate = useNavigate();
-
-  const handleContinue = () => {
-    if (userRole === "DRIVER") navigate("/driver", { replace: true });
-    else if (userRole === "SPONSOR") navigate("/sponsor", { replace: true });
-    else if (userRole === "ADMIN") navigate("/admin", { replace: true });
-    else navigate("/driver", { replace: true });
-  };
-
-  return (
-    <AuthLayout userRole={userRole} onLogout={onLogout} dark={dark} onToggleDark={onToggleDark}>
-      <MFASettings
-        token={token}
-        onBack={onLogout}
-        onLogout={onLogout}
-        onContinue={handleContinue}
-      />
-    </AuthLayout>
-  );
-}
-
 // ── Main App ───────────────────────────────────────────────────────────────
 export default function App() {
-  // Persist session across page refresh using sessionStorage
   const [token, setToken] = useState(() => sessionStorage.getItem("token") || null);
   const [userRole, setUserRole] = useState(() => sessionStorage.getItem("userRole") || null);
+
+  // mfaComplete: true means user has passed the MFA step this session
+  const [mfaComplete, setMfaComplete] = useState(
+    () => sessionStorage.getItem("mfaComplete") === "true"
+  );
+
   const [showChangePassword, setShowChangePassword] = useState(false);
   const [showChangeUsername, setShowChangeUsername] = useState(false);
 
@@ -118,137 +82,125 @@ export default function App() {
     localStorage.setItem("theme", dark ? "dark" : "light");
   }, [dark]);
 
-  // Persist token + role so refresh doesn't log you out
-  useEffect(() => {
-    if (token) sessionStorage.setItem("token", token);
-    else sessionStorage.removeItem("token");
-  }, [token]);
-
-  useEffect(() => {
-    if (userRole) sessionStorage.setItem("userRole", userRole);
-    else sessionStorage.removeItem("userRole");
-  }, [userRole]);
-
   const toggleDark = () => setDark((d) => !d);
 
   const handleLogin = (t, role) => {
+    sessionStorage.setItem("token", t);
+    sessionStorage.setItem("userRole", role);
+    sessionStorage.removeItem("mfaComplete"); // always re-do MFA on fresh login
     setToken(t);
     setUserRole(role);
+    setMfaComplete(false);
+  };
+
+  const handleMFAComplete = () => {
+    sessionStorage.setItem("mfaComplete", "true");
+    setMfaComplete(true);
   };
 
   const handleLogout = () => {
+    sessionStorage.clear();
     setToken(null);
     setUserRole(null);
+    setMfaComplete(false);
     setShowChangePassword(false);
     setShowChangeUsername(false);
-    sessionStorage.clear();
   };
 
-  // ── Route guards ──
-  const RequireAuth = ({ children }) => {
-    if (!token) return <Navigate to="/login" replace />;
-    return children;
-  };
+  // ── NOT logged in: show public routes ─────────────────────────────────────
+  if (!token) {
+    return (
+      <Routes>
+        <Route path="/login" element={
+          <>
+            <PreAuthToggle dark={dark} onToggleDark={toggleDark} />
+            <Login onLogin={handleLogin} />
+          </>
+        } />
+        <Route path="/forgot-password" element={
+          <><PreAuthToggle dark={dark} onToggleDark={toggleDark} /><ForgotPassword /></>
+        } />
+        <Route path="/forgot-username" element={
+          <><PreAuthToggle dark={dark} onToggleDark={toggleDark} /><ForgotUsername /></>
+        } />
+        <Route path="/reset-password" element={
+          <><PreAuthToggle dark={dark} onToggleDark={toggleDark} /><PasswordReset /></>
+        } />
+        <Route path="/about" element={
+          <><PreAuthToggle dark={dark} onToggleDark={toggleDark} /><About /></>
+        } />
+        <Route path="*" element={<Navigate to="/login" replace />} />
+      </Routes>
+    );
+  }
 
-  const RequireGuest = ({ children }) => {
-    if (token) {
-      if (userRole === "DRIVER")  return <Navigate to="/driver"  replace />;
-      if (userRole === "SPONSOR") return <Navigate to="/sponsor" replace />;
-      if (userRole === "ADMIN")   return <Navigate to="/admin"   replace />;
-      return <Navigate to="/mfa" replace />;
-    }
-    return children;
-  };
+  // ── LOGGED IN but MFA not done yet: show MFA gate (no route needed) ───────
+  if (!mfaComplete) {
+    return (
+      <>
+        <Navbar
+          userRole={userRole}
+          onNavigate={() => {}}
+          onLogout={handleLogout}
+          dark={dark}
+          onToggleDark={toggleDark}
+        />
+        <MFASettings
+          token={token}
+          onBack={handleLogout}
+          onLogout={handleLogout}
+          onContinue={handleMFAComplete}
+        />
+      </>
+    );
+  }
+
+  // ── LOGGED IN + MFA done: show dashboard routes with proper URLs ───────────
+  const dashboardRedirect =
+    userRole === "DRIVER"  ? "/driver"  :
+    userRole === "SPONSOR" ? "/sponsor" :
+    userRole === "ADMIN"   ? "/admin"   : "/driver";
 
   return (
     <Routes>
-
-      {/* ── Public / guest routes ── */}
-      <Route path="/login" element={
-        <RequireGuest>
-          <LoginPage onLogin={handleLogin} dark={dark} onToggleDark={toggleDark} />
-        </RequireGuest>
-      } />
-
-      <Route path="/forgot-password" element={
-        <><PreAuthToggle dark={dark} onToggleDark={toggleDark} /><ForgotPassword /></>
-      } />
-
-      <Route path="/forgot-username" element={
-        <><PreAuthToggle dark={dark} onToggleDark={toggleDark} /><ForgotUsername /></>
-      } />
-
-      <Route path="/reset-password" element={
-        <><PreAuthToggle dark={dark} onToggleDark={toggleDark} /><PasswordReset /></>
-      } />
-
-      <Route path="/about" element={
-        <><PreAuthToggle dark={dark} onToggleDark={toggleDark} /><About /></>
-      } />
-
-      {/* ── MFA (logged in, pre-dashboard) ── */}
-      <Route path="/mfa" element={
-        <RequireAuth>
-          <MFAPage
-            token={token}
-            userRole={userRole}
-            onLogout={handleLogout}
-            dark={dark}
-            onToggleDark={toggleDark}
-          />
-        </RequireAuth>
-      } />
-
-      {/* ── Driver dashboard ── */}
+      {/* Driver dashboard */}
       <Route path="/driver" element={
-        <RequireAuth>
-          <AuthLayout userRole={userRole} onLogout={handleLogout} dark={dark} onToggleDark={toggleDark}>
-            <DriverProfile
-              token={token}
-              onLogout={handleLogout}
-              onChangePassword={() => setShowChangePassword(true)}
-              onChangeUsername={() => setShowChangeUsername(true)}
-            />
-            {showChangePassword && (
-              <ChangePassword token={token} onClose={() => setShowChangePassword(false)} />
-            )}
-            {showChangeUsername && (
-              <ChangeUsername token={token} onClose={() => setShowChangeUsername(false)} />
-            )}
-          </AuthLayout>
-        </RequireAuth>
+        <AuthLayout userRole={userRole} onLogout={handleLogout} dark={dark} onToggleDark={toggleDark}>
+          <DriverProfile
+            token={token}
+            onLogout={handleLogout}
+            onChangePassword={() => setShowChangePassword(true)}
+            onChangeUsername={() => setShowChangeUsername(true)}
+          />
+          {showChangePassword && (
+            <ChangePassword token={token} onClose={() => setShowChangePassword(false)} />
+          )}
+          {showChangeUsername && (
+            <ChangeUsername token={token} onClose={() => setShowChangeUsername(false)} />
+          )}
+        </AuthLayout>
       } />
 
-      {/* ── Sponsor dashboard ── */}
+      {/* Sponsor dashboard */}
       <Route path="/sponsor" element={
-        <RequireAuth>
-          <AuthLayout userRole={userRole} onLogout={handleLogout} dark={dark} onToggleDark={toggleDark}>
-            <SponsorProfile
-              token={token}
-              onLogout={handleLogout}
-              onChangePassword={() => setShowChangePassword(true)}
-              onChangeUsername={() => setShowChangeUsername(true)}
-            />
-            {showChangePassword && (
-              <ChangePassword token={token} onClose={() => setShowChangePassword(false)} />
-            )}
-            {showChangeUsername && (
-              <ChangeUsername token={token} onClose={() => setShowChangeUsername(false)} />
-            )}
-          </AuthLayout>
-        </RequireAuth>
+        <AuthLayout userRole={userRole} onLogout={handleLogout} dark={dark} onToggleDark={toggleDark}>
+          <SponsorProfile
+            token={token}
+            onLogout={handleLogout}
+            onChangePassword={() => setShowChangePassword(true)}
+            onChangeUsername={() => setShowChangeUsername(true)}
+          />
+          {showChangePassword && (
+            <ChangePassword token={token} onClose={() => setShowChangePassword(false)} />
+          )}
+          {showChangeUsername && (
+            <ChangeUsername token={token} onClose={() => setShowChangeUsername(false)} />
+          )}
+        </AuthLayout>
       } />
 
-      {/* ── Catch-all redirect ── */}
-      <Route path="*" element={
-        token
-          ? userRole === "DRIVER"  ? <Navigate to="/driver"  replace />
-          : userRole === "SPONSOR" ? <Navigate to="/sponsor" replace />
-          : userRole === "ADMIN"   ? <Navigate to="/admin"   replace />
-          : <Navigate to="/mfa"   replace />
-          : <Navigate to="/login" replace />
-      } />
-
+      {/* Catch-all: send to correct dashboard */}
+      <Route path="*" element={<Navigate to={dashboardRedirect} replace />} />
     </Routes>
   );
 }

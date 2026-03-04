@@ -1,14 +1,31 @@
 import React, { useEffect, useState } from "react";
+import "./MFASettings.css";
 
-const API_BASE = "http://localhost:8001/api"; // same base as backend mfa routes
+const API_BASE = "http://localhost:8001/api";
+
+const MFA_OPTIONS = [
+  {
+    key: "email",
+    icon: "✉️",
+    label: "Email",
+    description: "Receive a verification code to your email address.",
+  },
+  {
+    key: "sms",
+    icon: "💬",
+    label: "SMS",
+    description: "Get a text message with a code sent to your phone.",
+  },
+  {
+    key: "totp",
+    icon: "🔐",
+    label: "Authenticator App",
+    description: "Use a time-based code from an app like Google Authenticator.",
+  },
+];
 
 export default function MFASettings({ token, onBack, onLogout, onContinue }) {
-  const [modes, setModes] = useState({
-    email: true,
-    sms: false,
-    totp: false,
-  });
-
+  const [modes, setModes] = useState({ email: true, sms: false, totp: false });
   const [status, setStatus] = useState({ type: "", message: "" });
   const [loading, setLoading] = useState(false);
 
@@ -22,24 +39,22 @@ export default function MFASettings({ token, onBack, onLogout, onContinue }) {
   // Load saved preferences
   useEffect(() => {
     if (!token) return;
-
     (async () => {
       try {
         const res = await fetch(`${API_BASE}/mfa`, {
           headers: { Authorization: `Bearer ${token}` },
         });
         if (!res.ok) return;
-
         const data = await res.json();
         if (Array.isArray(data?.modes)) {
           setModes({
             email: data.modes.includes("email"),
-            sms: data.modes.includes("sms"),
-            totp: data.modes.includes("totp"),
+            sms:   data.modes.includes("sms"),
+            totp:  data.modes.includes("totp"),
           });
         }
       } catch {
-        // ignore
+        // ignore — default selection is fine
       }
     })();
   }, [token]);
@@ -48,14 +63,14 @@ export default function MFASettings({ token, onBack, onLogout, onContinue }) {
     setStatus({ type: "", message: "" });
 
     if (selectedCount === 0) {
-      setStatus({ type: "error", message: "Select at least one MFA method." });
+      setStatus({ type: "error", message: "Please select at least one MFA method." });
       return;
     }
 
     setLoading(true);
     try {
       const selected = Object.entries(modes)
-        .filter(([_, v]) => v)
+        .filter(([, v]) => v)
         .map(([k]) => k);
 
       const res = await fetch(`${API_BASE}/mfa`, {
@@ -68,12 +83,10 @@ export default function MFASettings({ token, onBack, onLogout, onContinue }) {
       });
 
       const data = await res.json().catch(() => ({}));
-      if (!res.ok) throw new Error(data?.error || "Couldn’t save MFA preferences.");
+      if (!res.ok) throw new Error(data?.error || "Couldn't save MFA preferences.");
 
-      setStatus({ type: "success", message: "MFA preferences saved." });
-
-      // ✅ THIS IS THE KEY: move to next screen
-      if (onContinue) onContinue();
+      setStatus({ type: "success", message: "Preferences saved! Taking you to your dashboard…" });
+      setTimeout(() => { if (onContinue) onContinue(); }, 900);
     } catch (e) {
       setStatus({ type: "error", message: e.message });
     } finally {
@@ -82,118 +95,84 @@ export default function MFASettings({ token, onBack, onLogout, onContinue }) {
   };
 
   return (
-    <div style={{ maxWidth: 420, margin: "40px auto", padding: 20 }}>
-      <h2 style={{ marginBottom: 8 }}>MFA Settings</h2>
-      <p style={{ marginTop: 0, color: "var(--muted)" }}>
-        Choose how you want to receive verification codes.
-      </p>
+    <div className="mfa-wrapper">
+      <div className="mfa-card">
 
-      <div style={{ display: "grid", gap: 10, marginTop: 18 }}>
-        <label style={rowStyle}>
-          <input
-            type="checkbox"
-            checked={modes.email}
-            onChange={() => toggleMode("email")}
-          />
-          <span>
-            <b>Email</b>
-            <div style={subStyle}>Send codes to your email.</div>
-          </span>
-        </label>
-
-        <label style={rowStyle}>
-          <input
-            type="checkbox"
-            checked={modes.sms}
-            onChange={() => toggleMode("sms")}
-          />
-          <span>
-            <b>SMS</b>
-            <div style={subStyle}>Text message codes to your phone.</div>
-          </span>
-        </label>
-
-        <label style={rowStyle}>
-          <input
-            type="checkbox"
-            checked={modes.totp}
-            onChange={() => toggleMode("totp")}
-          />
-          <span>
-            <b>Authenticator app</b>
-            <div style={subStyle}>Use a code from an authenticator app.</div>
-          </span>
-        </label>
-      </div>
-
-      {status.message && (
-        <div
-          style={{
-            marginTop: 14,
-            padding: 10,
-            borderRadius: 8,
-            background: status.type === "success" ? "#ecfdf5" : "#fef2f2",
-            color: status.type === "success" ? "#065f46" : "#991b1b",
-          }}
-        >
-          {status.message}
+        {/* Header */}
+        <div className="mfa-header">
+          <div className="mfa-icon">🛡️</div>
+          <h2 className="mfa-title">Secure Your Account</h2>
+          <p className="mfa-subtitle">
+            Choose how you'd like to verify your identity when logging in.
+          </p>
         </div>
-      )}
 
-      <div style={{ display: "flex", gap: 10, marginTop: 18 }}>
-        <button onClick={onBack} type="button" style={btnSecondary}>
-          Back
-        </button>
+        {/* Step indicator */}
+        <div className="mfa-steps">
+          <div className="mfa-step mfa-step--done">
+            <span className="mfa-step__dot">✓</span>
+            <span>Log in</span>
+          </div>
+          <div className="mfa-step-line" />
+          <div className="mfa-step mfa-step--active">
+            <span className="mfa-step__dot">2</span>
+            <span>Set up MFA</span>
+          </div>
+          <div className="mfa-step-line" />
+          <div className="mfa-step">
+            <span className="mfa-step__dot">3</span>
+            <span>Dashboard</span>
+          </div>
+        </div>
 
-        <button onClick={onLogout} type="button" style={btnSecondary}>
-          Log out
-        </button>
+        {/* Options */}
+        <div className="mfa-options">
+          {MFA_OPTIONS.map(({ key, icon, label, description }) => (
+            <button
+              key={key}
+              type="button"
+              className={`mfa-option ${modes[key] ? "mfa-option--selected" : ""}`}
+              onClick={() => toggleMode(key)}
+              aria-pressed={modes[key]}
+            >
+              <span className="mfa-option__icon">{icon}</span>
+              <span className="mfa-option__text">
+                <span className="mfa-option__label">{label}</span>
+                <span className="mfa-option__desc">{description}</span>
+              </span>
+              <span className="mfa-option__check">
+                {modes[key] ? "✓" : ""}
+              </span>
+            </button>
+          ))}
+        </div>
 
-        <button
-          onClick={handleSave}
-          type="button"
-          disabled={loading}
-          style={btnPrimary}
-        >
-          {loading ? "Saving…" : "Save"}
-        </button>
-      </div>
+        {/* Status message */}
+        {status.message && (
+          <div className={`mfa-status mfa-status--${status.type}`}>
+            {status.type === "success" ? "✓ " : "⚠ "}{status.message}
+          </div>
+        )}
 
-      <div style={{ marginTop: 10, color: "var(--muted)", fontSize: 12 }}>
-        Selected: {selectedCount}
+        {/* Actions */}
+        <div className="mfa-actions">
+          <button
+            type="button"
+            className="mfa-btn mfa-btn--primary"
+            onClick={handleSave}
+            disabled={loading || selectedCount === 0}
+          >
+            {loading ? "Saving…" : "Save & Continue →"}
+          </button>
+        </div>
+
+        <p className="mfa-hint">
+          {selectedCount === 0
+            ? "Select at least one method to continue."
+            : `${selectedCount} method${selectedCount > 1 ? "s" : ""} selected.`}
+        </p>
+
       </div>
     </div>
   );
 }
-
-const rowStyle = {
-  display: "flex",
-  gap: 10,
-  alignItems: "flex-start",
-  padding: 12,
-  border: "1px solid var(--border)",
-  borderRadius: 10,
-  background: "var(--card)",
-  color: "var(--text)",
-};
-
-const subStyle = { color: "var(--muted)", fontSize: 12, marginTop: 2 };
-
-const btnPrimary = {
-  flex: 1,
-  padding: "10px 12px",
-  borderRadius: 10,
-  border: "none",
-  cursor: "pointer",
-  background: "var(--primary)",
-  color: "white",
-};
-
-const btnSecondary = {
-  padding: "10px 12px",
-  borderRadius: 10,
-  border: "1px solid var(--border)",
-  background: "var(--card)",
-  color: "var(--text)",
-  cursor: "pointer",
-};
