@@ -23,6 +23,7 @@ const adminRoutes = require("./routes/admin");
 const driverRoutes = require("./routes/driver");
 const mfaRoutes = require("./routes/mfa");
 const sponsorRoutes = require("./routes/sponsor");
+const profileRoutes = require("./routes/profile");
 
 const app = express();
 
@@ -72,6 +73,10 @@ app.use("/admin", adminRoutes);
 
 // MFA routes
 app.use("/api", mfaRoutes);
+
+// Profile routes (change username, change password) — must come BEFORE driverRoutes
+// because driverRoutes has a global DRIVER-only middleware that blocks all /api/* requests
+app.use("/api/profile", profileRoutes);
 
 // Driver routes 
 app.use("/api", driverRoutes);
