@@ -243,7 +243,7 @@ export default function SponsorProfile({ token, onLogout, onChangeUsername }) {
 
   return (
     <div className="sponsor-profile-container">
-      {/* ── Existing header (unchanged) ── */}
+      {/* ── Page header ── */}
       <div className="profile-header">
         <h1>Sponsor Profile</h1>
         <div className="header-actions">
@@ -253,7 +253,6 @@ export default function SponsorProfile({ token, onLogout, onChangeUsername }) {
           {!isEditing && (
             <button onClick={onChangeUsername} className="btn-edit">Change Username</button>
           )}
-          <button onClick={onLogout} className="btn-logout">Logout</button>
         </div>
       </div>
 

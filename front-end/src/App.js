@@ -1,6 +1,7 @@
 import "./App.css";
 import React, { useState, useEffect } from "react";
 import { Routes, Route, Navigate } from "react-router-dom";
+import Navbar from "./components/Navbar";
 
 import Login from "./login.js";
 import MFASettings from "./MFASettings";
@@ -39,24 +40,6 @@ function App() {
     localStorage.setItem("theme", dark ? "dark" : "light");
   }, [dark]);
 
-  const DarkToggle = () => (
-    <div style={{ display: "flex", justifyContent: "flex-end", padding: 12 }}>
-      <button
-        type="button"
-        onClick={() => setDark((d) => !d)}
-        style={{
-          border: "1px solid var(--border)",
-          background: "var(--card)",
-          color: "var(--text)",
-          borderRadius: 10,
-          padding: "8px 12px",
-          cursor: "pointer",
-        }}
-      >
-        {dark ? "☀️ Light" : "🌙 Dark"}
-      </button>
-    </div>
-  );
 
   // Called after successful login
   const handleLogin = (t, role) => {
@@ -84,7 +67,12 @@ function App() {
   if (screen === "reset-password") {
     return (
       <>
-        <DarkToggle />
+        <div style={{ display: "flex", justifyContent: "flex-end", padding: 12 }}>
+          <button type="button" onClick={() => setDark((d) => !d)}
+            style={{ border: "1px solid #ccc", background: "transparent", borderRadius: 10, padding: "8px 12px", cursor: "pointer" }}>
+            {dark ? "☀️ Light" : "🌙 Dark"}
+          </button>
+        </div>
         <PasswordReset onBack={() => setScreen("login")} />
       </>
     );
@@ -94,7 +82,12 @@ function App() {
   if (!token) {
     return (
       <>
-        <DarkToggle />
+        <div style={{ display: "flex", justifyContent: "flex-end", padding: 12 }}>
+          <button type="button" onClick={() => setDark((d) => !d)}
+            style={{ border: "1px solid #ccc", background: "transparent", borderRadius: 10, padding: "8px 12px", cursor: "pointer" }}>
+            {dark ? "☀️ Light" : "🌙 Dark"}
+          </button>
+        </div>
         <Routes>
           <Route path="/login" element={<Login onLogin={handleLogin} />} />
           <Route path="/forgot-password" element={<ForgotPassword />} />
@@ -107,36 +100,48 @@ function App() {
   }
 
   // MFA Screen (logged in, before profile)
-if (screen === "mfa") {
-  return (
-    <>
-      <DarkToggle />
-      <MFASettings
-        token={token}
-        onBack={handleLogout} 
-        onLogout={handleLogout}
-        onContinue={handleMFAComplete}
-      />
-    </>
-  );
-}
+  if (screen === "mfa") {
+    return (
+      <>
+        <Navbar
+          userRole={userRole}
+          screen={screen}
+          onNavigate={setScreen}
+          onLogout={handleLogout}
+          dark={dark}
+          onToggleDark={() => setDark((d) => !d)}
+        />
+        <MFASettings
+          token={token}
+          onBack={handleLogout}
+          onLogout={handleLogout}
+          onContinue={handleMFAComplete}
+        />
+      </>
+    );
+  }
 
   // Driver Profile
   if (screen === "driver-profile" && userRole === "DRIVER") {
     return (
       <>
-        <DarkToggle />
+        <Navbar
+          userRole={userRole}
+          screen={screen}
+          onNavigate={setScreen}
+          onLogout={handleLogout}
+          dark={dark}
+          onToggleDark={() => setDark((d) => !d)}
+        />
         <DriverProfile
           token={token}
           onLogout={handleLogout}
           onChangePassword={() => setShowChangePassword(true)}
           onChangeUsername={() => setShowChangeUsername(true)}
         />
-
         {showChangePassword && (
           <ChangePassword token={token} onClose={() => setShowChangePassword(false)} />
         )}
-
         {showChangeUsername && (
           <ChangeUsername token={token} onClose={() => setShowChangeUsername(false)} />
         )}
@@ -148,18 +153,23 @@ if (screen === "mfa") {
   if (screen === "sponsor-profile" && userRole === "SPONSOR") {
     return (
       <>
-        <DarkToggle />
+        <Navbar
+          userRole={userRole}
+          screen={screen}
+          onNavigate={setScreen}
+          onLogout={handleLogout}
+          dark={dark}
+          onToggleDark={() => setDark((d) => !d)}
+        />
         <SponsorProfile
           token={token}
           onLogout={handleLogout}
           onChangePassword={() => setShowChangePassword(true)}
           onChangeUsername={() => setShowChangeUsername(true)}
         />
-
         {showChangePassword && (
           <ChangePassword token={token} onClose={() => setShowChangePassword(false)} />
         )}
-
         {showChangeUsername && (
           <ChangeUsername token={token} onClose={() => setShowChangeUsername(false)} />
         )}
@@ -168,12 +178,7 @@ if (screen === "mfa") {
   }
 
   // Fallback
-  return (
-    <>
-      <DarkToggle />
-      <Login onLogin={handleLogin} />
-    </>
-  );
+  return <Login onLogin={handleLogin} />;
 }
 
 export default App;
