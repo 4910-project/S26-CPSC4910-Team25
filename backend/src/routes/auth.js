@@ -79,9 +79,13 @@ router.post("/login", async (req, res) => {
       return res.status(400).json({ ok: false, error: "Missing email or password" });
     }
 
+    // Allow login with either email or username
     const [rows] = await pool.query(
-      "SELECT id, email, password_hash, role, sponsor_id, status FROM users WHERE email = ? LIMIT 1",
-      [email]
+      `SELECT id, email, password_hash, role, sponsor_id, status
+       FROM users
+       WHERE email = ? OR username = ?
+       LIMIT 1`,
+      [email, email]  // same value checked against both columns
     );
 
     if (!rows.length) {

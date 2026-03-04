@@ -51,9 +51,6 @@ export default function DriverProfile({ token, onLogout, onChangePassword, onCha
           <button style={btnSecondary} onClick={onChangePassword} type="button">
             Change Password
           </button>
-          <button style={btnDanger} onClick={onLogout} type="button">
-            Log out
-          </button>
         </div>
       </div>
 
@@ -116,15 +113,6 @@ const btnSecondary = {
   border: "1px solid var(--border)",
   background: "var(--card)",
   color: "var(--text)",
-  borderRadius: 10,
-  padding: "8px 12px",
-  cursor: "pointer",
-};
-
-const btnDanger = {
-  border: "1px solid #ef4444",
-  background: "#ef4444",
-  color: "white",
   borderRadius: 10,
   padding: "8px 12px",
   cursor: "pointer",
