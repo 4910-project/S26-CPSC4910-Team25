@@ -1,7 +1,6 @@
 import React, { useState, useEffect, useCallback } from "react";
 import "./SponsorProfile.css";
 
-const API_BASE = "http://localhost:8001/api/profile";
 const SPONSOR_API = "http://localhost:8001/sponsor";
 
 export default function SponsorProfile({ token, onLogout, onChangeUsername }) {
@@ -39,26 +38,27 @@ export default function SponsorProfile({ token, onLogout, onChangeUsername }) {
   const fetchProfile = async () => {
     try {
       setLoading(true);
-      const res = await fetch(`${API_BASE}/sponsor`, {
+      // GET /sponsor/org returns: { sponsorId, sponsorName, sponsorStatus, address, contactName, contactEmail, contactPhone }
+      const res = await fetch(`${SPONSOR_API}/org`, {
         headers: { "Authorization": `Bearer ${token}` }
       });
       const data = await res.json();
-      if (res.ok && data.profile) {
+      if (res.ok) {
         setProfile({
-          company_name: data.profile.company_name || "",
-          contact_name: data.profile.contact_name || "",
-          phone: data.profile.phone || "",
-          address: data.profile.address || "",
-          city: data.profile.city || "",
-          state: data.profile.state || "",
-          zip_code: data.profile.zip_code || "",
-          point_value: data.profile.point_value || "0.01"
+          company_name: data.sponsorName || "",
+          contact_name: data.contactName || "",
+          phone: data.contactPhone || "",
+          address: data.address || "",
+          city: "",
+          state: "",
+          zip_code: "",
+          point_value: "0.01"
         });
         setIsEditing(false);
       } else if (res.status === 404) {
         setIsEditing(true);
       } else {
-        throw new Error(data.message || "Failed to fetch profile");
+        throw new Error(data.error || data.message || "Failed to fetch profile");
       }
     } catch (err) {
       setError(err.message);
@@ -82,7 +82,7 @@ export default function SponsorProfile({ token, onLogout, onChangeUsername }) {
       if (!profile.company_name) throw new Error("Company name is required");
       const pointValue = parseFloat(profile.point_value);
       if (isNaN(pointValue) || pointValue < 0) throw new Error("Point value must be a valid positive number");
-      const res = await fetch(`${API_BASE}/sponsor`, {
+      const res = await fetch(`${SPONSOR_API}/org`, {
         method: "POST",
         headers: { "Content-Type": "application/json", "Authorization": `Bearer ${token}` },
         body: JSON.stringify({ ...profile, point_value: pointValue })
@@ -129,12 +129,21 @@ export default function SponsorProfile({ token, onLogout, onChangeUsername }) {
     setDriverLoading(true);
     setDriverError("");
     try {
-      const res = await fetch(`${SPONSOR_API}/applications`, {
+      // Correct route: /sponsor/driver-applications
+      const res = await fetch(`${SPONSOR_API}/driver-applications`, {
         headers: { "Authorization": `Bearer ${token}` }
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "Failed to fetch applications");
-      setApplications(data.applications || []);
+      // Backend returns: { applications: [{ applicationId, email, status, appliedAt, ... }] }
+      // Normalize to consistent shape used in JSX below
+      const normalized = (data.applications || []).map((a) => ({
+        id: a.applicationId,
+        driver_email: a.email,
+        status: a.status,
+        applied_at: a.appliedAt,
+      }));
+      setApplications(normalized);
     } catch (err) {
       setDriverError(err.message);
     } finally {
