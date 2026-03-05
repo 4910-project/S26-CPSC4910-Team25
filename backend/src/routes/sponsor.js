@@ -88,7 +88,6 @@ router.get("/org", async (req, res) => {
 /**
  * PATCH /sponsor/org
  * Update sponsor organization details.
- * Body: { name, contactName, contactPhone, contactEmail, address }
  */
 router.patch("/org", async (req, res) => {
   const sponsorId = getSponsorIdFromSession(req);
@@ -98,7 +97,6 @@ router.patch("/org", async (req, res) => {
 
   const { name, contactName, contactPhone, contactEmail, address } = req.body || {};
 
-  // At least company name is required
   if (!name || !String(name).trim()) {
     return res.status(400).json({ ok: false, error: "Company name is required" });
   }
@@ -127,7 +125,6 @@ router.patch("/org", async (req, res) => {
       return res.status(404).json({ ok: false, error: "sponsor not found" });
     }
 
-    // Return updated record
     const [rows] = await pool.query(
       `SELECT id AS sponsorId, name AS sponsorName, status AS sponsorStatus,
               address, contact_name AS contactName,
@@ -676,6 +673,78 @@ router.patch("/drivers/:driverId/starting-points", async (req, res) => {
   } catch (err) {
     console.error(err);
     return res.status(500).json({ ok: false, error: "failed to set starting points" });
+  }
+});
+
+/**
+ * POST /sponsor/drivers/:driverId/rate
+ * Body: { rating: "thumbs_up" | "thumbs_down" }
+ * Upserts a reliability rating for a driver. Sponsor can change their rating at any time.
+ */
+router.post("/drivers/:driverId/rate", async (req, res) => {
+  const sponsorId = getSponsorIdFromSession(req);
+  if (!sponsorId) return res.status(400).json({ ok: false, error: "sponsor account is not linked" });
+
+  const driverId = parsePositiveInt(req.params.driverId);
+  if (!driverId) return res.status(400).json({ ok: false, error: "invalid driverId" });
+
+  const rating = String(req.body?.rating || "").trim();
+  if (rating !== "thumbs_up" && rating !== "thumbs_down") {
+    return res.status(400).json({ ok: false, error: "rating must be thumbs_up or thumbs_down" });
+  }
+
+  try {
+    // Verify driver belongs to this sponsor
+    const [dRows] = await pool.query(
+      "SELECT id, user_id FROM drivers WHERE id = ? AND sponsor_id = ? LIMIT 1",
+      [driverId, sponsorId]
+    );
+    if (!dRows[0]) return res.status(404).json({ ok: false, error: "driver not found under your sponsor" });
+
+    // Upsert — update if already rated, insert if not
+    await pool.query(
+      `INSERT INTO driver_ratings (sponsor_id, driver_id, rating)
+       VALUES (?, ?, ?)
+       ON DUPLICATE KEY UPDATE rating = VALUES(rating), updated_at = NOW()`,
+      [sponsorId, driverId, rating]
+    );
+
+    await writeAudit({
+      category: "DRIVER_RATED",
+      actorUserId: req.user.id,
+      targetUserId: dRows[0].user_id,
+      sponsorId,
+      success: 1,
+      details: `sponsor rated driverId=${driverId} as ${rating}`,
+    });
+
+    return res.json({ ok: true, message: "Rating saved", rating });
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({ ok: false, error: "failed to save rating" });
+  }
+});
+
+/**
+ * GET /sponsor/drivers/:driverId/rate
+ * Returns the current rating for a driver from this sponsor.
+ */
+router.get("/drivers/:driverId/rate", async (req, res) => {
+  const sponsorId = getSponsorIdFromSession(req);
+  if (!sponsorId) return res.status(400).json({ ok: false, error: "sponsor account is not linked" });
+
+  const driverId = parsePositiveInt(req.params.driverId);
+  if (!driverId) return res.status(400).json({ ok: false, error: "invalid driverId" });
+
+  try {
+    const [rows] = await pool.query(
+      "SELECT rating FROM driver_ratings WHERE sponsor_id = ? AND driver_id = ? LIMIT 1",
+      [sponsorId, driverId]
+    );
+    return res.json({ ok: true, rating: rows[0]?.rating || null });
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({ ok: false, error: "failed to fetch rating" });
   }
 });
 

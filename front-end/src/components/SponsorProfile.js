@@ -29,13 +29,11 @@ export default function SponsorProfile({ token, onLogout, onChangeUsername }) {
   const [driverSuccess, setDriverSuccess] = useState("");
   const [blockReason, setBlockReason] = useState({});       // { [driverId]: "reason text" }
   const [activeTab, setActiveTab] = useState("drivers");     // "drivers" | "applications"
+  const [ratings, setRatings] = useState({});               // { [driverId]: "thumbs_up" | "thumbs_down" | null }
+  const [sortByRating, setSortByRating] = useState(false);  // when true, sort thumbs_up to top
 
   // ─── Existing profile fetch (unchanged) ────────────────────────────────────
-  useEffect(() => {
-    fetchProfile();
-  }, []);
-
-  const fetchProfile = async () => {
+  const fetchProfile = useCallback(async () => {
     try {
       setLoading(true);
       // GET /sponsor/org returns: { sponsorId, sponsorName, sponsorStatus, address, contactName, contactEmail, contactPhone }
@@ -65,7 +63,11 @@ export default function SponsorProfile({ token, onLogout, onChangeUsername }) {
     } finally {
       setLoading(false);
     }
-  };
+  }, [token]);
+
+  useEffect(() => {
+    fetchProfile();
+  }, [fetchProfile]);
 
   const handleChange = (e) => {
     setProfile({ ...profile, [e.target.name]: e.target.value });
@@ -122,7 +124,26 @@ export default function SponsorProfile({ token, onLogout, onChangeUsername }) {
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "Failed to fetch drivers");
-      setDrivers(data.drivers || []);
+      const driverList = data.drivers || [];
+      setDrivers(driverList);
+
+      // Fetch existing ratings for all drivers in parallel
+      const ratingEntries = await Promise.all(
+        driverList
+          .filter((d) => d.driverId)
+          .map(async (d) => {
+            try {
+              const r = await fetch(`${SPONSOR_API}/drivers/${d.driverId}/rate`, {
+                headers: { "Authorization": `Bearer ${token}` }
+              });
+              const rd = await r.json();
+              return [d.driverId, rd.rating || null];
+            } catch {
+              return [d.driverId, null];
+            }
+          })
+      );
+      setRatings(Object.fromEntries(ratingEntries));
     } catch (err) {
       setDriverError(err.message);
     } finally {
@@ -160,6 +181,30 @@ export default function SponsorProfile({ token, onLogout, onChangeUsername }) {
     if (activeTab === "drivers") fetchDrivers();
     else fetchApplications();
   }, [activeTab, fetchDrivers, fetchApplications]);
+
+  const handleRate = async (driverId, rating) => {
+    // Toggle off if clicking the same rating again
+    const newRating = ratings[driverId] === rating ? null : rating;
+
+    // Optimistic update
+    setRatings((prev) => ({ ...prev, [driverId]: newRating }));
+
+    try {
+      if (newRating) {
+        const res = await fetch(`${SPONSOR_API}/drivers/${driverId}/rate`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json", "Authorization": `Bearer ${token}` },
+          body: JSON.stringify({ rating: newRating }),
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || "Failed to save rating");
+      }
+    } catch (err) {
+      // Revert on failure
+      setRatings((prev) => ({ ...prev, [driverId]: ratings[driverId] }));
+      setDriverError(err.message);
+    }
+  };
 
   const handleBlock = async (driverId) => {
     const reason = blockReason[driverId] || "";
@@ -371,33 +416,104 @@ export default function SponsorProfile({ token, onLogout, onChangeUsername }) {
         {!driverLoading && activeTab === "drivers" && (
           drivers.length === 0
             ? <p style={{ color: "#6b7280" }}>No drivers found under your sponsor.</p>
-            : (
-              <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 14 }}>
-                <thead>
-                  <tr style={{ borderBottom: "2px solid #e5e7eb" }}>
-                    <th style={{ textAlign: "left", padding: "8px 12px" }}>Email</th>
-                    <th style={{ textAlign: "left", padding: "8px 12px" }}>Status</th>
-                    <th style={{ textAlign: "left", padding: "8px 12px" }}>Reason</th>
-                    <th style={{ textAlign: "left", padding: "8px 12px" }}>Actions</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {drivers.map((d) => (
-                    <tr key={d.driver_id} style={{ borderBottom: "1px solid #f3f4f6" }}>
+            : (() => {
+              const ratingScore = (d) =>
+                ratings[d.driverId] === "thumbs_up" ? 1 :
+                ratings[d.driverId] === "thumbs_down" ? -1 : 0;
+
+              const sortedDrivers = sortByRating
+                ? [...drivers].sort((a, b) => ratingScore(b) - ratingScore(a))
+                : drivers;
+
+              return (
+              <div>
+                {/* Sort control */}
+                <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: 10 }}>
+                  <button
+                    type="button"
+                    onClick={() => setSortByRating((s) => !s)}
+                    style={{
+                      display: "flex",
+                      alignItems: "center",
+                      gap: 6,
+                      padding: "6px 14px",
+                      borderRadius: 8,
+                      border: sortByRating ? "2px solid #16a34a" : "1px solid var(--border, #d1d5db)",
+                      background: sortByRating ? "#dcfce7" : "var(--card, #fff)",
+                      color: sortByRating ? "#15803d" : "inherit",
+                      fontWeight: 600,
+                      fontSize: 13,
+                      cursor: "pointer",
+                      transition: "all 0.15s",
+                    }}
+                  >
+                    👍 {sortByRating ? "Sorted by reliability" : "Sort by reliability"}
+                  </button>
+                </div>
+
+                <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 14 }}>
+                  <thead>
+                    <tr style={{ borderBottom: "2px solid #e5e7eb" }}>
+                      <th style={{ textAlign: "left", padding: "8px 12px" }}>Email</th>
+                      <th style={{ textAlign: "left", padding: "8px 12px" }}>Status</th>
+                      <th style={{ textAlign: "left", padding: "8px 12px" }}>Reason</th>
+                      <th style={{ textAlign: "left", padding: "8px 12px" }}>Reliability</th>
+                      <th style={{ textAlign: "left", padding: "8px 12px" }}>Actions</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {sortedDrivers.map((d) => (
+                    <tr key={d.driverId} style={{ borderBottom: "1px solid #f3f4f6" }}>
                       <td style={{ padding: "10px 12px" }}>{d.email}</td>
-                      <td style={{ padding: "10px 12px" }}><StatusBadge status={d.driver_status} /></td>
+                      <td style={{ padding: "10px 12px" }}><StatusBadge status={d.status} /></td>
                       <td style={{ padding: "10px 12px", color: "#6b7280", fontSize: 12 }}>
-                        {d.dropped_reason || "—"}
+                        {d.blockReason || "—"}
                       </td>
                       <td style={{ padding: "10px 12px" }}>
-                        {d.driver_status !== "BLOCKED" ? (
+                        <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
+                          <button
+                            type="button"
+                            title="Reliable"
+                            onClick={() => handleRate(d.driverId, "thumbs_up")}
+                            style={{
+                              background: ratings[d.driverId] === "thumbs_up" ? "#dcfce7" : "var(--card)",
+                              border: ratings[d.driverId] === "thumbs_up" ? "2px solid #16a34a" : "1px solid var(--border)",
+                              borderRadius: 8,
+                              padding: "4px 10px",
+                              cursor: "pointer",
+                              fontSize: 16,
+                              transition: "all 0.15s",
+                            }}
+                          >
+                            👍
+                          </button>
+                          <button
+                            type="button"
+                            title="Unreliable"
+                            onClick={() => handleRate(d.driverId, "thumbs_down")}
+                            style={{
+                              background: ratings[d.driverId] === "thumbs_down" ? "#fee2e2" : "var(--card)",
+                              border: ratings[d.driverId] === "thumbs_down" ? "2px solid #dc2626" : "1px solid var(--border)",
+                              borderRadius: 8,
+                              padding: "4px 10px",
+                              cursor: "pointer",
+                              fontSize: 16,
+                              transition: "all 0.15s",
+                            }}
+                          >
+                            👎
+                          </button>
+                        </div>
+                      </td>
+                      <td style={{ padding: "10px 12px" }}>
+                        {d.status?.toLowerCase() !== "blocked" ? (
                           <div style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" }}>
                             <input
                               type="text"
                               placeholder="Reason (required)"
-                              value={blockReason[d.driver_id] || ""}
+                              value={blockReason[d.driverId] || ""}
                               onChange={(e) =>
-                                setBlockReason((prev) => ({ ...prev, [d.driver_id]: e.target.value }))
+                                setBlockReason((prev) => ({ ...prev, [d.driverId]: e.target.value }))
                               }
                               style={{
                                 padding: "5px 8px", borderRadius: 6,
@@ -406,7 +522,7 @@ export default function SponsorProfile({ token, onLogout, onChangeUsername }) {
                             />
                             <button
                               type="button"
-                              onClick={() => handleBlock(d.driver_id)}
+                              onClick={() => handleBlock(d.driverId)}
                               style={{
                                 padding: "5px 12px", borderRadius: 6, border: "none",
                                 background: "#ef4444", color: "#fff", fontWeight: 600,
@@ -419,7 +535,7 @@ export default function SponsorProfile({ token, onLogout, onChangeUsername }) {
                         ) : (
                           <button
                             type="button"
-                            onClick={() => handleUnblock(d.driver_id)}
+                            onClick={() => handleUnblock(d.driverId)}
                             style={{
                               padding: "5px 12px", borderRadius: 6, border: "none",
                               background: "#10b981", color: "#fff", fontWeight: 600,
@@ -434,7 +550,9 @@ export default function SponsorProfile({ token, onLogout, onChangeUsername }) {
                   ))}
                 </tbody>
               </table>
-            )
+            </div>
+            );
+          })()
         )}
 
         {/* Applications tab */}
