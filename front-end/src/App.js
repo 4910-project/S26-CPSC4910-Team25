@@ -14,6 +14,7 @@ import ChangePassword from "./components/ChangePassword";
 import ForgotPassword from "./components/ForgotPassword";
 import ForgotUsername from "./components/ForgotUsername";
 import ChangeUsername from "./components/ChangeUsername";
+import Catalogue from "./Catalogue.js"; // ← NEW
 
 // ── Small dark toggle for unauthenticated pages ────────────────────────────
 function PreAuthToggle({ dark, onToggleDark }) {
@@ -44,9 +45,10 @@ function AuthLayout({ userRole, onLogout, dark, onToggleDark, children }) {
       <Navbar
         userRole={userRole}
         onNavigate={(screen) => {
-          if (screen === "driver-profile") navigate("/driver");
+          if (screen === "driver-profile")       navigate("/driver");
           else if (screen === "sponsor-profile") navigate("/sponsor");
           else if (screen === "admin-dashboard") navigate("/admin");
+          else if (screen === "catalogue")       navigate("/catalogue"); // ← NEW
         }}
         onLogout={onLogout}
         dark={dark}
@@ -62,7 +64,6 @@ export default function App() {
   const [token, setToken] = useState(() => sessionStorage.getItem("token") || null);
   const [userRole, setUserRole] = useState(() => sessionStorage.getItem("userRole") || null);
 
-  // mfaComplete: true means user has passed the MFA step this session
   const [mfaComplete, setMfaComplete] = useState(
     () => sessionStorage.getItem("mfaComplete") === "true"
   );
@@ -88,7 +89,7 @@ export default function App() {
   const handleLogin = (t, role) => {
     sessionStorage.setItem("token", t);
     sessionStorage.setItem("userRole", role);
-    sessionStorage.removeItem("mfaComplete"); // always re-do MFA on fresh login
+    sessionStorage.removeItem("mfaComplete");
     setToken(t);
     setUserRole(role);
     setMfaComplete(false);
@@ -108,7 +109,7 @@ export default function App() {
     setShowChangeUsername(false);
   };
 
-  // ── NOT logged in: show public routes ─────────────────────────────────────
+  // ── NOT logged in ──────────────────────────────────────────────────────────
   if (!token) {
     return (
       <Routes>
@@ -135,7 +136,7 @@ export default function App() {
     );
   }
 
-  // ── LOGGED IN but MFA not done yet: show MFA gate (no route needed) ───────
+  // ── LOGGED IN but MFA not done ─────────────────────────────────────────────
   if (!mfaComplete) {
     return (
       <>
@@ -156,7 +157,7 @@ export default function App() {
     );
   }
 
-  // ── LOGGED IN + MFA done: show dashboard routes with proper URLs ───────────
+  // ── LOGGED IN + MFA done ───────────────────────────────────────────────────
   const dashboardRedirect =
     userRole === "DRIVER"  ? "/driver"  :
     userRole === "SPONSOR" ? "/sponsor" :
@@ -164,6 +165,7 @@ export default function App() {
 
   return (
     <Routes>
+
       {/* Driver dashboard */}
       <Route path="/driver" element={
         <AuthLayout userRole={userRole} onLogout={handleLogout} dark={dark} onToggleDark={toggleDark}>
@@ -207,8 +209,16 @@ export default function App() {
         </AuthLayout>
       } />
 
-      {/* Catch-all: send to correct dashboard */}
+      {/* Catalogue — all roles */}
+      <Route path="/catalogue" element={
+        <AuthLayout userRole={userRole} onLogout={handleLogout} dark={dark} onToggleDark={toggleDark}>
+          <Catalogue token={token} initialPoints={1000} />
+        </AuthLayout>
+      } />
+
+      {/* Catch-all */}
       <Route path="*" element={<Navigate to={dashboardRedirect} replace />} />
+
     </Routes>
   );
 }

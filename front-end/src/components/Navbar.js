@@ -57,6 +57,16 @@ export default function Navbar({ userRole, screen, onNavigate, onLogout, dark, o
 
         <button
           type="button"
+          className={`navbar__link ${screen === "catalogue" ? "navbar__link--active" : ""}`}
+          onClick={() => onNavigate("catalogue")}
+        >
+          Catalogue
+        </button>
+
+        <span className={roleBadgeClass}>{roleLabel}</span>
+
+        <button
+          type="button"
           className="navbar__icon-btn"
           onClick={onToggleDark}
           aria-label="Toggle dark mode"
