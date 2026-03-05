@@ -24,6 +24,7 @@ const driverRoutes = require("./routes/driver");
 const mfaRoutes = require("./routes/mfa");
 const sponsorRoutes = require("./routes/sponsor");
 const profileRoutes = require("./routes/profile");
+const driverAppsRoutes = require("./routes/driverApps");
 
 const app = express();
 
@@ -83,6 +84,8 @@ app.use("/api", driverRoutes);
 
 // Sponsor routes
 app.use("/sponsor", sponsorRoutes);
+
+app.use("/api/apps", driverAppsRoutes);
 
 
 app.get("/health", async (req, res) => {
