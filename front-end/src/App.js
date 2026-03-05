@@ -8,6 +8,7 @@ import MFASettings from "./MFASettings";
 import About from "./components/About";
 import DriverProfile from "./components/DriverProfile";
 import SponsorProfile from "./components/SponsorProfile";
+import AdminDashboard from "./components/adminDashboard";
 import PasswordReset from "./components/PasswordReset";
 import ChangePassword from "./components/ChangePassword";
 import ForgotPassword from "./components/ForgotPassword";
@@ -196,6 +197,13 @@ export default function App() {
           {showChangeUsername && (
             <ChangeUsername token={token} onClose={() => setShowChangeUsername(false)} />
           )}
+        </AuthLayout>
+      } />
+
+      {/* Admin dashboard */}
+      <Route path="/admin" element={
+        <AuthLayout userRole={userRole} onLogout={handleLogout} dark={dark} onToggleDark={toggleDark}>
+          <AdminDashboard token={token} onLogout={handleLogout} />
         </AuthLayout>
       } />
 

@@ -1,0 +1,313 @@
+import React, { useState, useEffect, useCallback } from "react";
+
+const ADMIN_API = "http://localhost:8001/admin";
+
+const CATEGORIES = [
+  "All",
+  "Bug Report",
+  "Feature Request",
+  "Points Issue",
+  "Account Problem",
+  "Sponsor Issue",
+  "General Feedback",
+  "Other",
+];
+
+const STATUS_COLORS = {
+  open:     { bg: "#dbeafe", color: "#1e40af" },
+  reviewed: { bg: "#fef3c7", color: "#92400e" },
+  resolved: { bg: "#d1fae5", color: "#065f46" },
+};
+
+function StatusBadge({ status }) {
+  const s = STATUS_COLORS[status] || { bg: "#f3f4f6", color: "#374151" };
+  return (
+    <span style={{
+      padding: "2px 10px", borderRadius: 12, fontSize: 12, fontWeight: 700,
+      background: s.bg, color: s.color, textTransform: "capitalize",
+    }}>
+      {status}
+    </span>
+  );
+}
+
+export default function AdminDashboard({ token, onLogout }) {
+  const [feedback, setFeedback] = useState([]);
+  const [total, setTotal] = useState(0);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState("");
+
+  // Filters
+  const [filterStatus,   setFilterStatus]   = useState("");
+  const [filterCategory, setFilterCategory] = useState("");
+  const [page, setPage] = useState(1);
+  const limit = 20;
+
+  // Expanded row for admin note editing
+  const [expanded, setExpanded]   = useState(null);
+  const [noteText,  setNoteText]  = useState("");
+  const [updating,  setUpdating]  = useState({});
+
+  const fetchFeedback = useCallback(async () => {
+    setLoading(true);
+    setError("");
+    try {
+      const params = new URLSearchParams({ page, limit });
+      if (filterStatus)   params.set("status",   filterStatus);
+      if (filterCategory && filterCategory !== "All")
+        params.set("category", filterCategory);
+
+      const res = await fetch(`${ADMIN_API}/feedback?${params}`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Failed to fetch feedback");
+      setFeedback(data.feedback || []);
+      setTotal(data.total || 0);
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setLoading(false);
+    }
+  }, [token, page, filterStatus, filterCategory]);
+
+  useEffect(() => { fetchFeedback(); }, [fetchFeedback]);
+
+  const handleUpdate = async (id, updates) => {
+    setUpdating((prev) => ({ ...prev, [id]: true }));
+    try {
+      const res = await fetch(`${ADMIN_API}/feedback/${id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+        body: JSON.stringify(updates),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Failed to update");
+      setExpanded(null);
+      fetchFeedback();
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setUpdating((prev) => ({ ...prev, [id]: false }));
+    }
+  };
+
+  const totalPages = Math.ceil(total / limit);
+
+  return (
+    <div style={{ maxWidth: 1000, margin: "30px auto", padding: 20 }}>
+      <h1 style={{ margin: 0, marginBottom: 4 }}>Admin Dashboard</h1>
+      <p style={{ color: "var(--muted)", fontSize: 14, marginTop: 0, marginBottom: 24 }}>
+        Manage driver feedback submissions.
+      </p>
+
+      {/* ── Filters ── */}
+      <div style={{ display: "flex", gap: 12, marginBottom: 20, flexWrap: "wrap", alignItems: "center" }}>
+        <select
+          value={filterStatus}
+          onChange={(e) => { setFilterStatus(e.target.value); setPage(1); }}
+          style={selectStyle}
+        >
+          <option value="">All Statuses</option>
+          <option value="open">Open</option>
+          <option value="reviewed">Reviewed</option>
+          <option value="resolved">Resolved</option>
+        </select>
+
+        <select
+          value={filterCategory}
+          onChange={(e) => { setFilterCategory(e.target.value); setPage(1); }}
+          style={selectStyle}
+        >
+          {CATEGORIES.map((c) => (
+            <option key={c} value={c === "All" ? "" : c}>{c}</option>
+          ))}
+        </select>
+
+        <span style={{ marginLeft: "auto", fontSize: 13, color: "var(--muted)" }}>
+          {total} submission{total !== 1 ? "s" : ""}
+        </span>
+      </div>
+
+      {error && (
+        <div style={{ padding: "10px 14px", borderRadius: 8, background: "#fef2f2", color: "#991b1b", marginBottom: 16 }}>
+          {error}
+        </div>
+      )}
+
+      {loading && <p style={{ color: "var(--muted)" }}>Loading…</p>}
+
+      {/* ── Feedback table ── */}
+      {!loading && feedback.length === 0 && (
+        <p style={{ color: "var(--muted)" }}>No feedback found.</p>
+      )}
+
+      {!loading && feedback.length > 0 && (
+        <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+          {feedback.map((item) => {
+            const isOpen = expanded === item.id;
+            return (
+              <div
+                key={item.id}
+                style={{
+                  border: "1px solid var(--border, #e5e7eb)",
+                  borderRadius: 12,
+                  padding: 16,
+                  background: "var(--card)",
+                }}
+              >
+                {/* Row header */}
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 12, flexWrap: "wrap" }}>
+                  <div style={{ flex: 1 }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 4, flexWrap: "wrap" }}>
+                      <span style={{
+                        padding: "2px 10px", borderRadius: 12, fontSize: 12, fontWeight: 700,
+                        background: "#ede9fe", color: "#5b21b6",
+                      }}>
+                        {item.category}
+                      </span>
+                      <StatusBadge status={item.status} />
+                      <span style={{ fontSize: 12, color: "var(--muted)" }}>
+                        {item.submitter_email} · {item.submitter_role}
+                      </span>
+                      <span style={{ fontSize: 12, color: "var(--muted)" }}>
+                        {new Date(item.created_at).toLocaleString()}
+                      </span>
+                    </div>
+                    <p style={{ margin: 0, fontSize: 14, color: "var(--text)", lineHeight: 1.5 }}>
+                      {item.message}
+                    </p>
+                    {item.admin_note && !isOpen && (
+                      <p style={{ margin: "8px 0 0", fontSize: 13, color: "#6b7280", fontStyle: "italic" }}>
+                        📝 Note: {item.admin_note}
+                      </p>
+                    )}
+                  </div>
+
+                  {/* Quick status buttons */}
+                  <div style={{ display: "flex", flexDirection: "column", gap: 6, alignItems: "flex-end" }}>
+                    <div style={{ display: "flex", gap: 6 }}>
+                      {["open", "reviewed", "resolved"].map((s) => (
+                        <button
+                          key={s}
+                          type="button"
+                          disabled={item.status === s || updating[item.id]}
+                          onClick={() => handleUpdate(item.id, { status: s })}
+                          style={{
+                            padding: "4px 10px", borderRadius: 6, fontSize: 12, fontWeight: 600,
+                            border: item.status === s ? "2px solid #4f46e5" : "1px solid var(--border, #d1d5db)",
+                            background: item.status === s ? "#ede9fe" : "transparent",
+                            color: item.status === s ? "#4f46e5" : "inherit",
+                            cursor: item.status === s ? "default" : "pointer",
+                            textTransform: "capitalize",
+                          }}
+                        >
+                          {s}
+                        </button>
+                      ))}
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setExpanded(isOpen ? null : item.id);
+                        setNoteText(item.admin_note || "");
+                      }}
+                      style={{
+                        padding: "4px 12px", borderRadius: 6, fontSize: 12, fontWeight: 600,
+                        border: "1px solid var(--border, #d1d5db)",
+                        background: isOpen ? "#f3f4f6" : "transparent",
+                        cursor: "pointer",
+                      }}
+                    >
+                      {isOpen ? "Cancel" : "✏️ Add Note"}
+                    </button>
+                  </div>
+                </div>
+
+                {/* Expandable note editor */}
+                {isOpen && (
+                  <div style={{ marginTop: 12, borderTop: "1px solid var(--border, #e5e7eb)", paddingTop: 12 }}>
+                    <label style={{ fontWeight: 600, fontSize: 13, display: "block", marginBottom: 6 }}>
+                      Admin Note
+                    </label>
+                    <textarea
+                      rows={3}
+                      value={noteText}
+                      onChange={(e) => setNoteText(e.target.value)}
+                      placeholder="Add an internal note..."
+                      style={{
+                        width: "100%", padding: "8px 10px", borderRadius: 8,
+                        border: "1px solid var(--border, #d1d5db)", fontSize: 14,
+                        resize: "vertical", background: "var(--card)", color: "var(--text)",
+                        boxSizing: "border-box",
+                      }}
+                    />
+                    <button
+                      type="button"
+                      disabled={updating[item.id]}
+                      onClick={() => handleUpdate(item.id, { adminNote: noteText })}
+                      style={{
+                        marginTop: 8, padding: "6px 18px", borderRadius: 8, border: "none",
+                        background: "#4f46e5", color: "#fff", fontWeight: 700,
+                        cursor: updating[item.id] ? "not-allowed" : "pointer",
+                        opacity: updating[item.id] ? 0.6 : 1,
+                      }}
+                    >
+                      {updating[item.id] ? "Saving…" : "Save Note"}
+                    </button>
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      )}
+
+      {/* ── Pagination ── */}
+      {totalPages > 1 && (
+        <div style={{ display: "flex", justifyContent: "center", gap: 8, marginTop: 24 }}>
+          <button
+            type="button"
+            disabled={page === 1}
+            onClick={() => setPage((p) => p - 1)}
+            style={{ ...pageBtn, opacity: page === 1 ? 0.4 : 1 }}
+          >
+            ← Prev
+          </button>
+          <span style={{ padding: "6px 12px", fontSize: 14, color: "var(--muted)" }}>
+            Page {page} of {totalPages}
+          </span>
+          <button
+            type="button"
+            disabled={page === totalPages}
+            onClick={() => setPage((p) => p + 1)}
+            style={{ ...pageBtn, opacity: page === totalPages ? 0.4 : 1 }}
+          >
+            Next →
+          </button>
+        </div>
+      )}
+    </div>
+  );
+}
+
+const selectStyle = {
+  padding: "7px 12px",
+  borderRadius: 8,
+  border: "1px solid var(--border, #d1d5db)",
+  fontSize: 13,
+  background: "var(--card)",
+  color: "var(--text)",
+  cursor: "pointer",
+};
+
+const pageBtn = {
+  padding: "6px 16px",
+  borderRadius: 8,
+  border: "1px solid var(--border, #d1d5db)",
+  background: "var(--card)",
+  color: "var(--text)",
+  fontWeight: 600,
+  fontSize: 13,
+  cursor: "pointer",
+};
