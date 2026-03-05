@@ -1,7 +1,6 @@
 import React, { useState, useEffect, useCallback } from "react";
 import "./SponsorProfile.css";
 
-const API_BASE = "http://localhost:8001/api/profile";
 const SPONSOR_API = "http://localhost:8001/sponsor";
 
 export default function SponsorProfile({ token, onLogout, onChangeUsername }) {
@@ -30,42 +29,45 @@ export default function SponsorProfile({ token, onLogout, onChangeUsername }) {
   const [driverSuccess, setDriverSuccess] = useState("");
   const [blockReason, setBlockReason] = useState({});       // { [driverId]: "reason text" }
   const [activeTab, setActiveTab] = useState("drivers");     // "drivers" | "applications"
+  const [ratings, setRatings] = useState({});               // { [driverId]: "thumbs_up" | "thumbs_down" | null }
+  const [sortByRating, setSortByRating] = useState(false);  // when true, sort thumbs_up to top
 
   // ─── Existing profile fetch (unchanged) ────────────────────────────────────
-  useEffect(() => {
-    fetchProfile();
-  }, []);
-
-  const fetchProfile = async () => {
+  const fetchProfile = useCallback(async () => {
     try {
       setLoading(true);
-      const res = await fetch(`${API_BASE}/sponsor`, {
+      // GET /sponsor/org returns: { sponsorId, sponsorName, sponsorStatus, address, contactName, contactEmail, contactPhone }
+      const res = await fetch(`${SPONSOR_API}/org`, {
         headers: { "Authorization": `Bearer ${token}` }
       });
       const data = await res.json();
-      if (res.ok && data.profile) {
+      if (res.ok) {
         setProfile({
-          company_name: data.profile.company_name || "",
-          contact_name: data.profile.contact_name || "",
-          phone: data.profile.phone || "",
-          address: data.profile.address || "",
-          city: data.profile.city || "",
-          state: data.profile.state || "",
-          zip_code: data.profile.zip_code || "",
-          point_value: data.profile.point_value || "0.01"
+          company_name: data.sponsorName || "",
+          contact_name: data.contactName || "",
+          phone: data.contactPhone || "",
+          address: data.address || "",
+          city: "",
+          state: "",
+          zip_code: "",
+          point_value: "0.01"
         });
         setIsEditing(false);
       } else if (res.status === 404) {
         setIsEditing(true);
       } else {
-        throw new Error(data.message || "Failed to fetch profile");
+        throw new Error(data.error || data.message || "Failed to fetch profile");
       }
     } catch (err) {
       setError(err.message);
     } finally {
       setLoading(false);
     }
-  };
+  }, [token]);
+
+  useEffect(() => {
+    fetchProfile();
+  }, [fetchProfile]);
 
   const handleChange = (e) => {
     setProfile({ ...profile, [e.target.name]: e.target.value });
@@ -80,15 +82,20 @@ export default function SponsorProfile({ token, onLogout, onChangeUsername }) {
     setSaving(true);
     try {
       if (!profile.company_name) throw new Error("Company name is required");
-      const pointValue = parseFloat(profile.point_value);
-      if (isNaN(pointValue) || pointValue < 0) throw new Error("Point value must be a valid positive number");
-      const res = await fetch(`${API_BASE}/sponsor`, {
-        method: "POST",
+
+      const res = await fetch(`${SPONSOR_API}/org`, {
+        method: "PATCH",
         headers: { "Content-Type": "application/json", "Authorization": `Bearer ${token}` },
-        body: JSON.stringify({ ...profile, point_value: pointValue })
+        body: JSON.stringify({
+          name:         profile.company_name,
+          contactName:  profile.contact_name,
+          contactPhone: profile.phone,
+          address:      [profile.address, profile.city, profile.state, profile.zip_code]
+                          .filter(Boolean).join(", "),
+        })
       });
       const data = await res.json();
-      if (!res.ok) throw new Error(data.message || "Failed to save profile");
+      if (!res.ok) throw new Error(data.error || data.message || "Failed to save profile");
       setSuccess(data.message);
       setIsEditing(false);
       await fetchProfile();
@@ -117,7 +124,26 @@ export default function SponsorProfile({ token, onLogout, onChangeUsername }) {
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "Failed to fetch drivers");
-      setDrivers(data.drivers || []);
+      const driverList = data.drivers || [];
+      setDrivers(driverList);
+
+      // Fetch existing ratings for all drivers in parallel
+      const ratingEntries = await Promise.all(
+        driverList
+          .filter((d) => d.driverId)
+          .map(async (d) => {
+            try {
+              const r = await fetch(`${SPONSOR_API}/drivers/${d.driverId}/rate`, {
+                headers: { "Authorization": `Bearer ${token}` }
+              });
+              const rd = await r.json();
+              return [d.driverId, rd.rating || null];
+            } catch {
+              return [d.driverId, null];
+            }
+          })
+      );
+      setRatings(Object.fromEntries(ratingEntries));
     } catch (err) {
       setDriverError(err.message);
     } finally {
@@ -129,12 +155,21 @@ export default function SponsorProfile({ token, onLogout, onChangeUsername }) {
     setDriverLoading(true);
     setDriverError("");
     try {
-      const res = await fetch(`${SPONSOR_API}/applications`, {
+      // Correct route: /sponsor/driver-applications
+      const res = await fetch(`${SPONSOR_API}/driver-applications`, {
         headers: { "Authorization": `Bearer ${token}` }
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "Failed to fetch applications");
-      setApplications(data.applications || []);
+      // Backend returns: { applications: [{ applicationId, email, status, appliedAt, ... }] }
+      // Normalize to consistent shape used in JSX below
+      const normalized = (data.applications || []).map((a) => ({
+        id: a.applicationId,
+        driver_email: a.email,
+        status: a.status,
+        applied_at: a.appliedAt,
+      }));
+      setApplications(normalized);
     } catch (err) {
       setDriverError(err.message);
     } finally {
@@ -146,6 +181,30 @@ export default function SponsorProfile({ token, onLogout, onChangeUsername }) {
     if (activeTab === "drivers") fetchDrivers();
     else fetchApplications();
   }, [activeTab, fetchDrivers, fetchApplications]);
+
+  const handleRate = async (driverId, rating) => {
+    // Toggle off if clicking the same rating again
+    const newRating = ratings[driverId] === rating ? null : rating;
+
+    // Optimistic update
+    setRatings((prev) => ({ ...prev, [driverId]: newRating }));
+
+    try {
+      if (newRating) {
+        const res = await fetch(`${SPONSOR_API}/drivers/${driverId}/rate`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json", "Authorization": `Bearer ${token}` },
+          body: JSON.stringify({ rating: newRating }),
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || "Failed to save rating");
+      }
+    } catch (err) {
+      // Revert on failure
+      setRatings((prev) => ({ ...prev, [driverId]: ratings[driverId] }));
+      setDriverError(err.message);
+    }
+  };
 
   const handleBlock = async (driverId) => {
     const reason = blockReason[driverId] || "";
@@ -234,7 +293,7 @@ export default function SponsorProfile({ token, onLogout, onChangeUsername }) {
 
   return (
     <div className="sponsor-profile-container">
-      {/* ── Existing header (unchanged) ── */}
+      {/* ── Page header ── */}
       <div className="profile-header">
         <h1>Sponsor Profile</h1>
         <div className="header-actions">
@@ -244,7 +303,6 @@ export default function SponsorProfile({ token, onLogout, onChangeUsername }) {
           {!isEditing && (
             <button onClick={onChangeUsername} className="btn-edit">Change Username</button>
           )}
-          <button onClick={onLogout} className="btn-logout">Logout</button>
         </div>
       </div>
 
@@ -358,33 +416,104 @@ export default function SponsorProfile({ token, onLogout, onChangeUsername }) {
         {!driverLoading && activeTab === "drivers" && (
           drivers.length === 0
             ? <p style={{ color: "#6b7280" }}>No drivers found under your sponsor.</p>
-            : (
-              <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 14 }}>
-                <thead>
-                  <tr style={{ borderBottom: "2px solid #e5e7eb" }}>
-                    <th style={{ textAlign: "left", padding: "8px 12px" }}>Email</th>
-                    <th style={{ textAlign: "left", padding: "8px 12px" }}>Status</th>
-                    <th style={{ textAlign: "left", padding: "8px 12px" }}>Reason</th>
-                    <th style={{ textAlign: "left", padding: "8px 12px" }}>Actions</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {drivers.map((d) => (
-                    <tr key={d.driver_id} style={{ borderBottom: "1px solid #f3f4f6" }}>
+            : (() => {
+              const ratingScore = (d) =>
+                ratings[d.driverId] === "thumbs_up" ? 1 :
+                ratings[d.driverId] === "thumbs_down" ? -1 : 0;
+
+              const sortedDrivers = sortByRating
+                ? [...drivers].sort((a, b) => ratingScore(b) - ratingScore(a))
+                : drivers;
+
+              return (
+              <div>
+                {/* Sort control */}
+                <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: 10 }}>
+                  <button
+                    type="button"
+                    onClick={() => setSortByRating((s) => !s)}
+                    style={{
+                      display: "flex",
+                      alignItems: "center",
+                      gap: 6,
+                      padding: "6px 14px",
+                      borderRadius: 8,
+                      border: sortByRating ? "2px solid #16a34a" : "1px solid var(--border, #d1d5db)",
+                      background: sortByRating ? "#dcfce7" : "var(--card, #fff)",
+                      color: sortByRating ? "#15803d" : "inherit",
+                      fontWeight: 600,
+                      fontSize: 13,
+                      cursor: "pointer",
+                      transition: "all 0.15s",
+                    }}
+                  >
+                    👍 {sortByRating ? "Sorted by reliability" : "Sort by reliability"}
+                  </button>
+                </div>
+
+                <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 14 }}>
+                  <thead>
+                    <tr style={{ borderBottom: "2px solid #e5e7eb" }}>
+                      <th style={{ textAlign: "left", padding: "8px 12px" }}>Email</th>
+                      <th style={{ textAlign: "left", padding: "8px 12px" }}>Status</th>
+                      <th style={{ textAlign: "left", padding: "8px 12px" }}>Reason</th>
+                      <th style={{ textAlign: "left", padding: "8px 12px" }}>Reliability</th>
+                      <th style={{ textAlign: "left", padding: "8px 12px" }}>Actions</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {sortedDrivers.map((d) => (
+                    <tr key={d.driverId} style={{ borderBottom: "1px solid #f3f4f6" }}>
                       <td style={{ padding: "10px 12px" }}>{d.email}</td>
-                      <td style={{ padding: "10px 12px" }}><StatusBadge status={d.driver_status} /></td>
+                      <td style={{ padding: "10px 12px" }}><StatusBadge status={d.status} /></td>
                       <td style={{ padding: "10px 12px", color: "#6b7280", fontSize: 12 }}>
-                        {d.dropped_reason || "—"}
+                        {d.blockReason || "—"}
                       </td>
                       <td style={{ padding: "10px 12px" }}>
-                        {d.driver_status !== "BLOCKED" ? (
+                        <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
+                          <button
+                            type="button"
+                            title="Reliable"
+                            onClick={() => handleRate(d.driverId, "thumbs_up")}
+                            style={{
+                              background: ratings[d.driverId] === "thumbs_up" ? "#dcfce7" : "var(--card)",
+                              border: ratings[d.driverId] === "thumbs_up" ? "2px solid #16a34a" : "1px solid var(--border)",
+                              borderRadius: 8,
+                              padding: "4px 10px",
+                              cursor: "pointer",
+                              fontSize: 16,
+                              transition: "all 0.15s",
+                            }}
+                          >
+                            👍
+                          </button>
+                          <button
+                            type="button"
+                            title="Unreliable"
+                            onClick={() => handleRate(d.driverId, "thumbs_down")}
+                            style={{
+                              background: ratings[d.driverId] === "thumbs_down" ? "#fee2e2" : "var(--card)",
+                              border: ratings[d.driverId] === "thumbs_down" ? "2px solid #dc2626" : "1px solid var(--border)",
+                              borderRadius: 8,
+                              padding: "4px 10px",
+                              cursor: "pointer",
+                              fontSize: 16,
+                              transition: "all 0.15s",
+                            }}
+                          >
+                            👎
+                          </button>
+                        </div>
+                      </td>
+                      <td style={{ padding: "10px 12px" }}>
+                        {d.status?.toLowerCase() !== "blocked" ? (
                           <div style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" }}>
                             <input
                               type="text"
                               placeholder="Reason (required)"
-                              value={blockReason[d.driver_id] || ""}
+                              value={blockReason[d.driverId] || ""}
                               onChange={(e) =>
-                                setBlockReason((prev) => ({ ...prev, [d.driver_id]: e.target.value }))
+                                setBlockReason((prev) => ({ ...prev, [d.driverId]: e.target.value }))
                               }
                               style={{
                                 padding: "5px 8px", borderRadius: 6,
@@ -393,7 +522,7 @@ export default function SponsorProfile({ token, onLogout, onChangeUsername }) {
                             />
                             <button
                               type="button"
-                              onClick={() => handleBlock(d.driver_id)}
+                              onClick={() => handleBlock(d.driverId)}
                               style={{
                                 padding: "5px 12px", borderRadius: 6, border: "none",
                                 background: "#ef4444", color: "#fff", fontWeight: 600,
@@ -406,7 +535,7 @@ export default function SponsorProfile({ token, onLogout, onChangeUsername }) {
                         ) : (
                           <button
                             type="button"
-                            onClick={() => handleUnblock(d.driver_id)}
+                            onClick={() => handleUnblock(d.driverId)}
                             style={{
                               padding: "5px 12px", borderRadius: 6, border: "none",
                               background: "#10b981", color: "#fff", fontWeight: 600,
@@ -421,7 +550,9 @@ export default function SponsorProfile({ token, onLogout, onChangeUsername }) {
                   ))}
                 </tbody>
               </table>
-            )
+            </div>
+            );
+          })()
         )}
 
         {/* Applications tab */}

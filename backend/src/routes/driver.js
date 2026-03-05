@@ -81,24 +81,77 @@ router.get("/driver/my-sponsor", async (req, res) => {
   }
 });
 
+/**
+ * GET /api/driver/sponsors
+ * Returns all active sponsors with their details + this driver's review if any.
+ */
 router.get("/driver/sponsors", async (req, res) => {
+  const driverUserId = parsePositiveInt(req.user?.id);
+  if (!driverUserId) return res.status(401).json({ ok: false, error: "invalid session" });
+
   try {
     const [rows] = await pool.query(
-      `
-      SELECT
-        id AS sponsor_id,
-        name AS company_name,
-        contact_name,
-        address,
-      FROM sponsors
-      WHERE status = 'ACTIVE'
-      ORDER BY name ASC
-      `
+      `SELECT
+         s.id          AS sponsorId,
+         s.name        AS sponsorName,
+         s.address,
+         s.contact_name  AS contactName,
+         s.contact_email AS contactEmail,
+         s.contact_phone AS contactPhone,
+         sr.rating     AS myRating,
+         sr.comment    AS myComment
+       FROM sponsors s
+       LEFT JOIN sponsor_reviews sr
+         ON sr.sponsor_id = s.id AND sr.driver_user_id = ?
+       WHERE s.status = 'ACTIVE'
+       ORDER BY s.name ASC`,
+      [driverUserId]
     );
-    return res.json({ sponsors: rows });
+    return res.json({ ok: true, sponsors: rows });
   } catch (err) {
     console.error(err);
     return res.status(500).json({ ok: false, error: "failed to fetch sponsors" });
+  }
+});
+
+/**
+ * POST /api/driver/sponsors/:sponsorId/review
+ * Body: { rating: 1-5, comment?: string }
+ * Upserts a review for a sponsor.
+ */
+router.post("/driver/sponsors/:sponsorId/review", async (req, res) => {
+  const driverUserId = parsePositiveInt(req.user?.id);
+  if (!driverUserId) return res.status(401).json({ ok: false, error: "invalid session" });
+
+  const sponsorId = parsePositiveInt(req.params.sponsorId);
+  if (!sponsorId) return res.status(400).json({ ok: false, error: "invalid sponsorId" });
+
+  const rating = Number(req.body?.rating);
+  if (!Number.isInteger(rating) || rating < 1 || rating > 5) {
+    return res.status(400).json({ ok: false, error: "rating must be an integer between 1 and 5" });
+  }
+
+  const comment = req.body?.comment ? String(req.body.comment).trim() : null;
+
+  try {
+    // Verify sponsor exists
+    const [sRows] = await pool.query(
+      "SELECT id FROM sponsors WHERE id = ? AND status = 'ACTIVE' LIMIT 1",
+      [sponsorId]
+    );
+    if (!sRows[0]) return res.status(404).json({ ok: false, error: "sponsor not found" });
+
+    await pool.query(
+      `INSERT INTO sponsor_reviews (driver_user_id, sponsor_id, rating, comment)
+       VALUES (?, ?, ?, ?)
+       ON DUPLICATE KEY UPDATE rating = VALUES(rating), comment = VALUES(comment), updated_at = NOW()`,
+      [driverUserId, sponsorId, rating, comment]
+    );
+
+    return res.json({ ok: true, message: "Review saved" });
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({ ok: false, error: "failed to save review" });
   }
 });
 
