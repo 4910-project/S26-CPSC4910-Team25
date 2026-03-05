@@ -86,6 +86,61 @@ router.get("/org", async (req, res) => {
 });
 
 /**
+ * PATCH /sponsor/org
+ * Update sponsor organization details.
+ */
+router.patch("/org", async (req, res) => {
+  const sponsorId = getSponsorIdFromSession(req);
+  if (!sponsorId) {
+    return res.status(400).json({ ok: false, error: "sponsor account is not linked" });
+  }
+
+  const { name, contactName, contactPhone, contactEmail, address } = req.body || {};
+
+  if (!name || !String(name).trim()) {
+    return res.status(400).json({ ok: false, error: "Company name is required" });
+  }
+
+  try {
+    const [result] = await pool.query(
+      `UPDATE sponsors
+       SET name = ?,
+           contact_name = ?,
+           contact_phone = ?,
+           contact_email = ?,
+           address = ?
+       WHERE id = ?
+       LIMIT 1`,
+      [
+        String(name).trim(),
+        contactName ? String(contactName).trim() : null,
+        contactPhone ? String(contactPhone).trim() : null,
+        contactEmail ? String(contactEmail).trim() : null,
+        address ? String(address).trim() : null,
+        sponsorId,
+      ]
+    );
+
+    if (!result.affectedRows) {
+      return res.status(404).json({ ok: false, error: "sponsor not found" });
+    }
+
+    const [rows] = await pool.query(
+      `SELECT id AS sponsorId, name AS sponsorName, status AS sponsorStatus,
+              address, contact_name AS contactName,
+              contact_email AS contactEmail, contact_phone AS contactPhone
+       FROM sponsors WHERE id = ? LIMIT 1`,
+      [sponsorId]
+    );
+
+    return res.json({ ok: true, message: "Profile updated successfully", sponsor: rows[0] });
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({ ok: false, error: "failed to update sponsor profile" });
+  }
+});
+
+/**
  * GET /sponsor/driver-applications?status=pending
  * Defaults to pending applications for the current sponsor.
  */
