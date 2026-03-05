@@ -1,4 +1,5 @@
 import React, { useEffect, useState, useCallback } from "react";
+import FeedbackForm from "./feedbackForm";
 
 const API_BASE = "http://localhost:8001/api";
 
@@ -141,7 +142,7 @@ export default function DriverProfile({ token, onLogout, onChangePassword, onCha
 
       {/* Tabs */}
       <div style={{ display: "flex", gap: 8, marginTop: 24, marginBottom: 24 }}>
-        {["dashboard", "sponsors"].map((tab) => (
+        {["dashboard", "sponsors", "feedback"].map((tab) => (
           <button
             key={tab}
             type="button"
@@ -157,7 +158,7 @@ export default function DriverProfile({ token, onLogout, onChangePassword, onCha
               textTransform: "capitalize",
             }}
           >
-            {tab === "dashboard" ? "Dashboard" : "Sponsor Reviews"}
+            {tab === "dashboard" ? "Dashboard" : tab === "sponsors" ? "Sponsor Reviews" : "Help & Feedback"}
           </button>
         ))}
       </div>
@@ -326,6 +327,11 @@ export default function DriverProfile({ token, onLogout, onChangePassword, onCha
             );
           })}
         </div>
+      )}
+
+      {/* ── Feedback tab ── */}
+      {activeTab === "feedback" && (
+        <FeedbackForm token={token} />
       )}
     </div>
   );

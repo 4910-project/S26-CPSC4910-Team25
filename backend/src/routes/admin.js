@@ -584,4 +584,91 @@ router.post("/sandboxes", async (req, res) => {
   }
 });
 
+/**
+ * GET /admin/feedback
+ * List all feedback submissions with submitter info.
+ * Query params: ?status=open|reviewed|resolved&category=...&page=1&limit=20
+ */
+router.get("/feedback", async (req, res) => {
+  try {
+    const status   = req.query.status   ? String(req.query.status).trim()   : null;
+    const category = req.query.category ? String(req.query.category).trim() : null;
+    const page     = Math.max(1, parseInt(req.query.page  || "1", 10));
+    const limit    = Math.min(50, Math.max(1, parseInt(req.query.limit || "20", 10)));
+    const offset   = (page - 1) * limit;
+
+    const conditions = [];
+    const params     = [];
+
+    if (status)   { conditions.push("f.status = ?");   params.push(status);   }
+    if (category) { conditions.push("f.category = ?"); params.push(category); }
+
+    const where = conditions.length ? `WHERE ${conditions.join(" AND ")}` : "";
+
+    const [rows] = await pool.query(
+      `SELECT
+         f.id, f.category, f.message, f.status, f.admin_note,
+         f.created_at, f.updated_at,
+         u.email AS submitter_email,
+         u.role  AS submitter_role
+       FROM feedback f
+       JOIN users u ON u.id = f.user_id
+       ${where}
+       ORDER BY f.created_at DESC
+       LIMIT ? OFFSET ?`,
+      [...params, limit, offset]
+    );
+
+    const [[{ total }]] = await pool.query(
+      `SELECT COUNT(*) AS total FROM feedback f ${where}`,
+      params
+    );
+
+    return res.json({ ok: true, feedback: rows, total, page, limit });
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({ ok: false, error: "failed to fetch feedback" });
+  }
+});
+
+/**
+ * PATCH /admin/feedback/:id
+ * Update status or add admin note.
+ * Body: { status?: string, adminNote?: string }
+ */
+router.patch("/feedback/:id", async (req, res) => {
+  const feedbackId = parseInt(req.params.id, 10);
+  if (!feedbackId) return res.status(400).json({ ok: false, error: "invalid id" });
+
+  const VALID_STATUSES = ["open", "reviewed", "resolved"];
+  const status    = req.body?.status    ? String(req.body.status).trim()    : null;
+  const adminNote = req.body?.adminNote ? String(req.body.adminNote).trim() : null;
+
+  if (status && !VALID_STATUSES.includes(status)) {
+    return res.status(400).json({ ok: false, error: "invalid status" });
+  }
+
+  try {
+    const updates = [];
+    const params  = [];
+    if (status)    { updates.push("status = ?");     params.push(status);    }
+    if (adminNote !== null) { updates.push("admin_note = ?"); params.push(adminNote); }
+
+    if (!updates.length) {
+      return res.status(400).json({ ok: false, error: "nothing to update" });
+    }
+
+    params.push(feedbackId);
+    await pool.query(
+      `UPDATE feedback SET ${updates.join(", ")} WHERE id = ? LIMIT 1`,
+      params
+    );
+
+    return res.json({ ok: true, message: "Feedback updated" });
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({ ok: false, error: "failed to update feedback" });
+  }
+});
+
 module.exports = router;
