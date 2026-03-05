@@ -155,4 +155,43 @@ router.post("/driver/sponsors/:sponsorId/review", async (req, res) => {
   }
 });
 
+/**
+ * POST /api/driver/feedback
+ * Body: { category, message }
+ * Submit feedback from the driver.
+ */
+router.post("/driver/feedback", async (req, res) => {
+  const userId = parsePositiveInt(req.user?.id);
+  if (!userId) return res.status(401).json({ ok: false, error: "invalid session" });
+
+  const VALID_CATEGORIES = [
+    "Bug Report", "Feature Request", "Points Issue",
+    "Account Problem", "Sponsor Issue", "General Feedback", "Other"
+  ];
+
+  const category = String(req.body?.category || "").trim();
+  const message  = String(req.body?.message  || "").trim();
+
+  if (!VALID_CATEGORIES.includes(category)) {
+    return res.status(400).json({ ok: false, error: "invalid category" });
+  }
+  if (!message || message.length < 10) {
+    return res.status(400).json({ ok: false, error: "message must be at least 10 characters" });
+  }
+  if (message.length > 2000) {
+    return res.status(400).json({ ok: false, error: "message must be under 2000 characters" });
+  }
+
+  try {
+    await pool.query(
+      "INSERT INTO feedback (user_id, category, message) VALUES (?, ?, ?)",
+      [userId, category, message]
+    );
+    return res.json({ ok: true, message: "Feedback submitted successfully. Thank you!" });
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({ ok: false, error: "failed to submit feedback" });
+  }
+});
+
 module.exports = router;
