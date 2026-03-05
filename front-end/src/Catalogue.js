@@ -165,8 +165,8 @@ export default function Catalogue({ token, initialPoints = 1000, onPointsChange 
       {/* Hero */}
       <div className="cat-hero">
         <div>
-          <h1>🎁 Points Catalogue</h1>
-          <p>Redeem your points on music, movies, apps &amp; more</p>
+          <h1>Points Catalogue</h1>
+          <p>Redeem your points on your choice of media</p>
         </div>
         <div className="cat-points">
           <span>Your Balance</span>
