@@ -227,4 +227,34 @@ router.get("/driver/applications", async (req, res) => {
   }
 });
 
+/*
+GET /api/driver/status
+Returns the current driver status and dropped reason
+*/
+router.get("/driver/status", async (req, res) => {
+  const driverUserId = parsePositiveInt(req.user?.id);
+  if (!driverUserId) return res.status(401).json({ ok: false, error: "invalid session"});
+
+  try {
+    const [rows] = await pool.query(
+      `
+      SELECT
+        d.status,
+        d.dropped_reason,
+        s.name AS sponsorName
+      FROM drivers d
+      JOIN sponsors s ON s.id = d.sponsor_id
+      WHERE d.user_id = ?
+      ORDER BY d.id DESC
+      LIMIT 1
+      `,
+      [driverUserId]
+    );
+    return res.json({ ok: true, driver: rows[0] || null});
+  } catch (err) {
+    return res.status(500).json({ ok: false, error: "failed to fetch driver status"});
+  }
+});
+
+
 module.exports = router;
