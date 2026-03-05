@@ -21,7 +21,7 @@ function ApplyModal({ sponsor, token, onClose}) {
                     Authorization: `Bearer ${token}`,
                 },
                 body: JSON.stringify({
-                    sponsor_id: sponsor.sponsor_id,
+                    sponsor_id: sponsor.sponsorId,
                     statement: form.statement,
                 }),
             });
@@ -61,7 +61,7 @@ function ApplyModal({ sponsor, token, onClose}) {
                     display: "flex", alignItems: "center", justifyContent: "space-between",
                 }}>
                     <div style={{ fontWeight: 700, fontSize: 16, color: "var(--text, #111)" }}>
-                        Apply to {sponsor.company_name}
+                        Apply to {sponsor.sponsorName}
                     </div>
                     <button
                         onClick={onClose}
@@ -87,7 +87,7 @@ function ApplyModal({ sponsor, token, onClose}) {
                         Application Sent!
                     </div>
                     <div style={{fontSize: 14, color: "var(--text-muted, #6b7280)", lineHeight: 1.6 }}>
-                        Your application to {sponsor.company_name} has been submitted.
+                        Your application to {sponsor.sponsorName} has been submitted.
                     </div>
                 </div>
             ) : (
@@ -224,10 +224,10 @@ export default function SponsorshipApply({ token }) {
         <>
             <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
                 {sponsors.map((sponsor) => {
-                    const isApplied = applied.includes(sponsor.sponsor_id);
+                    const isApplied = applied.includes(sponsor.sponsorId);
                     return (
                         <div
-                            key={sponsor.sponsor_id}
+                            key={sponsor.sponsorId}
                             style={{
                                 background: "var(--card, #fff)",
                                 border: "1px solid var(--border, #e5e7eb)",
@@ -245,7 +245,7 @@ export default function SponsorshipApply({ token }) {
                                     {sponsor.company_name}
                                 </div>
                                 <div style={{ fontSize: 12, color: "var(--text-muted, #6b7280)", marginTop: 3}}>
-                                    {[sponsor.contact_name, sponsor.city && sponsor.state && `${sponsor.city}, ${sponsor.state}` ]
+                                    {[sponsor.sponsorName, sponsor.city && sponsor.state && `${sponsor.city}, ${sponsor.state}` ]
                                         .filter(Boolean).join(" · ")}
                                 </div>
                             </div>

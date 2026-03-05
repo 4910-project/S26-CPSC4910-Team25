@@ -165,6 +165,7 @@ export default function DriverProfile({ token, onLogout, onChangePassword, onCha
 
       {/* ── Dashboard tab ── */}
       {activeTab === "dashboard" && (
+        <>
         <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(260px, 1fr))", gap: 14 }}>
           <div style={card}>
             <div style={{ color: "var(--muted)", fontSize: 12 }}>Current Points</div>
@@ -192,8 +193,14 @@ export default function DriverProfile({ token, onLogout, onChangePassword, onCha
             <div style={{ marginTop: 6, color: "var(--muted)", fontSize: 13 }}>Later: catalog + redeem flow.</div>
           </div>
         </div>
+        {/* Sponsorship Apply Card*/}
+        <div style={{...card, marginTop: 14 }}>
+          <div style={{ color: "var(--muted)", fontSize: 12, marginBottom: 14}}> Available Sponsorships</div>
+          <SponsorshipApply token={token} />
+        </div>
+        </>
       )}
-
+      
       {/* ── Sponsors tab ── */}
       {activeTab === "sponsors" && (
         <div>
@@ -328,11 +335,6 @@ export default function DriverProfile({ token, onLogout, onChangePassword, onCha
           })}
         </div>
       )}
-      {/* Sponsorship Apply Card*/}
-      <div style={{...card, marginTop: 14 }}>
-        <div style={{ color: "var(--muted)", fontSize: 12, marginBottom: 14}}> Available Sponsorships</div>
-        <SponsorshipApply token={token} />
-      </div>
     </div>
   );
 }
