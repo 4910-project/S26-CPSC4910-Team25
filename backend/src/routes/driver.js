@@ -214,7 +214,7 @@ router.get("/driver/applications", async (req, res) => {
         da.decision_message AS decisionMessage,
         da.decided_at AS decidedAt
       FROM driver_applications da
-      JOIN sponsors s ON s.is = da.sponsor_id
+      JOIN sponsors s ON s.id = da.sponsor_id
       WHERE da.driver_user_id = ?
       ORDER BY da.applied_at DESC
       `,

@@ -14,7 +14,7 @@ function ApplyModal({ sponsor, token, onClose}) {
         setSubmitting(true);
         setError("");
         try {
-            const res = await fetch(`http://localhost:8001/api/driver/sponsors`, {
+            const res = await fetch(`http://localhost:8001/api/apps`, {
                 method: "POST",
                 headers: {
                     "Content-Type": "application/json",
@@ -22,7 +22,6 @@ function ApplyModal({ sponsor, token, onClose}) {
                 },
                 body: JSON.stringify({
                     sponsor_id: sponsor.sponsorId,
-                    statement: form.statement,
                 }),
             });
 

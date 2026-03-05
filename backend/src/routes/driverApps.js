@@ -15,7 +15,7 @@ router.post("/", auth, async (req, res) => {
             `
             SELECT id
             FROM driver_applications
-            WHERE driver_iser_id=? AND status='pending' 
+            WHERE driver_user_id=? AND status='pending' 
             LIMIT 1
             `,
             [driverUserId]
