@@ -1,4 +1,5 @@
 import React, { useEffect, useState, useCallback } from "react";
+import SponsorshipApply from "./SponsorshipApply";
 import FeedbackForm from "./feedbackForm";
 
 const API_BASE = "http://localhost:8001/api";
@@ -46,6 +47,7 @@ export default function DriverProfile({ token, onLogout, onChangePassword, onCha
   const [reviewForm, setReviewForm] = useState({}); // { [sponsorId]: { rating, comment } }
   const [submitting, setSubmitting] = useState({}); // { [sponsorId]: bool }
   const [expanded, setExpanded] = useState(null);   // which sponsor's review form is open
+  const [applications, setApplications] = useState([null]); // applications state
 
   // ── Points fetch ──────────────────────────────────────────────────────────
   useEffect(() => {
@@ -128,6 +130,23 @@ export default function DriverProfile({ token, onLogout, onChangePassword, onCha
     }
   };
 
+  // Applications fetch
+  useEffect(() => {
+    if (!token) return;
+    (async () => {
+      try {
+        const res = await fetch(`${API_BASE}/driver/applications`, {
+          headers: { Authorization: `Bearer ${token}`},
+        });
+        const data = await res.json();
+        if (res.ok) setApplications(data.applications || []);
+      } catch(err) {
+        console.error(err);
+      }
+    }) ();
+  }, [token]);
+
+
   // ── Render ────────────────────────────────────────────────────────────────
   return (
     <div style={{ maxWidth: 900, margin: "30px auto", padding: 20 }}>
@@ -165,6 +184,30 @@ export default function DriverProfile({ token, onLogout, onChangePassword, onCha
 
       {/* ── Dashboard tab ── */}
       {activeTab === "dashboard" && (
+        <>
+        {applications.filter(a => a && a.status === "REJECTED").map(a => (
+          <div key={a.applicationId} style={{
+            background: "#fef2f2",
+            border: "1px solid #fca5a5",
+            borderRadius: 10,
+            padding: "12px 16px",
+            marginBottom: 12,
+            display: "flex",
+            justifyContent: "space-between",
+            alignItems: "center",
+          }}>
+            <div>
+              <div style={{ fontWeight: 700, color: "#991b1b", fontSize: 14}}>
+                ❌ Application Rejected - {a.sponsorName}
+              </div>
+              {a.decisionMessage && (
+                <div style={{ color: "#b91c1c", fontSize: 13, marginTop: 4}}>
+                  Reason: {a.decisionMessage}
+                </div>
+              )}
+            </div>
+          </div>
+        ))}
         <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(260px, 1fr))", gap: 14 }}>
           <div style={card}>
             <div style={{ color: "var(--muted)", fontSize: 12 }}>Current Points</div>
@@ -192,8 +235,14 @@ export default function DriverProfile({ token, onLogout, onChangePassword, onCha
             <div style={{ marginTop: 6, color: "var(--muted)", fontSize: 13 }}>Later: catalog + redeem flow.</div>
           </div>
         </div>
+        {/* Sponsorship Apply Card*/}
+        <div style={{...card, marginTop: 14 }}>
+          <div style={{ color: "var(--muted)", fontSize: 12, marginBottom: 14}}> Available Sponsorships</div>
+          <SponsorshipApply token={token} />
+        </div>
+        </>
       )}
-
+      
       {/* ── Sponsors tab ── */}
       {activeTab === "sponsors" && (
         <div>

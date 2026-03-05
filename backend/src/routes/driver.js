@@ -194,4 +194,37 @@ router.post("/driver/feedback", async (req, res) => {
   }
 });
 
+/*
+GET /api/driver/applications
+Returns all applications submitted by the driver
+*/
+router.get("/driver/applications", async (req, res) => {
+  const driverUserId = parsePositiveInt(req.user?.id);
+  if (!driverUserId) {
+    return res.status(401).json({ ok: false, error: "invalid session" });
+  }
+
+  try {
+    const [rows] = await pool.query(
+      `
+      SELECT
+        da.id AS applicationId,
+        s.name AS sponsorName,
+        da.status,
+        da.decision_message AS decisionMessage,
+        da.decided_at AS decidedAt
+      FROM driver_applications da
+      JOIN sponsors s ON s.is = da.sponsor_id
+      WHERE da.driver_user_id = ?
+      ORDER BY da.applied_at DESC
+      `,
+      [driverUserId]
+    );
+    return res.json({ ok: true, applicarions: rows });
+  } catch(err) {
+    console.error(err);
+    return res.status(500).json({ ok: false, error: "failed to fetch"});
+  }
+});
+
 module.exports = router;
