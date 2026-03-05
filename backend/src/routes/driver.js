@@ -81,4 +81,38 @@ router.get("/driver/my-sponsor", async (req, res) => {
   }
 });
 
+// POST /api/driver/drop-sponsor
+router.post("/drop-sponsor", async (req, res) => {
+  if (req.user?.role !== "DRIVER") {
+    return res.status(403).json({ ok: false, error: "driver only" });
+  }
+
+  const conn = await pool.getConnection();
+  try {
+    await conn.beginTransaction();
+
+    await conn.query(
+      `UPDATE drivers
+       SET status='DROPPED', dropped_at=NOW(), dropped_reason=?
+       WHERE user_id=? LIMIT 1`,
+      ["Driver dropped sponsor", req.user.id]
+    );
+
+    await conn.query(
+      "UPDATE users SET sponsor_id=NULL WHERE id=? LIMIT 1",
+      [req.user.id]
+    );
+
+    await conn.commit();
+    res.json({ ok: true });
+
+  } catch (err) {
+    await conn.rollback();
+    console.error(err);
+    res.status(500).json({ ok: false, error: "failed to drop sponsor" });
+  } finally {
+    conn.release();
+  }
+});
+
 module.exports = router;

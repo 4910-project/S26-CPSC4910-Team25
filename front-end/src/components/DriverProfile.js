@@ -1,4 +1,5 @@
 import React, { useEffect, useState } from "react";
+import ConfirmModal from "../components/ConfirmModal";
 
 const API_BASE = "http://localhost:8001/api";
 
@@ -6,6 +7,7 @@ export default function DriverProfile({ token, onLogout, onChangePassword, onCha
   const [points, setPoints] = useState(null);
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState("");
+  const [showDropModal, setShowDropModal] = useState(false);
 
   useEffect(() => {
     if (!token) return;
@@ -15,8 +17,6 @@ export default function DriverProfile({ token, onLogout, onChangePassword, onCha
       setErr("");
 
       try {
-        // ✅ Pick ONE endpoint to standardize later.
-        // If your backend doesn't have this yet, you'll see the friendly error.
         const res = await fetch(`${API_BASE}/driver/points`, {
           headers: { Authorization: `Bearer ${token}` },
         });
@@ -26,9 +26,7 @@ export default function DriverProfile({ token, onLogout, onChangePassword, onCha
         }
 
         const data = await res.json();
-        // expected: { points: number } (or similar)
         const p = typeof data.points === "number" ? data.points : 0;
-
         setPoints(p);
       } catch (e) {
         setPoints(null);
@@ -39,9 +37,39 @@ export default function DriverProfile({ token, onLogout, onChangePassword, onCha
     })();
   }, [token]);
 
+  async function dropSponsor() {
+    try {
+      const res = await fetch(`${API_BASE}/driver/drop-sponsor`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+      });
+
+      const data = await res.json().catch(() => ({}));
+
+      if (!res.ok) {
+        throw new Error(data.error || data.message || "Failed to drop sponsor");
+      }
+
+      setShowDropModal(false);
+      onLogout(); // refresh session/token after dropping sponsor
+    } catch (err) {
+      alert(err.message);
+    }
+  }
+
   return (
     <div style={{ maxWidth: 900, margin: "30px auto", padding: 20 }}>
-      <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "center" }}>
+      <div
+        style={{
+          display: "flex",
+          justifyContent: "space-between",
+          gap: 12,
+          alignItems: "center",
+        }}
+      >
         <h1 style={{ margin: 0 }}>Driver Dashboard</h1>
 
         <div style={{ display: "flex", gap: 10 }}>
@@ -51,13 +79,29 @@ export default function DriverProfile({ token, onLogout, onChangePassword, onCha
           <button style={btnSecondary} onClick={onChangePassword} type="button">
             Change Password
           </button>
+
+          <button
+            style={btnDangerOutline}
+            onClick={() => setShowDropModal(true)}
+            type="button"
+          >
+            Drop Sponsor
+          </button>
+
           <button style={btnDanger} onClick={onLogout} type="button">
             Log out
           </button>
         </div>
       </div>
 
-      <div style={{ marginTop: 18, display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(260px, 1fr))", gap: 14 }}>
+      <div
+        style={{
+          marginTop: 18,
+          display: "grid",
+          gridTemplateColumns: "repeat(auto-fit, minmax(260px, 1fr))",
+          gap: 14,
+        }}
+      >
         {/* Current Points Card */}
         <div style={card}>
           <div style={{ color: "var(--muted)", fontSize: 12 }}>Current Points</div>
@@ -68,7 +112,8 @@ export default function DriverProfile({ token, onLogout, onChangePassword, onCha
             <div style={{ marginTop: 10, color: "#b91c1c" }}>
               {err}
               <div style={{ marginTop: 8, color: "var(--muted)", fontSize: 12 }}>
-                Once backend is ready, create <code>/api/driver/points</code> to return <code>{`{ points: 123 }`}</code>.
+                Once backend is ready, create <code>/api/driver/points</code> to return{" "}
+                <code>{`{ points: 123 }`}</code>.
               </div>
             </div>
           ) : (
@@ -99,6 +144,15 @@ export default function DriverProfile({ token, onLogout, onChangePassword, onCha
           </div>
         </div>
       </div>
+
+      {/* Confirmation Modal */}
+      <ConfirmModal
+        open={showDropModal}
+        title="Drop Sponsor?"
+        message="You will be removed from your sponsor’s program. This may affect your points and eligibility. Are you sure you want to continue?"
+        onCancel={() => setShowDropModal(false)}
+        onConfirm={dropSponsor}
+      />
     </div>
   );
 }
@@ -125,6 +179,15 @@ const btnDanger = {
   border: "1px solid #ef4444",
   background: "#ef4444",
   color: "white",
+  borderRadius: 10,
+  padding: "8px 12px",
+  cursor: "pointer",
+};
+
+const btnDangerOutline = {
+  border: "1px solid #ef4444",
+  background: "transparent",
+  color: "#ef4444",
   borderRadius: 10,
   padding: "8px 12px",
   cursor: "pointer",
