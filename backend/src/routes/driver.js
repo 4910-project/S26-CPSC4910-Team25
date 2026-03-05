@@ -81,4 +81,25 @@ router.get("/driver/my-sponsor", async (req, res) => {
   }
 });
 
+router.get("/driver/sponsors", async (req, res) => {
+  try {
+    const [rows] = await pool.query(
+      `
+      SELECT
+        id AS sponsor_id,
+        name AS company_name,
+        contact_name,
+        address,
+      FROM sponsors
+      WHERE status = 'ACTIVE'
+      ORDER BY name ASC
+      `
+    );
+    return res.json({ sponsors: rows });
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({ ok: false, error: "failed to fetch sponsors" });
+  }
+});
+
 module.exports = router;

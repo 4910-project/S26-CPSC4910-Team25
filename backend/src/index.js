@@ -1,3 +1,4 @@
+
 async function notifyAdmin(info){
   console.log("ADMIN NOTIFICATION:", info);
 }
@@ -23,6 +24,7 @@ const authRoutes = require("./routes/auth");
 const adminRoutes = require("./routes/admin");
 const mfaRoutes = require("./routes/mfa");
 const driverAppsRoutes = require("./routes/driverApps");
+const driverRoutes = require("./routes/driver")
 
 // These route files are NOT present in src/routes right now.
 // Leaving them commented prevents the server from crashing.
@@ -92,6 +94,7 @@ app.use("/auth", authRoutes);
 app.use("/admin", adminRoutes);
 app.use("/api", mfaRoutes);
 app.use("/api/apps", driverAppsRoutes);
+app.use("/api", driverRoutes);
 
 // 🔹 NEW: Start sponsor archive background job
 const minutes = Number(process.env.SPONSOR_ARCHIVE_JOB_MINUTES || 10);

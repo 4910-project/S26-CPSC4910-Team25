@@ -1,4 +1,5 @@
 import React, { useEffect, useState } from "react";
+import SponsorshipApply from "./SponsorshipApply";
 
 const API_BASE = "http://localhost:8001/api";
 
@@ -98,6 +99,12 @@ export default function DriverProfile({ token, onLogout, onChangePassword, onCha
             Later: catalog + redeem flow.
           </div>
         </div>
+      </div>
+
+      {/* Sponsorship Apply Card*/}
+      <div style={{...card, marginTop: 14 }}>
+        <div style={{ color: "var(--muted)", fontSize: 12, marginBottom: 14}}> Available Sponsorships</div>
+        <SponsorshipApply token={token} />
       </div>
     </div>
   );

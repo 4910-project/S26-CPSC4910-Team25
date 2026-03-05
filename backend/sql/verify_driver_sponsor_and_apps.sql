@@ -12,7 +12,8 @@ SELECT
   d.sponsor_id AS sponsorId,
   s.name AS sponsorName,
   s.status AS sponsorStatus,
-  d.joined_on AS joinedOn
+  d.joined_on AS joinedOn,
+  d.starting_points AS startingPoints
 FROM drivers d
 JOIN sponsors s ON s.id = d.sponsor_id
 WHERE d.user_id = @driver_user_id
@@ -38,6 +39,7 @@ SELECT
   driver_user_id AS driverUserId,
   sponsor_id AS sponsorId,
   status,
+  decision_message AS decisionMessage,
   applied_at AS appliedAt,
   decided_at AS decidedAt,
   decided_by_user_id AS decidedBy
@@ -53,6 +55,7 @@ SELECT
   driver_user_id AS driverUserId,
   sponsor_id AS sponsorId,
   status,
+  decision_message AS decisionMessage,
   applied_at AS appliedAt,
   decided_at AS decidedAt,
   decided_by_user_id AS decidedBy
@@ -60,13 +63,14 @@ FROM driver_applications
 WHERE id = @application_id;
 
 -- 10745, 15071:
--- Sponsor drivers list (all non-pending relationship states).
+-- Sponsor drivers list (all non-pending relationship states + starting points).
 SELECT
   d.id AS driverId,
   SUBSTRING_INDEX(u.email, '@', 1) AS name,
   u.email,
   LOWER(d.status) AS status,
-  d.joined_on AS joinedOn
+  d.joined_on AS joinedOn,
+  d.starting_points AS startingPoints
 FROM drivers d
 JOIN users u ON u.id = d.user_id
 WHERE d.sponsor_id = @sponsor_id
@@ -79,7 +83,8 @@ SELECT
   SUBSTRING_INDEX(u.email, '@', 1) AS name,
   u.email,
   'active' AS status,
-  d.joined_on AS joinedOn
+  d.joined_on AS joinedOn,
+  d.starting_points AS startingPoints
 FROM drivers d
 JOIN users u ON u.id = d.user_id
 WHERE d.sponsor_id = @sponsor_id
@@ -93,7 +98,8 @@ SELECT
   SUBSTRING_INDEX(u.email, '@', 1) AS name,
   u.email,
   'dropped' AS status,
-  d.joined_on AS joinedOn
+  d.joined_on AS joinedOn,
+  d.starting_points AS startingPoints
 FROM drivers d
 JOIN users u ON u.id = d.user_id
 WHERE d.sponsor_id = @sponsor_id
@@ -107,9 +113,29 @@ SELECT
   SUBSTRING_INDEX(u.email, '@', 1) AS name,
   u.email,
   'pending' AS status,
-  NULL AS joinedOn
+  NULL AS joinedOn,
+  NULL AS startingPoints
 FROM driver_applications da
 JOIN users u ON u.id = da.driver_user_id
 WHERE da.sponsor_id = @sponsor_id
   AND da.status = 'PENDING'
 ORDER BY da.applied_at DESC;
+
+-- 10765:
+-- Search drivers by name/email fragment (example = 'jo').
+SET @name_filter = '%jo%';
+SELECT
+  d.id AS driverId,
+  SUBSTRING_INDEX(u.email, '@', 1) AS name,
+  u.email,
+  LOWER(d.status) AS status,
+  d.joined_on AS joinedOn,
+  d.starting_points AS startingPoints
+FROM drivers d
+JOIN users u ON u.id = d.user_id
+WHERE d.sponsor_id = @sponsor_id
+  AND (
+    LOWER(SUBSTRING_INDEX(u.email, '@', 1)) LIKE @name_filter
+    OR LOWER(u.email) LIKE @name_filter
+  )
+ORDER BY d.id DESC;
