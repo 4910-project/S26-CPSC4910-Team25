@@ -48,6 +48,7 @@ export default function DriverProfile({ token, onLogout, onChangePassword, onCha
   const [submitting, setSubmitting] = useState({}); // { [sponsorId]: bool }
   const [expanded, setExpanded] = useState(null);   // which sponsor's review form is open
   const [applications, setApplications] = useState([null]); // applications state
+  const [driverStatus, setDriverStatus] = useState(null);
 
   // ── Points fetch ──────────────────────────────────────────────────────────
   useEffect(() => {
@@ -146,6 +147,23 @@ export default function DriverProfile({ token, onLogout, onChangePassword, onCha
     }) ();
   }, [token]);
 
+  // Driver status fetch
+  useEffect(() => {
+    if (!token) return;
+    (async () => {
+      try {
+        const res = await fetch(`${API_BASE}/driver/status`, {
+          headers: {Authorization: `Bearer ${token}`},
+        });
+        const data = await res.json();
+        if (res.ok) setDriverStatus(data.driver);
+        } catch(err) {
+          console.error(err);
+        }
+      }) ();
+    }, [token]);
+  
+
 
   // ── Render ────────────────────────────────────────────────────────────────
   return (
@@ -208,6 +226,29 @@ export default function DriverProfile({ token, onLogout, onChangePassword, onCha
             </div>
           </div>
         ))}
+        {driverStatus?.status === "DROPPED" && (
+          <div style={{
+            background: "#fef2f2",
+            border: "1px solid #fca5a5",
+            borderRadius: 10,
+            padding: "12px 16px",
+            marginBottom: 12,
+            display: "flex",
+            justifyContent: "space-between",
+            alignItems: "center",
+          }}>
+            <div>
+              <div style={{ fontWeight: 700, color: "#991b1b", fontSize: 14}}>
+                ❌ You have been dropped from {driverStatus.sponsorName}
+              </div>
+              {driverStatus.dropped_reason && (
+                <div style={{ color: "#b91c1c", fontSize: 13, marginTop: 4}}>
+                  Reason: {driverStatus.dropped_reason}
+                </div>
+              )}
+            </div>
+          </div>
+        )}
         <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(260px, 1fr))", gap: 14 }}>
           <div style={card}>
             <div style={{ color: "var(--muted)", fontSize: 12 }}>Current Points</div>
