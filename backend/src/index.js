@@ -1,40 +1,38 @@
-async function notifyAdmin(info){
+async function notifyAdmin(info) {
   console.log("ADMIN NOTIFICATION:", info);
 }
 
-require("dotenv").config({ path: require("path").join(__dirname, "..", ".env") });
+require("dotenv").config({
+  path: require("path").join(__dirname, "..", ".env"),
+});
 
 if (!process.env.JWT_SECRET) {
   console.error("FATAL: JWT_SECRET is missing. Check backend/.env");
   process.exit(1);
 }
 
-
-
 const express = require("express");
 const cors = require("cors");
 const pool = require("./db");
 
-// 🔹 NEW: Sponsor archive job
 const { runArchiveSponsorsJob } = require("./jobs/archiveSponsorsJob");
 
 const aboutRoutes = require("./routes/about");
 const authRoutes = require("./routes/auth");
 const adminRoutes = require("./routes/admin");
+const driverRoutes = require("./routes/driver");
 const mfaRoutes = require("./routes/mfa");
-const driverAppsRoutes = require("./routes/driverApps");
-
-// These route files are NOT present in src/routes right now.
-// Leaving them commented prevents the server from crashing.
-// const profileRoutes = require("./routes/profileRoutes");
-// const passwordResetRoutes = require("./routes/passwordResetRoutes");
-// const accountRoutes = require("./routes/accountRoutes");
+const sponsorRoutes = require("./routes/sponsor");
+const profileRoutes = require("./routes/profile");
 
 const app = express();
 
 app.use(
   cors({
-    origin: "http://localhost:3000",
+    origin: [
+      "http://localhost:3000",
+      "https://prod.d14fex998h1awp.amplifyapp.com",
+    ],
     methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
     allowedHeaders: ["Content-Type", "Authorization"],
   })
@@ -42,7 +40,7 @@ app.use(
 
 app.use(express.json());
 
-// Notify Admin of API GET Error
+
 app.use((req, res, next) => {
   res.on("finish", () => {
     if (req.method === "GET" && res.statusCode >= 400) {
@@ -64,9 +62,39 @@ app.use((req, res, next) => {
   next();
 });
 
+// About route
 app.use("/api/about", aboutRoutes);
 
-// Verify DB connection once at startup
+// Auth
+app.use("/auth", authRoutes);
+
+// Admin
+app.use("/admin", adminRoutes);
+
+// MFA routes
+app.use("/api", mfaRoutes);
+
+// Profile routes (change username, change password) — must come BEFORE driverRoutes
+// because driverRoutes has a global DRIVER-only middleware that blocks all /api/* requests
+app.use("/api/profile", profileRoutes);
+
+// Driver routes 
+app.use("/api", driverRoutes);
+
+// Sponsor routes
+app.use("/sponsor", sponsorRoutes);
+
+
+app.get("/health", async (req, res) => {
+  try {
+    await pool.query("SELECT 1");
+    res.json({ status: "ok", db: "connected" });
+  } catch (err) {
+    res.status(500).json({ status: "error", db: "disconnected" });
+  }
+});
+
+
 (async () => {
   try {
     const conn = await pool.getConnection();
@@ -78,29 +106,12 @@ app.use("/api/about", aboutRoutes);
   }
 })();
 
-app.get("/health", async (req, res) => {
-  try {
-    await pool.query("SELECT 1");
-    res.json({ status: "ok", db: "connected" });
-  } catch (err) {
-    res.status(500).json({ status: "error", db: "disconnected" });
-  }
-});
 
-// Mount routes BEFORE listen
-app.use("/auth", authRoutes);
-app.use("/admin", adminRoutes);
-app.use("/api", mfaRoutes);
-app.use("/api/apps", driverAppsRoutes);
-
-// 🔹 NEW: Start sponsor archive background job
 const minutes = Number(process.env.SPONSOR_ARCHIVE_JOB_MINUTES || 10);
 setInterval(runArchiveSponsorsJob, minutes * 60 * 1000);
-
-// Optional: run once immediately at startup
 runArchiveSponsorsJob();
 
-const PORT = process.env.PORT || 3001;
+const PORT = process.env.PORT || 8001;
 app.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`);
   console.log("src/index.js is running");
