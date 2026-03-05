@@ -11,6 +11,18 @@ router.post("/", auth, async (req, res) => {
         if (!sponsor_id) {
             return res.status(400).json({ error: "sponsor_id is required"});
         }
+        
+        const [sponsorRows] = await pool.query(
+            "SELECT accepting_drivers FROM sponsors WHERE id = ? LIMIT 1",
+            [sponsor_id]
+        );
+        if (!sponsorRows[0]) {
+            return res.status(404).json({ error: "sponsor not found"});
+        }
+        if (!sponsorRows[0].accepting_drivers) {
+            return res.status(403).json({ error: "This sponsor is not currently accepting new drivers"});
+        }
+
         const [pending] = await pool.query(
             `
             SELECT id

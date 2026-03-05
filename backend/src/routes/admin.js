@@ -671,4 +671,64 @@ router.patch("/feedback/:id", async (req, res) => {
   }
 });
 
+/**
+ * NEW STORY 10917 — Admin can lock sponsors from acceptng new drivers
+ * PATCH /admin/sponsors/:sponsorId/lock
+ */
+ router.patch("/sponsors/:sponsorId/lock", async (req, res) => {
+  const sponsorId = parsePositiveInt(req.params.sponsorId);
+  if (!sponsorId) {
+    return res.status(400).json({ ok: false, error: "invalid sponsorId"});
+  }
+
+  const accepting = req.body?.accepting_drivers;
+  if (typeof accepting !== "boolean") {
+    return res.status(400).json({ ok: false, error: "accepting_drivers must be true or false"});
+  }
+
+  try {
+    const [result] = await pool.query(
+      "UPDATE sponsors SET accepting_drivers =? WHERE id = ? LIMIT 1",
+      [accepting, sponsorId]
+    );
+
+    if (!result.affectedRows) {
+      return res.status(404).json({ ok: false, error: "sponsor not found"});
+    }
+
+    await writeAudit({
+      category: "SPONSOR_LOCK_TOGGLE",
+      actorUserId: req.user.id,
+      sponsorId,
+      success: 1,
+      details: `admin set accepting_drivers=${accepting} for sposnorId=${sponsorId}`
+    });
+
+    return res.json({ ok: true, accepting_drivers: accepting});
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({ ok: false, error: "failed to update sponsor"});
+  }
+ });
+
+ router.get("/sponosrs", async (req, res) => {
+  try {
+    const [rows] = await pool.query(
+      `
+      SELECT
+        id, 
+        name, 
+        status, 
+        accepting_drivers
+      FROM sponsors
+      ORDER BY name ASC
+      `
+    );
+    return res.json({ ok: true, sponsor: rows});
+  } catch(err) {
+    console.error(err);
+    return res.status(500).json({ ok: false, error: "failed to fetch sponsors"});
+  }
+ });
+
 module.exports = router;
