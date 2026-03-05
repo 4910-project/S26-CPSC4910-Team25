@@ -7,8 +7,9 @@ export default function SponsorProfile({
   token,
   onLogout,
   onChangeUsername,
-  onManageRules
-}) {
+  onManageRules,
+  onRiskDashboard
+}){
   const [profile, setProfile] = useState({
     company_name: "",
     contact_name: "",
@@ -164,6 +165,15 @@ export default function SponsorProfile({
               className="btn-edit"
             >
               Manage Behavior Rules
+            </button>
+          )}
+
+          {!isEditing && (
+            <button
+              onClick={onRiskDashboard}
+              className="btn-edit"
+            >
+            Risk Dashboard
             </button>
           )}
 

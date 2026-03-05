@@ -431,4 +431,105 @@ router.delete("/rules/:id", async (req, res) => {
   }
 });
 
+/**
+ * GET /sponsor/risk-dashboard
+ * Returns drivers + pending applicants sorted by riskScore desc.
+ * Risk scoring is simple + explainable (status + how new they are).
+ */
+router.get("/risk-dashboard", async (req, res) => {
+  const sponsorId = getSponsorIdFromSession(req);
+  if (!sponsorId) {
+    return res.status(400).json({ ok: false, error: "sponsor account is not linked" });
+  }
+
+  function clamp(n, min, max) {
+    return Math.max(min, Math.min(max, n));
+  }
+
+  // Simple heuristic (you can improve later without changing the UI)
+  // - Dropped drivers = highest risk
+  // - Pending applicants = medium-high risk (unknown)
+  // - Newer active drivers = higher risk than long-tenure drivers
+  function computeRisk({ status, joinedOn }) {
+    const s = String(status || "").toUpperCase();
+
+    if (s === "DROPPED") return 95;
+    if (s === "PENDING") return 70;
+
+    // ACTIVE: risk decreases as they’ve been around longer
+    // If joinedOn is missing, treat as moderately risky
+    if (!joinedOn) return 55;
+
+    const joined = new Date(joinedOn);
+    const days = Math.floor((Date.now() - joined.getTime()) / (1000 * 60 * 60 * 24));
+
+    // 0 days -> 80 risk, 60 days -> ~40 risk, 180 days -> ~20 risk
+    const risk = 80 - days * 0.33;
+    return clamp(Math.round(risk), 10, 85);
+  }
+
+  function labelRisk(score) {
+    if (score >= 80) return "High";
+    if (score >= 50) return "Medium";
+    return "Low";
+  }
+
+  try {
+    // Active + Dropped drivers
+    const [driverRows] = await pool.query(
+      `
+      SELECT
+        d.id AS driverId,
+        d.user_id AS driverUserId,
+        SUBSTRING_INDEX(u.email, '@', 1) AS name,
+        u.email,
+        LOWER(d.status) AS status,
+        d.joined_on AS joinedOn
+      FROM drivers d
+      JOIN users u ON u.id = d.user_id
+      WHERE d.sponsor_id = ?
+      ORDER BY d.id DESC
+      `,
+      [sponsorId]
+    );
+
+    // Pending applicants
+    const [pendingRows] = await pool.query(
+      `
+      SELECT
+        NULL AS driverId,
+        da.driver_user_id AS driverUserId,
+        SUBSTRING_INDEX(u.email, '@', 1) AS name,
+        u.email,
+        'pending' AS status,
+        NULL AS joinedOn,
+        da.applied_at AS appliedAt
+      FROM driver_applications da
+      JOIN users u ON u.id = da.driver_user_id
+      WHERE da.sponsor_id = ? AND da.status = 'PENDING'
+      ORDER BY da.applied_at DESC
+      `,
+      [sponsorId]
+    );
+
+    const combined = driverRows.concat(pendingRows);
+
+    const scored = combined
+      .map((d) => {
+        const riskScore = computeRisk({ status: d.status, joinedOn: d.joinedOn });
+        return {
+          ...d,
+          riskScore,
+          riskLabel: labelRisk(riskScore),
+        };
+      })
+      .sort((a, b) => b.riskScore - a.riskScore);
+
+    return res.json({ drivers: scored });
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({ ok: false, error: "failed to build risk dashboard" });
+  }
+});
+
 module.exports = router;

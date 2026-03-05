@@ -14,6 +14,7 @@ import ForgotPassword from "./components/ForgotPassword";
 import ForgotUsername from "./components/ForgotUsername";
 import ChangeUsername from "./components/ChangeUsername";
 import SponsorRules from "./components/SponsorRules"; 
+import SponsorRiskDashboard from "./components/SponsorRiskDashboard";
 
 function App() {
   const [token, setToken] = useState(null);
@@ -192,6 +193,42 @@ if (screen === "sponsor-rules" && userRole === "SPONSOR") {
       </>
     );
   }
+  // Sponsor Profile
+if (screen === "sponsor-profile" && userRole === "SPONSOR") {
+  return (
+    <>
+      <DarkToggle />
+      <SponsorProfile
+        token={token}
+        onLogout={handleLogout}
+        onChangePassword={() => setShowChangePassword(true)}
+        onChangeUsername={() => setShowChangeUsername(true)}
+        onRiskDashboard={() => setScreen("sponsor-risk")}   // <-- add this
+        onManageRules={() => setScreen("sponsor-rules")}
+      />
+
+      {showChangePassword && (
+        <ChangePassword token={token} onClose={() => setShowChangePassword(false)} />
+      )}
+
+      {showChangeUsername && (
+        <ChangeUsername token={token} onClose={() => setShowChangeUsername(false)} />
+      )}
+    </>
+  );
+}
+// Sponsor Risk Dashboard
+if (screen === "sponsor-risk" && userRole === "SPONSOR") {
+  return (
+    <>
+      <DarkToggle />
+      <SponsorRiskDashboard
+        token={token}
+        onBack={() => setScreen("sponsor-profile")}
+      />
+    </>
+  );
+}
 
   // Fallback
   return (
