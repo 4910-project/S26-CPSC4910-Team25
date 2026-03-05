@@ -13,6 +13,9 @@ const CATEGORIES = [
   { label: "TV",      media: "tvShow",   entity: "tvEpisode" },
 ];
 
+//Take the price from itunes then make it a decimal num
+//if the price is free charge 50 points (hopefully the drivers do not find out about that)
+//else multiple the price by points, the points are scuffed at this point
 function toPoints(price) 
 {
   const p = parseFloat(price);
@@ -142,7 +145,7 @@ export default function Catalogue({ token, initialPoints = 1000, onPointsChange 
       setLog(newLog);
       localStorage.setItem(LOG_KEY, JSON.stringify(newLog));
 
-      showToast(`✓ Redeemed for ${cost} pts!`, "success");
+      showToast(`Redeemed for ${cost} pts!`, "success");
       setConfirm(null);
     } 
     catch 
