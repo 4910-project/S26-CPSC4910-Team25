@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from "react";
 import "./Catalogue.css";
+import { useNavigate } from "react-router-dom";
 
 const API_BASE       = "http://localhost:8002/api/catalogue";
 const ITUNES_API     = "https://itunes.apple.com/search";
@@ -34,8 +35,9 @@ function loadLog()
   catch { return []; }
 }
 
-export default function Catalogue({ token, initialPoints = 1000, onPointsChange }) 
+export default function Catalogue({ token, initialPoints = 100, onPointsChange }) 
 {
+  const navigate = useNavigate();
   const [points,   setPoints]   = useState(initialPoints);
   const [input,    setInput]    = useState("");
   const [cat,      setCat]      = useState(CATEGORIES[0]);
@@ -168,6 +170,22 @@ export default function Catalogue({ token, initialPoints = 1000, onPointsChange 
       {/* Hero */}
       <div className="cat-hero">
         <div>
+          <button
+            onClick={() => navigate(-1)}
+            style={{
+              background: "rgba(255,255,255,0.12)",
+              border: "1px solid rgba(255,255,255,0.25)",
+              color: "#fff",
+              borderRadius: 8,
+              padding: "5px 12px",
+              cursor: "pointer",
+              fontSize: 13,
+              fontWeight: 600,
+              marginBottom: 10,
+            }}
+          >
+            Back
+          </button>
           <h1>Points Catalogue</h1>
           <p>Redeem your points on your choice of media</p>
         </div>
@@ -206,7 +224,7 @@ export default function Catalogue({ token, initialPoints = 1000, onPointsChange 
             className={`cat-pill ${showLog ? "active" : ""}`}
             onClick={() => setShowLog(v => !v)}
           >
-            🧾 My Purchases {log.length > 0 && `(${log.length})`}
+            My Purchases {log.length > 0 && `(${log.length})`}
           </button>
         </div>
 
