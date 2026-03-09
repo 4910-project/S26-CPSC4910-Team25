@@ -711,7 +711,7 @@ router.patch("/feedback/:id", async (req, res) => {
   }
  });
 
- router.get("/sponosrs", async (req, res) => {
+ router.get("/sponsors", async (req, res) => {
   try {
     const [rows] = await pool.query(
       `
@@ -724,7 +724,7 @@ router.patch("/feedback/:id", async (req, res) => {
       ORDER BY name ASC
       `
     );
-    return res.json({ ok: true, sponsor: rows});
+    return res.json({ ok: true, sponsors: rows});
   } catch(err) {
     console.error(err);
     return res.status(500).json({ ok: false, error: "failed to fetch sponsors"});
