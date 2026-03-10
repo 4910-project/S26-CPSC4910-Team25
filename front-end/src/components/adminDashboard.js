@@ -63,6 +63,12 @@ export default function AdminDashboard({ token, onLogout }) {
   const [lockingId, setLockingId] = useState(null);
   const [flaggingId, setFlaggingId] = useState(null); 
 
+  // Drivers state tab
+  const [drivers, setDrivers] = useState([]);
+  const [driverLoading, setDriverLoading] = useState(false);
+  const [driverError, setDriverError] = useState("");
+  const [driverFlaggingId, setDriverFlaggingId] = useState(null); 
+
   const fetchFeedback = useCallback(async () => {
     setLoading(true);
     setError("");
@@ -117,6 +123,28 @@ export default function AdminDashboard({ token, onLogout }) {
     if (activeTab === "sponsors") fetchSponsors();
   }, [activeTab, fetchSponsors]);
 
+  const fetchDrivers = useCallback(async () => {
+    setDriverLoading(true);
+    setDriverError("");
+    try {
+      const res = await fetch(`${ADMIN_API}/drivers`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Failed to fetch drivers");
+      setDrivers(data.drivers || []);
+    } catch (err) {
+      setDriverError(err?.message || "Unknown error");
+    } finally {
+      setDriverLoading(false);
+    }
+  }, [token]);
+
+  useEffect(() => {
+    if (activeTab === "drivers") fetchDrivers();
+  }, [activeTab, fetchDrivers]);
+
   const handleLockToggle = async (sponsorId, currentValue) => {
     setLockingId(sponsorId);
     try {
@@ -139,7 +167,7 @@ export default function AdminDashboard({ token, onLogout }) {
     }
   };
 
-  // Flag toggle handler
+  // Sponsor flag handler
   const handleFlagToggle = async (sponsorId, currentValue) => {
     setFlaggingId(sponsorId);
     try {
@@ -159,6 +187,28 @@ export default function AdminDashboard({ token, onLogout }) {
       setSponsorError(err?.message || "Unknown error");
     } finally {
       setFlaggingId(null);
+    }
+  };
+  // Driver Flag Handler
+  const handleDriverFlagToggle = async (driverId, currentValue) => {
+    setDriverFlaggingId(driverId);
+    try {
+      const res = await fetch(`${ADMIN_API}/drivers/${driverId}/flag`, {
+        method: "PATCH",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({ flagged: !currentValue }),
+      });
+
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Failed to flag driver");
+      await fetchDrivers();
+    } catch (err) {
+      setDriverError(err?.message || "Unknown error");
+    } finally {
+      setDriverFlaggingId(null);
     }
   };
 
@@ -193,7 +243,7 @@ export default function AdminDashboard({ token, onLogout }) {
       <h1 style={{ margin: 0, marginBottom: 4 }}>Admin Dashboard</h1>
 
       <div style={{ display: "flex", gap: 8, marginTop: 16, marginBottom: 24 }}>
-        {["feedback", "sponsors"].map((tab) => (
+        {["feedback", "sponsors", "drivers"].map((tab) => (
           <button
             key={tab}
             type="button"
@@ -209,7 +259,7 @@ export default function AdminDashboard({ token, onLogout }) {
               textTransform: "capitalize",
             }}
           >
-            {tab === "feedback" ? "Feedback" : "Sponsor Management"}
+            {tab === "feedback" ? "Feedback" : tab === "sponsors" ? "Sponsor Management" : "Driver Management"}
           </button>
         ))}
       </div>
@@ -612,6 +662,96 @@ export default function AdminDashboard({ token, onLogout }) {
               </div>
             ))}
         </div>
+      )}
+      {activeTab === "drivers" && (
+        <div>
+          {driverError && (
+            <div
+              style={{
+                padding: "10px 14px",
+                borderRadius: 8,
+                background: "#fef2f2",
+                color: "#991b1b",
+                marginBottom: 16,
+              }}
+            >
+              {driverError}
+            </div>
+          )}
+
+          {driverLoading && <p style={{ color: "var(--muted)" }}>Loading drivers...</p>}
+
+          {!driverLoading && drivers.length === 0 && (
+            <p style={{ color: "var(--muted)" }}>No drivers found</p>
+          )}
+
+          {!driverLoading &&
+            drivers.map((d) => (
+              <div
+                key={d.driver_id}
+                style={{
+                  border: `1px solid ${!!d.flagged ? "#fca5a5" : "var(--border, #e5e7eb)"}`,
+                  borderRadius: 12,
+                  padding: 16,
+                  background: !!d.flagged ? "#fff7f7" : "var(--card)",
+                  marginBottom: 10,
+                  display: "flex",
+                  justifyContent: "space-between",
+                  alignItems: "center",
+                }}
+              >
+                
+                <div>
+                  <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                    <span style={{ fontWeight: 700, fontSize: 15 }}>{d.email}</span>
+                    {/* flagged badge */}
+                    {!!d.flagged && (
+                      <span
+                        style={{
+                          padding: "2px 8px",
+                          borderRadius: 10,
+                          fontSize: 11,
+                          fontWeight: 700,
+                          background: "#fee2e2",
+                          color: "#b91c1c",
+                          display: "flex",
+                          alignItems: "center",
+                          gap: 3,
+                        }}
+                      >
+                        🚩 Flagged
+                      </span>
+                    )}
+                  </div>
+                  <div style={{ fontSize: 12, color: "var(--muted)", marginTop: 3 }}>
+                    Sponsor: {d.sponsor_name || "--"} · Status: {d.driver_status}
+                  </div>
+                </div>
+
+                  {/* flag button */}
+                  <button
+                    type="button"
+                    disabled={driverFlaggingId === d.driver_id}
+                    onClick={() => handleDriverFlagToggle(d.driver_id, d.flagged)}
+                    style={{
+                      padding: "7px 16px",
+                      borderRadius: 8,
+                      border: !!d.flagged
+                        ? "1px solid #fca5a5"
+                        : "1px solid var(--border, #d1d5db)",
+                      background: !!d.flagged ? "#fee2e2" : "transparent",
+                      color: !!d.flagged ? "#b91c1c" : "var(--text, #374151)",
+                      fontWeight: 600,
+                      fontSize: 13,
+                      cursor: driverFlaggingId === d.driver_id ? "not-allowed" : "pointer",
+                      opacity: driverFlaggingId === d.driver_id ? 0.6 : 1,
+                    }}
+                  >
+                    {driverFlaggingId === d.driver_id ? "Saving..." : !!d.flagged ? "🚩 Unflag" : "🚩 Flag"}
+                  </button>
+                </div>
+            ))}
+          </div>
       )}
     </div>
   );

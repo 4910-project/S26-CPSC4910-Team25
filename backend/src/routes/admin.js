@@ -112,7 +112,8 @@ router.get("/drivers", async (req, res) => {
         d.sponsor_id,
         s.name AS sponsor_name,
         d.dropped_reason,
-        d.dropped_at
+        d.dropped_at,
+        d.flagged
       FROM drivers d
       JOIN users u ON u.id = d.user_id
       LEFT JOIN sponsors s ON s.id = d.sponsor_id
@@ -152,7 +153,8 @@ router.get("/drivers/:driverId", async (req, res) => {
         d.sponsor_id,
         s.name AS sponsor_name,
         d.dropped_reason,
-        d.dropped_at
+        d.dropped_at,
+        d.flagged
       FROM drivers d
       JOIN users u ON u.id = d.user_id
       LEFT JOIN sponsors s ON s.id = d.sponsor_id
@@ -769,6 +771,46 @@ router.patch("/sponsors/:sponsorId/flag", async (req, res) => {
   } catch (err) {
     console.error(err);
     return res.status(500).json({ ok: false, error: "failed to update sponsor"});
+  }
+});
+
+/**
+ * NEW STORY 10910 — Admin can flag a driver
+ * PATCH /admin/drivers/:driverId/flag
+ */
+router.patch("/drivers/:driverId/flag", async (req, res) => {
+  const driverId = parsePositiveInt(req.params.driverId);
+  if (!driverId) {
+    return res.status(400).json({ ok: false, error: "invalid driverId "});
+  }
+
+  const { flagged } = req.body;
+  if (typeof flagged !== "boolean") {
+    return res.status(400).json({ ok: false, error: "flagged must be true or false"});
+  }
+
+  try {
+    const [result] = await pool.query(
+      "UPDATE drivers SET flagged = ? WHERE id = ? LIMIT 1",
+      [flagged, driverId]
+    );
+
+    if (!result.affectedRows) {
+      return res.status(404).json({ ok: false, error: "driver not found"});
+    }
+
+    await writeAudit({
+      category: "DRIVER_FLAG_TOGGLE",
+      actorUserId: req.user.id,
+      targetUserId:driverId,
+      success: 1,
+      details: `admin set flagged=${flagged} for driverId=${driverId}`,
+    });
+
+    return res.json({ ok: true, flagged});
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({ ok: false, error: "failed to update driver"});
   }
 });
 
