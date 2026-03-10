@@ -719,7 +719,8 @@ router.patch("/feedback/:id", async (req, res) => {
         id, 
         name, 
         status, 
-        accepting_drivers
+        accepting_drivers,
+        flagged
       FROM sponsors
       ORDER BY name ASC
       `
@@ -730,5 +731,45 @@ router.patch("/feedback/:id", async (req, res) => {
     return res.status(500).json({ ok: false, error: "failed to fetch sponsors"});
   }
  });
+
+ /**
+ * NEW STORY 10907 — Admin can flag a sponsor
+ * PATCH /admin/sponsors/:sponsorId/flag
+ */
+router.patch("/sponsors/:sponsorId/flag", async (req, res) => {
+  const sponsorId = parsePositiveInt(req.params.sponsorId);
+  if (!sponsorId) {
+    return res.status(400).json({ ok: false, error: "invalid sponsorId "});
+  }
+
+  const { flagged } = req.body;
+  if (typeof flagged !== "boolean") {
+    return res.status(400).json({ ok: false, error: "flagged must be true or false"});
+  }
+
+  try {
+    const [result] = await pool.query(
+      "UPDATE sponsors SET flagged = ? WHERE id = ? LIMIT 1",
+      [flagged, sponsorId]
+    );
+
+    if (!result.affectedRows) {
+      return res.status(404).json({ ok: false, error: "sponsor not found"});
+    }
+
+    await writeAudit({
+      category: "SPONSOR_FLAG_TOGGLE",
+      actorUserId: req.user.id,
+      sponsorId,
+      success: 1,
+      details: `admin set flagged=${flagged} for sponsorId=${sponsorId}`,
+    });
+
+    return res.json({ ok: true, flagged});
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({ ok: false, error: "failed to update sponsor"});
+  }
+});
 
 module.exports = router;

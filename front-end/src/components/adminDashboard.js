@@ -61,6 +61,7 @@ export default function AdminDashboard({ token, onLogout }) {
   const [sponsorLoading, setSponsorLoading] = useState(false);
   const [sponsorError, setSponsorError] = useState("");
   const [lockingId, setLockingId] = useState(null);
+  const [flaggingId, setFlaggingId] = useState(null); 
 
   const fetchFeedback = useCallback(async () => {
     setLoading(true);
@@ -135,6 +136,29 @@ export default function AdminDashboard({ token, onLogout }) {
       setSponsorError(err?.message || "Unknown error");
     } finally {
       setLockingId(null);
+    }
+  };
+
+  // Flag toggle handler
+  const handleFlagToggle = async (sponsorId, currentValue) => {
+    setFlaggingId(sponsorId);
+    try {
+      const res = await fetch(`${ADMIN_API}/sponsors/${sponsorId}/flag`, {
+        method: "PATCH",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({ flagged: !currentValue }),
+      });
+
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Failed to flag sponsor");
+      await fetchSponsors();
+    } catch (err) {
+      setSponsorError(err?.message || "Unknown error");
+    } finally {
+      setFlaggingId(null);
     }
   };
 
@@ -503,41 +527,88 @@ export default function AdminDashboard({ token, onLogout }) {
               <div
                 key={s.id}
                 style={{
-                  border: "1px solid var(--border, #e5e7eb)",
+                  border: `1px solid ${!!s.flagged ? "#fca5a5" : "var(--border, #e5e7eb)"}`,
                   borderRadius: 12,
                   padding: 16,
-                  background: "var(--card)",
+                  background: !!s.flagged ? "#fff7f7" : "var(--card)",
                   marginBottom: 10,
                   display: "flex",
                   justifyContent: "space-between",
                   alignItems: "center",
                 }}
               >
+                
                 <div>
-                  <div style={{ fontWeight: 700, fontSize: 15 }}>{s.name}</div>
+                  <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                    <span style={{ fontWeight: 700, fontSize: 15 }}>{s.name}</span>
+                    {/* flagged badge */}
+                    {!!s.flagged && (
+                      <span
+                        style={{
+                          padding: "2px 8px",
+                          borderRadius: 10,
+                          fontSize: 11,
+                          fontWeight: 700,
+                          background: "#fee2e2",
+                          color: "#b91c1c",
+                          display: "flex",
+                          alignItems: "center",
+                          gap: 3,
+                        }}
+                      >
+                        🚩 Flagged
+                      </span>
+                    )}
+                  </div>
                   <div style={{ fontSize: 12, color: "var(--muted)", marginTop: 3 }}>
                     Status: {s.status} · {s.accepting_drivers ? "✅ Accepting drivers" : "🔒 Locked"}
                   </div>
                 </div>
 
-                <button
-                  type="button"
-                  disabled={lockingId === s.id}
-                  onClick={() => handleLockToggle(s.id, s.accepting_drivers)}
-                  style={{
-                    padding: "7px 16px",
-                    borderRadius: 8,
-                    border: "none",
-                    background: s.accepting_drivers ? "#ef4444" : "#10b981",
-                    color: "#fff",
-                    fontWeight: 600,
-                    fontSize: 13,
-                    cursor: lockingId === s.id ? "not-allowed" : "pointer",
-                    opacity: lockingId === s.id ? 0.6 : 1,
-                  }}
-                >
-                  {lockingId === s.id ? "Saving..." : s.accepting_drivers ? "🔒 Lock" : "🔓 Unlock"}
-                </button>
+                
+                <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                  {/* flag button */}
+                  <button
+                    type="button"
+                    disabled={flaggingId === s.id}
+                    onClick={() => handleFlagToggle(s.id, s.flagged)}
+                    style={{
+                      padding: "7px 16px",
+                      borderRadius: 8,
+                      border: !!s.flagged
+                        ? "1px solid #fca5a5"
+                        : "1px solid var(--border, #d1d5db)",
+                      background: !!s.flagged ? "#fee2e2" : "transparent",
+                      color: !!s.flagged ? "#b91c1c" : "var(--text, #374151)",
+                      fontWeight: 600,
+                      fontSize: 13,
+                      cursor: flaggingId === s.id ? "not-allowed" : "pointer",
+                      opacity: flaggingId === s.id ? 0.6 : 1,
+                    }}
+                  >
+                    {flaggingId === s.id ? "Saving..." : !!s.flagged ? "🚩 Unflag" : "🚩 Flag"}
+                  </button>
+
+                  {/* Lock button */}
+                  <button
+                    type="button"
+                    disabled={lockingId === s.id}
+                    onClick={() => handleLockToggle(s.id, s.accepting_drivers)}
+                    style={{
+                      padding: "7px 16px",
+                      borderRadius: 8,
+                      border: "none",
+                      background: s.accepting_drivers ? "#ef4444" : "#10b981",
+                      color: "#fff",
+                      fontWeight: 600,
+                      fontSize: 13,
+                      cursor: lockingId === s.id ? "not-allowed" : "pointer",
+                      opacity: lockingId === s.id ? 0.6 : 1,
+                    }}
+                  >
+                    {lockingId === s.id ? "Saving..." : s.accepting_drivers ? "🔒 Lock" : "🔓 Unlock"}
+                  </button>
+                </div>
               </div>
             ))}
         </div>
