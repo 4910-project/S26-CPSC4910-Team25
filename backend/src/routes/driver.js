@@ -248,7 +248,10 @@ router.get("/notification-settings", async (req, res) => {
 
   try {
     const [rows] = await pool.query(
-      "SELECT notify_points_added FROM users WHERE id = ? LIMIT 1",
+      `SELECT notify_points_added, notify_points_removed
+       FROM users
+       WHERE id = ?
+       LIMIT 1`,
       [userId]
     );
 
@@ -258,7 +261,8 @@ router.get("/notification-settings", async (req, res) => {
 
     return res.json({
       ok: true,
-      notify_points_added: !!rows[0].notify_points_added
+      notify_points_added: !!rows[0].notify_points_added,
+      notify_points_removed: !!rows[0].notify_points_removed,
     });
   } catch (err) {
     console.error(err);
@@ -275,24 +279,34 @@ router.patch("/notification-settings", async (req, res) => {
     return res.status(401).json({ ok: false, error: "invalid session" });
   }
 
-  const { notify_points_added } = req.body;
+  const { notify_points_added, notify_points_removed } = req.body;
 
-  if (typeof notify_points_added !== "boolean") {
+  if (
+    typeof notify_points_added !== "boolean" ||
+    typeof notify_points_removed !== "boolean"
+  ) {
     return res.status(400).json({
       ok: false,
-      error: "notify_points_added must be a boolean"
+      error: "notify_points_added and notify_points_removed must be booleans"
     });
   }
 
   try {
     await pool.query(
-      "UPDATE users SET notify_points_added = ? WHERE id = ?",
-      [notify_points_added ? 1 : 0, userId]
+      `UPDATE users
+       SET notify_points_added = ?, notify_points_removed = ?
+       WHERE id = ?`,
+      [
+        notify_points_added ? 1 : 0,
+        notify_points_removed ? 1 : 0,
+        userId
+      ]
     );
 
     return res.json({
       ok: true,
-      notify_points_added
+      notify_points_added,
+      notify_points_removed
     });
   } catch (err) {
     console.error(err);

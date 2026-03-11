@@ -44,6 +44,7 @@ export default function DriverProfile({ token, onLogout, onChangePassword, onCha
 
   // Notification settings state
   const [notifyPointsAdded, setNotifyPointsAdded] = useState(true);
+  const [notifyPointsRemoved, setNotifyPointsRemoved] = useState(true);
   const [notifLoading, setNotifLoading] = useState(false);
   const [notifSaving, setNotifSaving] = useState(false);
   const [notifMessage, setNotifMessage] = useState("");
@@ -100,6 +101,7 @@ export default function DriverProfile({ token, onLogout, onChangePassword, onCha
 
         if (res.ok) {
           setNotifyPointsAdded(!!data.notify_points_added);
+          setNotifyPointsRemoved(!!data.notify_points_removed);
         }
       } catch (err) {
         console.error(err);
@@ -109,7 +111,7 @@ export default function DriverProfile({ token, onLogout, onChangePassword, onCha
     })();
   }, [token]);
 
-  async function saveNotificationPreference(value) {
+  async function saveNotificationPreferences(updatedAdded, updatedRemoved) {
     setNotifSaving(true);
     setNotifMessage("");
 
@@ -121,7 +123,8 @@ export default function DriverProfile({ token, onLogout, onChangePassword, onCha
           Authorization: `Bearer ${token}`,
         },
         body: JSON.stringify({
-          notify_points_added: value,
+          notify_points_added: updatedAdded,
+          notify_points_removed: updatedRemoved,
         }),
       });
 
@@ -131,8 +134,9 @@ export default function DriverProfile({ token, onLogout, onChangePassword, onCha
         throw new Error(data.error || "Failed to update notification setting");
       }
 
-      setNotifyPointsAdded(value);
-      setNotifMessage("Notification preference updated.");
+      setNotifyPointsAdded(updatedAdded);
+      setNotifyPointsRemoved(updatedRemoved);
+      setNotifMessage("Notification preferences updated.");
     } catch (err) {
       console.error(err);
       setNotifMessage(err.message);
@@ -216,7 +220,7 @@ export default function DriverProfile({ token, onLogout, onChangePassword, onCha
         method: "POST",
         headers: {
           "Content-Type": "application/json",
-          Authorization: `Bearer ${token}`
+          Authorization: `Bearer ${token}`,
         },
         body: JSON.stringify({ rating: form.rating, comment: form.comment }),
       });
@@ -420,22 +424,36 @@ export default function DriverProfile({ token, onLogout, onChangePassword, onCha
               ) : (
                 <>
                   <div style={{ marginTop: 10, fontSize: 18, fontWeight: 700 }}>
-                    Points Added Notifications
+                    Points Notifications
                   </div>
 
                   <div style={{ marginTop: 6, color: "var(--muted)", fontSize: 13 }}>
-                    Get notified when points are added to your account.
+                    Choose when you want to be notified about point changes.
                   </div>
 
-                  <div style={{ marginTop: 14 }}>
+                  <div style={{ marginTop: 14, display: "flex", flexDirection: "column", gap: 10 }}>
                     <label style={{ display: "flex", alignItems: "center", gap: 10 }}>
                       <input
                         type="checkbox"
                         checked={notifyPointsAdded}
-                        onChange={(e) => saveNotificationPreference(e.target.checked)}
+                        onChange={(e) =>
+                          saveNotificationPreferences(e.target.checked, notifyPointsRemoved)
+                        }
                         disabled={notifSaving}
                       />
-                      {notifyPointsAdded ? "Enabled" : "Disabled"}
+                      Notify me when points are added
+                    </label>
+
+                    <label style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                      <input
+                        type="checkbox"
+                        checked={notifyPointsRemoved}
+                        onChange={(e) =>
+                          saveNotificationPreferences(notifyPointsAdded, e.target.checked)
+                        }
+                        disabled={notifSaving}
+                      />
+                      Notify me when points are removed
                     </label>
                   </div>
 
