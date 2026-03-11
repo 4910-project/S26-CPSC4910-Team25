@@ -510,7 +510,7 @@ export default function SponsorProfile({ token, onLogout, onChangeUsername }) {
                 </thead>
                 <tbody>
                   {drivers.map((d) => (
-                    <tr key={d.driver_id} style={{ borderBottom: "1px solid #f3f4f6" }}>
+                    <tr key={d.driverId} style={{ borderBottom: "1px solid #f3f4f6" }}>
                       <td style={{ padding: "10px 12px" }}>{d.email}</td>
                       <td style={{ padding: "10px 12px" }}><StatusBadge status={d.driver_status} /></td>
                       <td style={{ padding: "10px 12px", color: "#6b7280", fontSize: 12 }}>
@@ -522,9 +522,9 @@ export default function SponsorProfile({ token, onLogout, onChangeUsername }) {
                             <input
                               type="text"
                               placeholder="Reason (required)"
-                              value={blockReason[d.driver_id] || ""}
+                              value={blockReason[d.driverId] || ""}
                               onChange={(e) =>
-                                setBlockReason((prev) => ({ ...prev, [d.driver_id]: e.target.value }))
+                                setBlockReason((prev) => ({ ...prev, [d.driverId]: e.target.value }))
                               }
                               style={{
                                 padding: "5px 8px", borderRadius: 6,
@@ -533,7 +533,7 @@ export default function SponsorProfile({ token, onLogout, onChangeUsername }) {
                             />
                             <button
                               type="button"
-                              onClick={() => handleBlock(d.driver_id)}
+                              onClick={() => handleBlock(d.driverId)}
                               style={{
                                 padding: "5px 12px", borderRadius: 6, border: "none",
                                 background: "#ef4444", color: "#fff", fontWeight: 600,
@@ -546,7 +546,7 @@ export default function SponsorProfile({ token, onLogout, onChangeUsername }) {
                         ) : (
                           <button
                             type="button"
-                            onClick={() => handleUnblock(d.driver_id)}
+                            onClick={() => handleUnblock(d.driverId)}
                             style={{
                               padding: "5px 12px", borderRadius: 6, border: "none",
                               background: "#10b981", color: "#fff", fontWeight: 600,

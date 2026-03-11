@@ -29,23 +29,30 @@ router.post("/register", async (req, res) => {
     requireEnv("JWT_SECRET"); // fail fast if misconfigured
 
     const email = normalizeEmail(req.body?.email);
+    const username = String(req.body?.username || "").trim();
     const password = String(req.body?.password || "");
     const role = req.body?.role || "DRIVER";
 
     if (!email || !password) {
       return res.status(400).json({ ok: false, error: "Missing email or password" });
     }
+    if (!username) {
+      return res.status(400).json({ ok: false, error: "Missing username" });
+    }
 
-    const [existing] = await pool.query("SELECT id FROM users WHERE email = ? LIMIT 1", [email]);
+    const [existing] = await pool.query(
+      "SELECT id FROM users WHERE email = ? OR username = ? LIMIT 1",
+      [email, username]
+    );
     if (existing.length) {
-      return res.status(409).json({ ok: false, error: "Email already exists" });
+      return res.status(409).json({ ok: false, error: "Email or username already exists" });
     }
 
     const password_hash = await bcrypt.hash(password, 10);
 
     await pool.query(
-      "INSERT INTO users (email, password_hash, role, status) VALUES (?, ?, ?, 'ACTIVE')",
-      [email, password_hash, role]
+      "INSERT INTO users (email, username, password_hash, role, status) VALUES (?, ?, ?, ?, 'ACTIVE')",
+      [email, username, password_hash, role]
     );
 
     return res.json({ ok: true, status: "ok" });
