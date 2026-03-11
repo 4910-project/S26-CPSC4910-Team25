@@ -66,7 +66,9 @@ router.get("/org", async (req, res) => {
         address,
         contact_name AS contactName,
         contact_email AS contactEmail,
-        contact_phone AS contactPhone
+        contact_phone AS contactPhone,
+        point_value AS pointValue,
+        points_expire_days AS pointsExpireDays
       FROM sponsors
       WHERE id = ?
       LIMIT 1
@@ -95,10 +97,31 @@ router.patch("/org", async (req, res) => {
     return res.status(400).json({ ok: false, error: "sponsor account is not linked" });
   }
 
-  const { name, contactName, contactPhone, contactEmail, address } = req.body || {};
+  const {
+    name,
+    contactName,
+    contactPhone,
+    contactEmail,
+    address,
+    pointValue,
+    pointsExpireDays
+  } = req.body || {};
 
   if (!name || !String(name).trim()) {
     return res.status(400).json({ ok: false, error: "Company name is required" });
+  }
+
+  const parsedPointValue = Number(pointValue);
+  if (!Number.isFinite(parsedPointValue) || parsedPointValue < 0) {
+    return res.status(400).json({ ok: false, error: "pointValue must be a non-negative number" });
+  }
+
+  let parsedExpireDays = null;
+  if (pointsExpireDays !== null && pointsExpireDays !== undefined && pointsExpireDays !== "") {
+    parsedExpireDays = parsePositiveInt(pointsExpireDays);
+    if (!parsedExpireDays) {
+      return res.status(400).json({ ok: false, error: "pointsExpireDays must be a positive integer or blank" });
+    }
   }
 
   try {
@@ -108,7 +131,9 @@ router.patch("/org", async (req, res) => {
            contact_name = ?,
            contact_phone = ?,
            contact_email = ?,
-           address = ?
+           address = ?,
+           point_value = ?,
+           points_expire_days = ?
        WHERE id = ?
        LIMIT 1`,
       [
@@ -117,6 +142,8 @@ router.patch("/org", async (req, res) => {
         contactPhone ? String(contactPhone).trim() : null,
         contactEmail ? String(contactEmail).trim() : null,
         address ? String(address).trim() : null,
+        parsedPointValue,
+        parsedExpireDays,
         sponsorId,
       ]
     );
@@ -126,14 +153,29 @@ router.patch("/org", async (req, res) => {
     }
 
     const [rows] = await pool.query(
-      `SELECT id AS sponsorId, name AS sponsorName, status AS sponsorStatus,
-              address, contact_name AS contactName,
-              contact_email AS contactEmail, contact_phone AS contactPhone
-       FROM sponsors WHERE id = ? LIMIT 1`,
+      `
+      SELECT
+        id AS sponsorId,
+        name AS sponsorName,
+        status AS sponsorStatus,
+        address,
+        contact_name AS contactName,
+        contact_email AS contactEmail,
+        contact_phone AS contactPhone,
+        point_value AS pointValue,
+        points_expire_days AS pointsExpireDays
+      FROM sponsors
+      WHERE id = ?
+      LIMIT 1
+      `,
       [sponsorId]
     );
 
-    return res.json({ ok: true, message: "Profile updated successfully", sponsor: rows[0] });
+    return res.json({
+      ok: true,
+      message: "Profile updated successfully",
+      sponsor: rows[0]
+    });
   } catch (err) {
     console.error(err);
     return res.status(500).json({ ok: false, error: "failed to update sponsor profile" });

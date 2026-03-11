@@ -10,7 +10,6 @@ export default function SponsorProfile({
   onManageRules,
   onRiskDashboard
 }) {
-  // ─── Existing profile state ───────────────────────────────────────────────
   const [profile, setProfile] = useState({
     company_name: "",
     contact_name: "",
@@ -19,7 +18,8 @@ export default function SponsorProfile({
     city: "",
     state: "",
     zip_code: "",
-    point_value: "0.01"
+    point_value: "0.01",
+    points_expire_days: ""
   });
 
   const [loading, setLoading] = useState(true);
@@ -28,7 +28,6 @@ export default function SponsorProfile({
   const [success, setSuccess] = useState("");
   const [isEditing, setIsEditing] = useState(false);
 
-  // ─── Driver management state ──────────────────────────────────────────────
   const [drivers, setDrivers] = useState([]);
   const [applications, setApplications] = useState([]);
   const [driverLoading, setDriverLoading] = useState(false);
@@ -39,7 +38,6 @@ export default function SponsorProfile({
   const [ratings, setRatings] = useState({});
   const [sortByRating, setSortByRating] = useState(false);
 
-  // ─── Profile fetch ────────────────────────────────────────────────────────
   const fetchProfile = useCallback(async () => {
     try {
       setLoading(true);
@@ -58,7 +56,8 @@ export default function SponsorProfile({
           city: "",
           state: "",
           zip_code: "",
-          point_value: "0.01"
+          point_value: data.pointValue ?? "0.01",
+          points_expire_days: data.pointsExpireDays ?? ""
         });
         setIsEditing(false);
       } else if (res.status === 404) {
@@ -92,6 +91,23 @@ export default function SponsorProfile({
     try {
       if (!profile.company_name) throw new Error("Company name is required");
 
+      const pointValue = parseFloat(profile.point_value);
+      if (isNaN(pointValue) || pointValue < 0) {
+        throw new Error("Point value must be a valid non-negative number");
+      }
+
+      const pointsExpireDays =
+        profile.points_expire_days === ""
+          ? null
+          : Number(profile.points_expire_days);
+
+      if (
+        pointsExpireDays !== null &&
+        (!Number.isInteger(pointsExpireDays) || pointsExpireDays <= 0)
+      ) {
+        throw new Error("Points expiration must be a positive integer or blank");
+      }
+
       const res = await fetch(`${SPONSOR_API}/org`, {
         method: "PATCH",
         headers: {
@@ -102,16 +118,19 @@ export default function SponsorProfile({
           name: profile.company_name,
           contactName: profile.contact_name,
           contactPhone: profile.phone,
+          contactEmail: null,
           address: [profile.address, profile.city, profile.state, profile.zip_code]
             .filter(Boolean)
             .join(", "),
+          pointValue,
+          pointsExpireDays
         })
       });
 
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || data.message || "Failed to save profile");
 
-      setSuccess(data.message);
+      setSuccess(data.message || "Profile updated successfully");
       setIsEditing(false);
       await fetchProfile();
     } catch (err) {
@@ -128,7 +147,6 @@ export default function SponsorProfile({
     setSuccess("");
   };
 
-  // ─── Driver management functions ──────────────────────────────────────────
   const fetchDrivers = useCallback(async () => {
     setDriverLoading(true);
     setDriverError("");
@@ -291,7 +309,6 @@ export default function SponsorProfile({
     }
   };
 
-  // ─── Status badge helper ──────────────────────────────────────────────────
   const StatusBadge = ({ status }) => {
     const colors = {
       ACTIVE: { bg: "#d1fae5", color: "#065f46" },
@@ -320,7 +337,6 @@ export default function SponsorProfile({
     );
   };
 
-  // ─── Render ───────────────────────────────────────────────────────────────
   if (loading) {
     return (
       <div className="sponsor-profile-container">
@@ -331,7 +347,6 @@ export default function SponsorProfile({
 
   return (
     <div className="sponsor-profile-container">
-      {/* ── Page header ── */}
       <div className="profile-header">
         <h1>Sponsor Profile</h1>
 
@@ -369,7 +384,6 @@ export default function SponsorProfile({
       {error && <div className="error-message">{error}</div>}
       {success && <div className="success-message">{success}</div>}
 
-      {/* ── Existing profile form ── */}
       <form onSubmit={handleSubmit} className="profile-form">
         <div className="form-section">
           <h2>Company Information</h2>
@@ -491,6 +505,23 @@ export default function SponsorProfile({
               Default: $0.01 per point. This determines the dollar value of driver points.
             </small>
           </div>
+
+          <div className="form-group">
+            <label htmlFor="points_expire_days">Points Expire After (Days)</label>
+            <input
+              type="number"
+              id="points_expire_days"
+              name="points_expire_days"
+              value={profile.points_expire_days}
+              onChange={handleChange}
+              disabled={!isEditing}
+              min="1"
+              placeholder="Leave blank for no expiration"
+            />
+            <small className="form-hint">
+              Leave blank if points should never expire.
+            </small>
+          </div>
         </div>
 
         {isEditing && (
@@ -505,7 +536,6 @@ export default function SponsorProfile({
         )}
       </form>
 
-      {/* ── Driver Management Section ── */}
       <div className="form-section" style={{ marginTop: 40 }}>
         <h2>Driver Management</h2>
 
