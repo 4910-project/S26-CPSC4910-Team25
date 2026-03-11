@@ -112,7 +112,8 @@ router.get("/drivers", async (req, res) => {
         d.sponsor_id,
         s.name AS sponsor_name,
         d.dropped_reason,
-        d.dropped_at
+        d.dropped_at,
+        d.flagged
       FROM drivers d
       JOIN users u ON u.id = d.user_id
       LEFT JOIN sponsors s ON s.id = d.sponsor_id
@@ -152,7 +153,8 @@ router.get("/drivers/:driverId", async (req, res) => {
         d.sponsor_id,
         s.name AS sponsor_name,
         d.dropped_reason,
-        d.dropped_at
+        d.dropped_at,
+        d.flagged
       FROM drivers d
       JOIN users u ON u.id = d.user_id
       LEFT JOIN sponsors s ON s.id = d.sponsor_id
@@ -581,6 +583,234 @@ router.post("/sandboxes", async (req, res) => {
     return res.status(500).json({ ok: false, error: "failed to create sandbox" });
   } finally {
     conn.release();
+  }
+});
+
+/**
+ * GET /admin/feedback
+ * List all feedback submissions with submitter info.
+ * Query params: ?status=open|reviewed|resolved&category=...&page=1&limit=20
+ */
+router.get("/feedback", async (req, res) => {
+  try {
+    const status   = req.query.status   ? String(req.query.status).trim()   : null;
+    const category = req.query.category ? String(req.query.category).trim() : null;
+    const page     = Math.max(1, parseInt(req.query.page  || "1", 10));
+    const limit    = Math.min(50, Math.max(1, parseInt(req.query.limit || "20", 10)));
+    const offset   = (page - 1) * limit;
+
+    const conditions = [];
+    const params     = [];
+
+    if (status)   { conditions.push("f.status = ?");   params.push(status);   }
+    if (category) { conditions.push("f.category = ?"); params.push(category); }
+
+    const where = conditions.length ? `WHERE ${conditions.join(" AND ")}` : "";
+
+    const [rows] = await pool.query(
+      `SELECT
+         f.id, f.category, f.message, f.status, f.admin_note,
+         f.created_at, f.updated_at,
+         u.email AS submitter_email,
+         u.role  AS submitter_role
+       FROM feedback f
+       JOIN users u ON u.id = f.user_id
+       ${where}
+       ORDER BY f.created_at DESC
+       LIMIT ? OFFSET ?`,
+      [...params, limit, offset]
+    );
+
+    const [[{ total }]] = await pool.query(
+      `SELECT COUNT(*) AS total FROM feedback f ${where}`,
+      params
+    );
+
+    return res.json({ ok: true, feedback: rows, total, page, limit });
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({ ok: false, error: "failed to fetch feedback" });
+  }
+});
+
+/**
+ * PATCH /admin/feedback/:id
+ * Update status or add admin note.
+ * Body: { status?: string, adminNote?: string }
+ */
+router.patch("/feedback/:id", async (req, res) => {
+  const feedbackId = parseInt(req.params.id, 10);
+  if (!feedbackId) return res.status(400).json({ ok: false, error: "invalid id" });
+
+  const VALID_STATUSES = ["open", "reviewed", "resolved"];
+  const status    = req.body?.status    ? String(req.body.status).trim()    : null;
+  const adminNote = req.body?.adminNote ? String(req.body.adminNote).trim() : null;
+
+  if (status && !VALID_STATUSES.includes(status)) {
+    return res.status(400).json({ ok: false, error: "invalid status" });
+  }
+
+  try {
+    const updates = [];
+    const params  = [];
+    if (status)    { updates.push("status = ?");     params.push(status);    }
+    if (adminNote !== null) { updates.push("admin_note = ?"); params.push(adminNote); }
+
+    if (!updates.length) {
+      return res.status(400).json({ ok: false, error: "nothing to update" });
+    }
+
+    params.push(feedbackId);
+    await pool.query(
+      `UPDATE feedback SET ${updates.join(", ")} WHERE id = ? LIMIT 1`,
+      params
+    );
+
+    return res.json({ ok: true, message: "Feedback updated" });
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({ ok: false, error: "failed to update feedback" });
+  }
+});
+
+/**
+ * NEW STORY 10917 — Admin can lock sponsors from acceptng new drivers
+ * PATCH /admin/sponsors/:sponsorId/lock
+ */
+ router.patch("/sponsors/:sponsorId/lock", async (req, res) => {
+  const sponsorId = parsePositiveInt(req.params.sponsorId);
+  if (!sponsorId) {
+    return res.status(400).json({ ok: false, error: "invalid sponsorId"});
+  }
+
+  const accepting = req.body?.accepting_drivers;
+  if (typeof accepting !== "boolean") {
+    return res.status(400).json({ ok: false, error: "accepting_drivers must be true or false"});
+  }
+
+  try {
+    const [result] = await pool.query(
+      "UPDATE sponsors SET accepting_drivers =? WHERE id = ? LIMIT 1",
+      [accepting, sponsorId]
+    );
+
+    if (!result.affectedRows) {
+      return res.status(404).json({ ok: false, error: "sponsor not found"});
+    }
+
+    await writeAudit({
+      category: "SPONSOR_LOCK_TOGGLE",
+      actorUserId: req.user.id,
+      sponsorId,
+      success: 1,
+      details: `admin set accepting_drivers=${accepting} for sposnorId=${sponsorId}`
+    });
+
+    return res.json({ ok: true, accepting_drivers: accepting});
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({ ok: false, error: "failed to update sponsor"});
+  }
+ });
+
+ router.get("/sponsors", async (req, res) => {
+  try {
+    const [rows] = await pool.query(
+      `
+      SELECT
+        id, 
+        name, 
+        status, 
+        accepting_drivers,
+        flagged
+      FROM sponsors
+      ORDER BY name ASC
+      `
+    );
+    return res.json({ ok: true, sponsors: rows});
+  } catch(err) {
+    console.error(err);
+    return res.status(500).json({ ok: false, error: "failed to fetch sponsors"});
+  }
+ });
+
+ /**
+ * NEW STORY 10907 — Admin can flag a sponsor
+ * PATCH /admin/sponsors/:sponsorId/flag
+ */
+router.patch("/sponsors/:sponsorId/flag", async (req, res) => {
+  const sponsorId = parsePositiveInt(req.params.sponsorId);
+  if (!sponsorId) {
+    return res.status(400).json({ ok: false, error: "invalid sponsorId "});
+  }
+
+  const { flagged } = req.body;
+  if (typeof flagged !== "boolean") {
+    return res.status(400).json({ ok: false, error: "flagged must be true or false"});
+  }
+
+  try {
+    const [result] = await pool.query(
+      "UPDATE sponsors SET flagged = ? WHERE id = ? LIMIT 1",
+      [flagged, sponsorId]
+    );
+
+    if (!result.affectedRows) {
+      return res.status(404).json({ ok: false, error: "sponsor not found"});
+    }
+
+    await writeAudit({
+      category: "SPONSOR_FLAG_TOGGLE",
+      actorUserId: req.user.id,
+      sponsorId,
+      success: 1,
+      details: `admin set flagged=${flagged} for sponsorId=${sponsorId}`,
+    });
+
+    return res.json({ ok: true, flagged});
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({ ok: false, error: "failed to update sponsor"});
+  }
+});
+
+/**
+ * NEW STORY 10910 — Admin can flag a driver
+ * PATCH /admin/drivers/:driverId/flag
+ */
+router.patch("/drivers/:driverId/flag", async (req, res) => {
+  const driverId = parsePositiveInt(req.params.driverId);
+  if (!driverId) {
+    return res.status(400).json({ ok: false, error: "invalid driverId "});
+  }
+
+  const { flagged } = req.body;
+  if (typeof flagged !== "boolean") {
+    return res.status(400).json({ ok: false, error: "flagged must be true or false"});
+  }
+
+  try {
+    const [result] = await pool.query(
+      "UPDATE drivers SET flagged = ? WHERE id = ? LIMIT 1",
+      [flagged, driverId]
+    );
+
+    if (!result.affectedRows) {
+      return res.status(404).json({ ok: false, error: "driver not found"});
+    }
+
+    await writeAudit({
+      category: "DRIVER_FLAG_TOGGLE",
+      actorUserId: req.user.id,
+      targetUserId:driverId,
+      success: 1,
+      details: `admin set flagged=${flagged} for driverId=${driverId}`,
+    });
+
+    return res.json({ ok: true, flagged});
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({ ok: false, error: "failed to update driver"});
   }
 });
 

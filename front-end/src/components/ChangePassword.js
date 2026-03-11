@@ -82,7 +82,10 @@ export default function ChangePassword({ token, onClose }) {
         throw new Error(data.message || "Failed to change password");
       }
 
-      setSuccess(data.message);
+      const successMessage = data.notification?.message
+        ? `${data.message} ${data.notification.message}`
+        : data.message;
+      setSuccess(successMessage);
       
       // Clear form
       setFormData({

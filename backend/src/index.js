@@ -14,7 +14,9 @@ if (!process.env.JWT_SECRET) {
 const express = require("express");
 const cors = require("cors");
 const pool = require("./db");
-const profileRoutes = require("../login-service/routes/profileRoutes");
+
+const profileRoutes = require("./routes/profile");
+const loginProfileRoutes = require("../login-service/routes/profileRoutes");
 
 const { runArchiveSponsorsJob } = require("./jobs/archiveSponsorsJob");
 
@@ -24,6 +26,7 @@ const adminRoutes = require("./routes/admin");
 const driverRoutes = require("./routes/driver");
 const mfaRoutes = require("./routes/mfa");
 const sponsorRoutes = require("./routes/sponsor");
+const driverAppsRoutes = require("./routes/driverApps");
 
 const app = express();
 
@@ -39,7 +42,6 @@ app.use(
 );
 
 app.use(express.json());
-
 
 app.use((req, res, next) => {
   res.on("finish", () => {
@@ -74,14 +76,20 @@ app.use("/admin", adminRoutes);
 // MFA routes
 app.use("/api", mfaRoutes);
 
-// Driver routes 
+// Profile routes (change username, change password)
+app.use("/api/profile", profileRoutes);
+
+// Login-service profile routes
+app.use("/api/profile", loginProfileRoutes);
+
+// Driver routes
 app.use("/api/driver", driverRoutes);
 
 // Sponsor routes
 app.use("/sponsor", sponsorRoutes);
 
-app.use("/api/profile", profileRoutes);
-
+// Driver application routes
+app.use("/api/apps", driverAppsRoutes);
 
 app.get("/health", async (req, res) => {
   try {
@@ -91,7 +99,6 @@ app.get("/health", async (req, res) => {
     res.status(500).json({ status: "error", db: "disconnected" });
   }
 });
-
 
 (async () => {
   try {
@@ -103,7 +110,6 @@ app.get("/health", async (req, res) => {
     process.exit(1);
   }
 })();
-
 
 const minutes = Number(process.env.SPONSOR_ARCHIVE_JOB_MINUTES || 10);
 setInterval(runArchiveSponsorsJob, minutes * 60 * 1000);

@@ -18,6 +18,22 @@ PREPARE stmt FROM @sql;
 EXECUTE stmt;
 DEALLOCATE PREPARE stmt;
 
+-- Sponsor can set starting points for a driver (10760)
+SET @sql = IF(
+  (
+    SELECT COUNT(*)
+    FROM information_schema.COLUMNS
+    WHERE TABLE_SCHEMA = @db_name
+      AND TABLE_NAME = 'drivers'
+      AND COLUMN_NAME = 'starting_points'
+  ) = 0,
+  'ALTER TABLE drivers ADD COLUMN starting_points INT NOT NULL DEFAULT 0 AFTER joined_on',
+  'SELECT ''drivers.starting_points already exists'''
+);
+PREPARE stmt FROM @sql;
+EXECUTE stmt;
+DEALLOCATE PREPARE stmt;
+
 -- Sponsor org fields (10733, 15069)
 SET @sql = IF(
   (
@@ -101,6 +117,22 @@ CREATE TABLE IF NOT EXISTS driver_applications (
     FOREIGN KEY (decided_by_user_id) REFERENCES users(id)
     ON DELETE SET NULL
 );
+
+-- Sponsor can leave acceptance/rejection message (10764)
+SET @sql = IF(
+  (
+    SELECT COUNT(*)
+    FROM information_schema.COLUMNS
+    WHERE TABLE_SCHEMA = @db_name
+      AND TABLE_NAME = 'driver_applications'
+      AND COLUMN_NAME = 'decision_message'
+  ) = 0,
+  'ALTER TABLE driver_applications ADD COLUMN decision_message VARCHAR(500) NULL AFTER decided_by_user_id',
+  'SELECT ''driver_applications.decision_message already exists'''
+);
+PREPARE stmt FROM @sql;
+EXECUTE stmt;
+DEALLOCATE PREPARE stmt;
 
 -- Participating drivers list filters (10745, 15071)
 SET @sql = IF(

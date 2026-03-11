@@ -1,55 +1,33 @@
 import "./App.css";
 import React, { useState, useEffect } from "react";
-import { Routes, Route, Navigate } from "react-router-dom";
+import { Routes, Route, Navigate, useNavigate } from "react-router-dom";
 
+import Navbar from "./components/Navbar";
 import Login from "./login.js";
 import MFASettings from "./MFASettings";
-
 import About from "./components/About";
 import DriverProfile from "./components/DriverProfile";
 import SponsorProfile from "./components/SponsorProfile";
+import AdminDashboard from "./components/adminDashboard";
 import PasswordReset from "./components/PasswordReset";
 import ChangePassword from "./components/ChangePassword";
 import ForgotPassword from "./components/ForgotPassword";
 import ForgotUsername from "./components/ForgotUsername";
 import ChangeUsername from "./components/ChangeUsername";
-import SponsorRules from "./components/SponsorRules"; 
+import SponsorRules from "./components/SponsorRules";
 import SponsorRiskDashboard from "./components/SponsorRiskDashboard";
+import Catalogue from "./Catalogue.js";
 
-function App() {
-  const [token, setToken] = useState(null);
-  const [userRole, setUserRole] = useState(null);
-  const [screen, setScreen] = useState("login"); // "login" | "mfa" | "driver-profile" | "sponsor-profile" | "reset-password"
-  const [showChangePassword, setShowChangePassword] = useState(false);
-  const [showChangeUsername, setShowChangeUsername] = useState(false);
-
-  // ----- Dark Mode -----
-  const [dark, setDark] = useState(false);
-
-  useEffect(() => {
-    const saved = localStorage.getItem("theme");
-    if (saved === "dark") setDark(true);
-    else if (saved === "light") setDark(false);
-    else {
-      const prefersDark = window.matchMedia?.("(prefers-color-scheme: dark)")?.matches;
-      setDark(!!prefersDark);
-    }
-  }, []);
-
-  useEffect(() => {
-    document.body.classList.toggle("dark", dark);
-    localStorage.setItem("theme", dark ? "dark" : "light");
-  }, [dark]);
-
-  const DarkToggle = () => (
+// ── Small dark toggle for unauthenticated pages ────────────────────────────
+function PreAuthToggle({ dark, onToggleDark }) {
+  return (
     <div style={{ display: "flex", justifyContent: "flex-end", padding: 12 }}>
       <button
         type="button"
-        onClick={() => setDark((d) => !d)}
+        onClick={onToggleDark}
         style={{
-          border: "1px solid var(--border)",
-          background: "var(--card)",
-          color: "var(--text)",
+          border: "1px solid #ccc",
+          background: "transparent",
           borderRadius: 10,
           padding: "8px 12px",
           cursor: "pointer",
@@ -59,184 +37,289 @@ function App() {
       </button>
     </div>
   );
+}
 
-  // Called after successful login
+// ── Authenticated layout: Navbar + page content ────────────────────────────
+function AuthLayout({ userRole, onLogout, dark, onToggleDark, children }) {
+  const navigate = useNavigate();
+
+  return (
+    <>
+      <Navbar
+        userRole={userRole}
+        onNavigate={(screen) => {
+          if (screen === "driver-profile") navigate("/driver");
+          else if (screen === "sponsor-profile") navigate("/sponsor");
+          else if (screen === "admin-dashboard") navigate("/admin");
+          else if (screen === "catalogue") navigate("/catalogue");
+          else if (screen === "sponsor-rules") navigate("/sponsor/rules");
+          else if (screen === "sponsor-risk") navigate("/sponsor/risk");
+        }}
+        onLogout={onLogout}
+        dark={dark}
+        onToggleDark={onToggleDark}
+      />
+      {children}
+    </>
+  );
+}
+
+// ── Main App ───────────────────────────────────────────────────────────────
+export default function App() {
+  const [token, setToken] = useState(() => sessionStorage.getItem("token") || null);
+  const [userRole, setUserRole] = useState(() => sessionStorage.getItem("userRole") || null);
+
+  const [mfaComplete, setMfaComplete] = useState(
+    () => sessionStorage.getItem("mfaComplete") === "true"
+  );
+
+  const [showChangePassword, setShowChangePassword] = useState(false);
+  const [showChangeUsername, setShowChangeUsername] = useState(false);
+
+  // ── Dark mode ──
+  const [dark, setDark] = useState(() => {
+    const saved = localStorage.getItem("theme");
+    if (saved === "dark") return true;
+    if (saved === "light") return false;
+    return window.matchMedia?.("(prefers-color-scheme: dark)")?.matches ?? false;
+  });
+
+  useEffect(() => {
+    document.body.classList.toggle("dark", dark);
+    localStorage.setItem("theme", dark ? "dark" : "light");
+  }, [dark]);
+
+  const toggleDark = () => setDark((d) => !d);
+
   const handleLogin = (t, role) => {
-    console.log("Logged in token:", t, "Role:", role);
+    sessionStorage.setItem("token", t);
+    sessionStorage.setItem("userRole", role);
+    sessionStorage.removeItem("mfaComplete");
     setToken(t);
     setUserRole(role);
-    setScreen("mfa"); // Go to MFA first
+    setMfaComplete(false);
+  };
+
+  const handleMFAComplete = () => {
+    sessionStorage.setItem("mfaComplete", "true");
+    setMfaComplete(true);
   };
 
   const handleLogout = () => {
+    sessionStorage.clear();
     setToken(null);
     setUserRole(null);
-    setScreen("login");
+    setMfaComplete(false);
     setShowChangePassword(false);
     setShowChangeUsername(false);
   };
 
-  const handleMFAComplete = () => {
-    if (userRole === "DRIVER") setScreen("driver-profile");
-    else if (userRole === "SPONSOR") setScreen("sponsor-profile");
-    else setScreen("driver-profile");
-  };
-
-  // Password Reset (not logged in)
-  if (screen === "reset-password") {
-    return (
-      <>
-        <DarkToggle />
-        <PasswordReset onBack={() => setScreen("login")} />
-      </>
-    );
-  }
-
-  // Not logged in → show auth routes
+  // ── NOT logged in ──────────────────────────────────────────────────────────
   if (!token) {
     return (
-      <>
-        <DarkToggle />
-        <Routes>
-          <Route path="/login" element={<Login onLogin={handleLogin} />} />
-          <Route path="/forgot-password" element={<ForgotPassword />} />
-          <Route path="/forgot-username" element={<ForgotUsername />} />
-          <Route path="/about" element={<About />} />
-          <Route path="*" element={<Navigate to="/login" replace />} />
-        </Routes>
-      </>
+      <Routes>
+        <Route
+          path="/login"
+          element={
+            <>
+              <PreAuthToggle dark={dark} onToggleDark={toggleDark} />
+              <Login onLogin={handleLogin} />
+            </>
+          }
+        />
+        <Route
+          path="/forgot-password"
+          element={
+            <>
+              <PreAuthToggle dark={dark} onToggleDark={toggleDark} />
+              <ForgotPassword />
+            </>
+          }
+        />
+        <Route
+          path="/forgot-username"
+          element={
+            <>
+              <PreAuthToggle dark={dark} onToggleDark={toggleDark} />
+              <ForgotUsername />
+            </>
+          }
+        />
+        <Route
+          path="/reset-password"
+          element={
+            <>
+              <PreAuthToggle dark={dark} onToggleDark={toggleDark} />
+              <PasswordReset />
+            </>
+          }
+        />
+        <Route
+          path="/about"
+          element={
+            <>
+              <PreAuthToggle dark={dark} onToggleDark={toggleDark} />
+              <About />
+            </>
+          }
+        />
+        <Route path="*" element={<Navigate to="/login" replace />} />
+      </Routes>
     );
   }
 
-  // MFA Screen (logged in, before profile)
-if (screen === "mfa") {
-  return (
-    <>
-      <DarkToggle />
-      <MFASettings
-        token={token}
-        onBack={handleLogout} 
-        onLogout={handleLogout}
-        onContinue={handleMFAComplete}
-      />
-    </>
-  );
-}
-
-  // Driver Profile
-  if (screen === "driver-profile" && userRole === "DRIVER") {
+  // ── LOGGED IN but MFA not done ─────────────────────────────────────────────
+  if (!mfaComplete) {
     return (
       <>
-        <DarkToggle />
-        <DriverProfile
-          token={token}
+        <Navbar
+          userRole={userRole}
+          onNavigate={() => {}}
           onLogout={handleLogout}
-          onChangePassword={() => setShowChangePassword(true)}
-          onChangeUsername={() => setShowChangeUsername(true)}
+          dark={dark}
+          onToggleDark={toggleDark}
         />
-
-        {showChangePassword && (
-          <ChangePassword token={token} onClose={() => setShowChangePassword(false)} />
-        )}
-
-        {showChangeUsername && (
-          <ChangeUsername token={token} onClose={() => setShowChangeUsername(false)} />
-        )}
+        <MFASettings
+          token={token}
+          onBack={handleLogout}
+          onLogout={handleLogout}
+          onContinue={handleMFAComplete}
+        />
       </>
     );
   }
 
-  // Sponsor Rules Page
-if (screen === "sponsor-rules" && userRole === "SPONSOR") {
-  return (
-    <>
-      <DarkToggle />
-      <SponsorRules token={token} />
-      <div style={{ maxWidth: 900, margin: "0 auto", padding: 20 }}>
-        <button
-          onClick={() => setScreen("sponsor-profile")}
-          style={{
-            border: "1px solid var(--border)",
-            background: "var(--card)",
-            color: "var(--text)",
-            borderRadius: 10,
-            padding: "10px 12px",
-            cursor: "pointer",
-          }}
-        >
-          ← Back to Sponsor Profile
-        </button>
-      </div>
-    </>
-  );
-}
-  // Sponsor Profile
-  if (screen === "sponsor-profile" && userRole === "SPONSOR") {
-    return (
-      <>
-        <DarkToggle />
-        <SponsorProfile
-          token={token}
-          onLogout={handleLogout}
-          onChangePassword={() => setShowChangePassword(true)}
-          onChangeUsername={() => setShowChangeUsername(true)}
-          onManageRules={() => setScreen("sponsor-rules")}
-        />
+  // ── LOGGED IN + MFA done ───────────────────────────────────────────────────
+  const dashboardRedirect =
+    userRole === "DRIVER"
+      ? "/driver"
+      : userRole === "SPONSOR"
+      ? "/sponsor"
+      : userRole === "ADMIN"
+      ? "/admin"
+      : "/driver";
 
-        {showChangePassword && (
-          <ChangePassword token={token} onClose={() => setShowChangePassword(false)} />
-        )}
-
-        {showChangeUsername && (
-          <ChangeUsername token={token} onClose={() => setShowChangeUsername(false)} />
-        )}
-      </>
-    );
-  }
-  // Sponsor Profile
-if (screen === "sponsor-profile" && userRole === "SPONSOR") {
   return (
-    <>
-      <DarkToggle />
-      <SponsorProfile
-        token={token}
-        onLogout={handleLogout}
-        onChangePassword={() => setShowChangePassword(true)}
-        onChangeUsername={() => setShowChangeUsername(true)}
-        onRiskDashboard={() => setScreen("sponsor-risk")}   // <-- add this
-        onManageRules={() => setScreen("sponsor-rules")}
+    <Routes>
+      {/* Driver dashboard */}
+      <Route
+        path="/driver"
+        element={
+          <AuthLayout
+            userRole={userRole}
+            onLogout={handleLogout}
+            dark={dark}
+            onToggleDark={toggleDark}
+          >
+            <DriverProfile
+              token={token}
+              onLogout={handleLogout}
+              onChangePassword={() => setShowChangePassword(true)}
+              onChangeUsername={() => setShowChangeUsername(true)}
+            />
+            {showChangePassword && (
+              <ChangePassword token={token} onClose={() => setShowChangePassword(false)} />
+            )}
+            {showChangeUsername && (
+              <ChangeUsername token={token} onClose={() => setShowChangeUsername(false)} />
+            )}
+          </AuthLayout>
+        }
       />
 
-      {showChangePassword && (
-        <ChangePassword token={token} onClose={() => setShowChangePassword(false)} />
-      )}
-
-      {showChangeUsername && (
-        <ChangeUsername token={token} onClose={() => setShowChangeUsername(false)} />
-      )}
-    </>
-  );
-}
-// Sponsor Risk Dashboard
-if (screen === "sponsor-risk" && userRole === "SPONSOR") {
-  return (
-    <>
-      <DarkToggle />
-      <SponsorRiskDashboard
-        token={token}
-        onBack={() => setScreen("sponsor-profile")}
+      {/* Sponsor dashboard */}
+      <Route
+        path="/sponsor"
+        element={
+          <AuthLayout
+            userRole={userRole}
+            onLogout={handleLogout}
+            dark={dark}
+            onToggleDark={toggleDark}
+          >
+            <SponsorProfile
+              token={token}
+              onLogout={handleLogout}
+              onChangePassword={() => setShowChangePassword(true)}
+              onChangeUsername={() => setShowChangeUsername(true)}
+              onManageRules={() => (window.location.href = "/sponsor/rules")}
+              onRiskDashboard={() => (window.location.href = "/sponsor/risk")}
+            />
+            {showChangePassword && (
+              <ChangePassword token={token} onClose={() => setShowChangePassword(false)} />
+            )}
+            {showChangeUsername && (
+              <ChangeUsername token={token} onClose={() => setShowChangeUsername(false)} />
+            )}
+          </AuthLayout>
+        }
       />
-    </>
+
+      {/* Sponsor Rules */}
+      <Route
+        path="/sponsor/rules"
+        element={
+          <AuthLayout
+            userRole={userRole}
+            onLogout={handleLogout}
+            dark={dark}
+            onToggleDark={toggleDark}
+          >
+            <SponsorRules token={token} />
+          </AuthLayout>
+        }
+      />
+
+      {/* Sponsor Risk Dashboard */}
+      <Route
+        path="/sponsor/risk"
+        element={
+          <AuthLayout
+            userRole={userRole}
+            onLogout={handleLogout}
+            dark={dark}
+            onToggleDark={toggleDark}
+          >
+            <SponsorRiskDashboard
+              token={token}
+              onBack={() => (window.location.href = "/sponsor")}
+            />
+          </AuthLayout>
+        }
+      />
+
+      {/* Admin dashboard */}
+      <Route
+        path="/admin"
+        element={
+          <AuthLayout
+            userRole={userRole}
+            onLogout={handleLogout}
+            dark={dark}
+            onToggleDark={toggleDark}
+          >
+            <AdminDashboard token={token} onLogout={handleLogout} />
+          </AuthLayout>
+        }
+      />
+
+      {/* Catalogue — all roles */}
+      <Route
+        path="/catalogue"
+        element={
+          <AuthLayout
+            userRole={userRole}
+            onLogout={handleLogout}
+            dark={dark}
+            onToggleDark={toggleDark}
+          >
+            <Catalogue token={token} initialPoints={1000} />
+          </AuthLayout>
+        }
+      />
+
+      {/* Catch-all */}
+      <Route path="*" element={<Navigate to={dashboardRedirect} replace />} />
+    </Routes>
   );
 }
-
-  // Fallback
-  return (
-    <>
-      <DarkToggle />
-      <Login onLogin={handleLogin} />
-    </>
-  );
-}
-
-export default App;
