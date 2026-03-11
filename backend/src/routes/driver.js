@@ -317,4 +317,39 @@ router.patch("/notification-settings", async (req, res) => {
   }
 });
 
+router.get("/points-expiration-policy", async (req, res) => {
+  const userId = parsePositiveInt(req.user?.id);
+  if (!userId) {
+    return res.status(401).json({ ok: false, error: "invalid session" });
+  }
+
+  try {
+    const [rows] = await pool.query(
+      `
+      SELECT s.points_expire_days
+      FROM users u
+      LEFT JOIN sponsors s ON s.id = u.sponsor_id
+      WHERE u.id = ?
+      LIMIT 1
+      `,
+      [userId]
+    );
+
+    if (!rows[0]) {
+      return res.status(404).json({ ok: false, error: "user not found" });
+    }
+
+    return res.json({
+      ok: true,
+      points_expire_days: rows[0].points_expire_days,
+    });
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({
+      ok: false,
+      error: "failed to fetch points expiration policy",
+    });
+  }
+});
+
 module.exports = router;

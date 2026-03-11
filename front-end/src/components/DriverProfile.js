@@ -49,6 +49,9 @@ export default function DriverProfile({ token, onLogout, onChangePassword, onCha
   const [notifSaving, setNotifSaving] = useState(false);
   const [notifMessage, setNotifMessage] = useState("");
 
+  const [pointsExpireDays, setPointsExpireDays] = useState(null);
+  const [expirationLoading, setExpirationLoading] = useState(false);
+
   // Sponsors tab state
   const [sponsors, setSponsors] = useState([]);
   const [sponsorLoading, setSponsorLoading] = useState(false);
@@ -271,6 +274,30 @@ export default function DriverProfile({ token, onLogout, onChangePassword, onCha
       }
     })();
   }, [token]);
+
+
+  useEffect(() => {
+  if (!token) return;
+
+  (async () => {
+    setExpirationLoading(true);
+    try {
+      const res = await fetch(`${API_BASE}/driver/points-expiration-policy`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+
+      const data = await res.json();
+
+      if (res.ok) {
+        setPointsExpireDays(data.points_expire_days);
+      }
+    } catch (err) {
+      console.error(err);
+    } finally {
+      setExpirationLoading(false);
+    }
+  })();
+}, [token]);
 
   // ── Render ────────────────────────────────────────────────────────────────
   return (
@@ -672,6 +699,34 @@ export default function DriverProfile({ token, onLogout, onChangePassword, onCha
             })}
         </div>
       )}
+
+      <div style={card}>
+  <div style={{ color: "var(--muted)", fontSize: 12 }}>
+    Points Expiration
+  </div>
+
+  {expirationLoading ? (
+    <div style={{ marginTop: 10, color: "var(--muted)" }}>Loading…</div>
+  ) : pointsExpireDays === null ? (
+    <>
+      <div style={{ marginTop: 10, fontSize: 18, fontWeight: 700 }}>
+        Points do not expire
+      </div>
+      <div style={{ marginTop: 6, color: "var(--muted)", fontSize: 13 }}>
+        Your sponsor currently does not set an expiration period for points.
+      </div>
+    </>
+  ) : (
+    <>
+      <div style={{ marginTop: 10, fontSize: 18, fontWeight: 700 }}>
+        {pointsExpireDays} day expiration
+      </div>
+      <div style={{ marginTop: 6, color: "var(--muted)", fontSize: 13 }}>
+        Points expire {pointsExpireDays} days after they are awarded.
+      </div>
+    </>
+  )}
+</div>
 
       {/* ── Feedback tab ── */}
       {activeTab === "feedback" && <FeedbackForm token={token} />}
