@@ -220,7 +220,7 @@ router.get("/driver/applications", async (req, res) => {
       `,
       [driverUserId]
     );
-    return res.json({ ok: true, applicarions: rows });
+    return res.json({ ok: true, applications: rows });
   } catch(err) {
     console.error(err);
     return res.status(500).json({ ok: false, error: "failed to fetch"});
@@ -254,6 +254,19 @@ router.get("/driver/status", async (req, res) => {
   } catch (err) {
     return res.status(500).json({ ok: false, error: "failed to fetch driver status"});
   }
+});
+
+//GET /api/settings/notifications
+router.get("/settings/notifications", async(req, res) => {
+  const [rows] = await pool.query(
+    `
+    SELECT setting_value
+    FROM system_settings
+    WHERE setting_key = 'notifications_enabled'
+    LIMIT 1
+    `
+  );
+  return res.json({ ok: true, notifications_enabled: rows[0]?.setting_value !== "false" });
 });
 
 

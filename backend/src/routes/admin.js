@@ -814,4 +814,43 @@ router.patch("/drivers/:driverId/flag", async (req, res) => {
   }
 });
 
+/**
+ * NEW STORY 10955 — Admin can disable notifications system-wide
+ * GET /admin/settings/notifications
+ * PATCH /admin/settings/notifications
+ */
+router.get("/settings/notifications", async (req, res) => {
+  const [rows] = await pool.query(
+    `
+    SELECT setting_value 
+    FROM system_settings 
+    WHERE setting_key = 'notifications_enabled'
+    LIMIT 1
+    `
+  );
+  return res.json({ok: true, notifications_enabled: rows[0]?.setting_value === "true"});
+});
+
+router.patch("/settings/notifications", async (req, res) => {
+  const { notifications_enabled } = req.body;
+  if (typeof notifications_enabled !== "boolean")
+    return res.status(400).json({ ok: false, error: "notifications_enabled must be true or false" });
+  
+  await pool.query(
+    `
+    UPDATE system_settings
+    SET setting_value = ?
+    WHERE setting_key = 'notifications_enabled'
+    `,
+    [notifications_enabled ? "true" : "false"]
+  );
+  await writeAudit({
+    category: "NOTIFICATIONS_TOGGLE",
+    actorUserId: req.user.id,
+    success: 1,
+    details: `admin set notifications_enabled=${notifications_enabled}`,
+  });
+  return res.json({ok: true, notifications_enabled});
+})
+
 module.exports = router;
