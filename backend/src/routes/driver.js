@@ -1,3 +1,15 @@
+const express = require("express");
+const router = express.Router();
+const pool = require("../db");
+const requireActiveSession = require("../middleware/requireActiveSession");
+
+function parsePositiveInt(value) {
+  const n = Number.parseInt(String(value), 10);
+  return Number.isInteger(n) && n > 0 ? n : null;
+}
+
+router.use(requireActiveSession);
+
 // POST /api/driver/drop-sponsor
 router.post("/drop-sponsor", async (req, res) => {
   if (req.user?.role !== "DRIVER") {
@@ -35,21 +47,23 @@ router.post("/drop-sponsor", async (req, res) => {
  * GET /api/driver/sponsors
  * Returns all active sponsors with their details + this driver's review if any.
  */
-router.get("/driver/sponsors", async (req, res) => {
+router.get("/sponsors", async (req, res) => {
   const driverUserId = parsePositiveInt(req.user?.id);
-  if (!driverUserId) return res.status(401).json({ ok: false, error: "invalid session" });
+  if (!driverUserId) {
+    return res.status(401).json({ ok: false, error: "invalid session" });
+  }
 
   try {
     const [rows] = await pool.query(
       `SELECT
-         s.id          AS sponsorId,
-         s.name        AS sponsorName,
+         s.id AS sponsorId,
+         s.name AS sponsorName,
          s.address,
-         s.contact_name  AS contactName,
+         s.contact_name AS contactName,
          s.contact_email AS contactEmail,
          s.contact_phone AS contactPhone,
-         sr.rating     AS myRating,
-         sr.comment    AS myComment
+         sr.rating AS myRating,
+         sr.comment AS myComment
        FROM sponsors s
        LEFT JOIN sponsor_reviews sr
          ON sr.sponsor_id = s.id AND sr.driver_user_id = ?
@@ -57,6 +71,7 @@ router.get("/driver/sponsors", async (req, res) => {
        ORDER BY s.name ASC`,
       [driverUserId]
     );
+
     return res.json({ ok: true, sponsors: rows });
   } catch (err) {
     console.error(err);
@@ -67,14 +82,17 @@ router.get("/driver/sponsors", async (req, res) => {
 /**
  * POST /api/driver/sponsors/:sponsorId/review
  * Body: { rating: 1-5, comment?: string }
- * Upserts a review for a sponsor.
  */
-router.post("/driver/sponsors/:sponsorId/review", async (req, res) => {
+router.post("/sponsors/:sponsorId/review", async (req, res) => {
   const driverUserId = parsePositiveInt(req.user?.id);
-  if (!driverUserId) return res.status(401).json({ ok: false, error: "invalid session" });
+  if (!driverUserId) {
+    return res.status(401).json({ ok: false, error: "invalid session" });
+  }
 
   const sponsorId = parsePositiveInt(req.params.sponsorId);
-  if (!sponsorId) return res.status(400).json({ ok: false, error: "invalid sponsorId" });
+  if (!sponsorId) {
+    return res.status(400).json({ ok: false, error: "invalid sponsorId" });
+  }
 
   const rating = Number(req.body?.rating);
   if (!Number.isInteger(rating) || rating < 1 || rating > 5) {
@@ -88,12 +106,18 @@ router.post("/driver/sponsors/:sponsorId/review", async (req, res) => {
       "SELECT id FROM sponsors WHERE id = ? AND status = 'ACTIVE' LIMIT 1",
       [sponsorId]
     );
-    if (!sRows[0]) return res.status(404).json({ ok: false, error: "sponsor not found" });
+
+    if (!sRows[0]) {
+      return res.status(404).json({ ok: false, error: "sponsor not found" });
+    }
 
     await pool.query(
       `INSERT INTO sponsor_reviews (driver_user_id, sponsor_id, rating, comment)
        VALUES (?, ?, ?, ?)
-       ON DUPLICATE KEY UPDATE rating = VALUES(rating), comment = VALUES(comment), updated_at = NOW()`,
+       ON DUPLICATE KEY UPDATE
+         rating = VALUES(rating),
+         comment = VALUES(comment),
+         updated_at = NOW()`,
       [driverUserId, sponsorId, rating, comment]
     );
 
@@ -107,15 +131,21 @@ router.post("/driver/sponsors/:sponsorId/review", async (req, res) => {
 /**
  * POST /api/driver/feedback
  * Body: { category, message }
- * Submit feedback from the driver.
  */
-router.post("/driver/feedback", async (req, res) => {
+router.post("/feedback", async (req, res) => {
   const userId = parsePositiveInt(req.user?.id);
-  if (!userId) return res.status(401).json({ ok: false, error: "invalid session" });
+  if (!userId) {
+    return res.status(401).json({ ok: false, error: "invalid session" });
+  }
 
   const VALID_CATEGORIES = [
-    "Bug Report", "Feature Request", "Points Issue",
-    "Account Problem", "Sponsor Issue", "General Feedback", "Other"
+    "Bug Report",
+    "Feature Request",
+    "Points Issue",
+    "Account Problem",
+    "Sponsor Issue",
+    "General Feedback",
+    "Other"
   ];
 
   const category = String(req.body?.category || "").trim();
@@ -143,11 +173,11 @@ router.post("/driver/feedback", async (req, res) => {
   }
 });
 
-/*
-GET /api/driver/applications
-Returns all applications submitted by the driver
-*/
-router.get("/driver/applications", async (req, res) => {
+/**
+ * GET /api/driver/applications
+ * Returns all applications submitted by the driver
+ */
+router.get("/applications", async (req, res) => {
   const driverUserId = parsePositiveInt(req.user?.id);
   if (!driverUserId) {
     return res.status(401).json({ ok: false, error: "invalid session" });
@@ -169,6 +199,7 @@ router.get("/driver/applications", async (req, res) => {
       `,
       [driverUserId]
     );
+
     return res.json({ ok: true, applications: rows });
   } catch (err) {
     console.error(err);
@@ -176,13 +207,15 @@ router.get("/driver/applications", async (req, res) => {
   }
 });
 
-/*
-GET /api/driver/status
-Returns the current driver status and dropped reason
-*/
-router.get("/driver/status", async (req, res) => {
+/**
+ * GET /api/driver/status
+ * Returns the current driver status and dropped reason
+ */
+router.get("/status", async (req, res) => {
   const driverUserId = parsePositiveInt(req.user?.id);
-  if (!driverUserId) return res.status(401).json({ ok: false, error: "invalid session" });
+  if (!driverUserId) {
+    return res.status(401).json({ ok: false, error: "invalid session" });
+  }
 
   try {
     const [rows] = await pool.query(
@@ -199,10 +232,74 @@ router.get("/driver/status", async (req, res) => {
       `,
       [driverUserId]
     );
+
     return res.json({ ok: true, driver: rows[0] || null });
   } catch (err) {
     console.error(err);
     return res.status(500).json({ ok: false, error: "failed to fetch driver status" });
+  }
+});
+
+router.get("/notification-settings", async (req, res) => {
+  const userId = parsePositiveInt(req.user?.id);
+  if (!userId) {
+    return res.status(401).json({ ok: false, error: "invalid session" });
+  }
+
+  try {
+    const [rows] = await pool.query(
+      "SELECT notify_points_added FROM users WHERE id = ? LIMIT 1",
+      [userId]
+    );
+
+    if (!rows[0]) {
+      return res.status(404).json({ ok: false, error: "user not found" });
+    }
+
+    return res.json({
+      ok: true,
+      notify_points_added: !!rows[0].notify_points_added
+    });
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({
+      ok: false,
+      error: "Failed to fetch notification settings"
+    });
+  }
+});
+
+router.patch("/notification-settings", async (req, res) => {
+  const userId = parsePositiveInt(req.user?.id);
+  if (!userId) {
+    return res.status(401).json({ ok: false, error: "invalid session" });
+  }
+
+  const { notify_points_added } = req.body;
+
+  if (typeof notify_points_added !== "boolean") {
+    return res.status(400).json({
+      ok: false,
+      error: "notify_points_added must be a boolean"
+    });
+  }
+
+  try {
+    await pool.query(
+      "UPDATE users SET notify_points_added = ? WHERE id = ?",
+      [notify_points_added ? 1 : 0, userId]
+    );
+
+    return res.json({
+      ok: true,
+      notify_points_added
+    });
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({
+      ok: false,
+      error: "Failed to update setting"
+    });
   }
 });
 

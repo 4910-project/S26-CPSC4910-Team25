@@ -42,6 +42,12 @@ export default function DriverProfile({ token, onLogout, onChangePassword, onCha
   const [err, setErr] = useState("");
   const [showDropModal, setShowDropModal] = useState(false);
 
+  // Notification settings state
+  const [notifyPointsAdded, setNotifyPointsAdded] = useState(true);
+  const [notifLoading, setNotifLoading] = useState(false);
+  const [notifSaving, setNotifSaving] = useState(false);
+  const [notifMessage, setNotifMessage] = useState("");
+
   // Sponsors tab state
   const [sponsors, setSponsors] = useState([]);
   const [sponsorLoading, setSponsorLoading] = useState(false);
@@ -78,6 +84,62 @@ export default function DriverProfile({ token, onLogout, onChangePassword, onCha
       }
     })();
   }, [token]);
+
+  // ── Notification settings fetch ──────────────────────────────────────────
+  useEffect(() => {
+    if (!token) return;
+
+    (async () => {
+      setNotifLoading(true);
+      try {
+        const res = await fetch(`${API_BASE}/driver/notification-settings`, {
+          headers: { Authorization: `Bearer ${token}` },
+        });
+
+        const data = await res.json();
+
+        if (res.ok) {
+          setNotifyPointsAdded(!!data.notify_points_added);
+        }
+      } catch (err) {
+        console.error(err);
+      } finally {
+        setNotifLoading(false);
+      }
+    })();
+  }, [token]);
+
+  async function saveNotificationPreference(value) {
+    setNotifSaving(true);
+    setNotifMessage("");
+
+    try {
+      const res = await fetch(`${API_BASE}/driver/notification-settings`, {
+        method: "PATCH",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({
+          notify_points_added: value,
+        }),
+      });
+
+      const data = await res.json();
+
+      if (!res.ok) {
+        throw new Error(data.error || "Failed to update notification setting");
+      }
+
+      setNotifyPointsAdded(value);
+      setNotifMessage("Notification preference updated.");
+    } catch (err) {
+      console.error(err);
+      setNotifMessage(err.message);
+    } finally {
+      setNotifSaving(false);
+    }
+  }
 
   // ── Drop sponsor ──────────────────────────────────────────────────────────
   async function dropSponsor() {
@@ -346,6 +408,44 @@ export default function DriverProfile({ token, onLogout, onChangePassword, onCha
               <div style={{ marginTop: 6, color: "var(--muted)", fontSize: 13 }}>
                 Later: catalog + redeem flow.
               </div>
+            </div>
+
+            <div style={card}>
+              <div style={{ color: "var(--muted)", fontSize: 12 }}>
+                Notifications
+              </div>
+
+              {notifLoading ? (
+                <div style={{ marginTop: 10, color: "var(--muted)" }}>Loading…</div>
+              ) : (
+                <>
+                  <div style={{ marginTop: 10, fontSize: 18, fontWeight: 700 }}>
+                    Points Added Notifications
+                  </div>
+
+                  <div style={{ marginTop: 6, color: "var(--muted)", fontSize: 13 }}>
+                    Get notified when points are added to your account.
+                  </div>
+
+                  <div style={{ marginTop: 14 }}>
+                    <label style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                      <input
+                        type="checkbox"
+                        checked={notifyPointsAdded}
+                        onChange={(e) => saveNotificationPreference(e.target.checked)}
+                        disabled={notifSaving}
+                      />
+                      {notifyPointsAdded ? "Enabled" : "Disabled"}
+                    </label>
+                  </div>
+
+                  {notifMessage && (
+                    <div style={{ marginTop: 10, fontSize: 12, color: "var(--muted)" }}>
+                      {notifMessage}
+                    </div>
+                  )}
+                </>
+              )}
             </div>
           </div>
 
