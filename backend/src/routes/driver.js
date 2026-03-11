@@ -9,6 +9,144 @@ function parsePositiveInt(value) {
   return Number.isInteger(n) && n > 0 ? n : null;
 }
 
+async function tableExists(tableName) {
+  const [rows] = await pool.query(
+    `
+    SELECT 1
+    FROM information_schema.TABLES
+    WHERE TABLE_SCHEMA = DATABASE()
+      AND TABLE_NAME = ?
+    LIMIT 1
+    `,
+    [tableName]
+  );
+  return !!rows[0];
+}
+
+function toIso(value) {
+  const d = new Date(value);
+  if (Number.isNaN(d.getTime())) return null;
+  return d.toISOString();
+}
+
+function escapeCsvCell(value) {
+  const raw = String(value ?? "");
+  if (/[",\n]/.test(raw)) return `"${raw.replace(/"/g, '""')}"`;
+  return raw;
+}
+
+async function loadPointHistory(driverUserId) {
+  const history = [];
+
+  // Add the latest active driver's starting points as the first known earning event.
+  const [startRows] = await pool.query(
+    `
+    SELECT d.joined_on AS occurredAt, d.starting_points AS startingPoints
+    FROM drivers d
+    WHERE d.user_id = ? AND d.status = 'ACTIVE'
+    ORDER BY d.id DESC
+    LIMIT 1
+    `,
+    [driverUserId]
+  );
+  if (startRows[0]) {
+    const occurredAt = toIso(startRows[0].occurredAt);
+    const startingPoints = Number(startRows[0].startingPoints || 0);
+    if (occurredAt && startingPoints > 0) {
+      history.push({
+        id: `start-${driverUserId}`,
+        occurredAt,
+        direction: "EARNED",
+        points: startingPoints,
+        signedPoints: startingPoints,
+        reason: "Starting points assigned",
+        source: "starting_points",
+      });
+    }
+  }
+
+  // Preferred source: point_transactions table if present.
+  let hasTransactionRows = false;
+  if (await tableExists("point_transactions")) {
+    try {
+      const [txRows] = await pool.query(
+        `
+        SELECT
+          id,
+          created_at AS occurredAt,
+          amount,
+          type,
+          reason
+        FROM point_transactions
+        WHERE user_id = ?
+        ORDER BY created_at ASC
+        LIMIT 1000
+        `,
+        [driverUserId]
+      );
+
+      txRows.forEach((row) => {
+        const occurredAt = toIso(row.occurredAt);
+        const signedPoints = Number(row.amount || 0);
+        if (!occurredAt || !signedPoints) return;
+        hasTransactionRows = true;
+        history.push({
+          id: `txn-${row.id}`,
+          occurredAt,
+          direction: signedPoints >= 0 ? "EARNED" : "SPENT",
+          points: Math.abs(signedPoints),
+          signedPoints,
+          reason: row.reason || row.type || "Point transaction",
+          source: "point_transactions",
+        });
+      });
+    } catch (err) {
+      // Keep endpoint resilient across schema variations.
+      console.warn("driver point history: unable to read point_transactions:", err.message);
+    }
+  }
+
+  // Fallback source: purchases table for spent history if no transaction rows were found.
+  if (!hasTransactionRows && (await tableExists("purchases"))) {
+    try {
+      const [purchaseRows] = await pool.query(
+        `
+        SELECT
+          id,
+          purchased_at AS occurredAt,
+          cost,
+          item_name AS itemName
+        FROM purchases
+        WHERE user_id = ?
+        ORDER BY purchased_at ASC
+        LIMIT 1000
+        `,
+        [driverUserId]
+      );
+
+      purchaseRows.forEach((row) => {
+        const occurredAt = toIso(row.occurredAt);
+        const cost = Number(row.cost || 0);
+        if (!occurredAt || cost <= 0) return;
+        history.push({
+          id: `purchase-${row.id}`,
+          occurredAt,
+          direction: "SPENT",
+          points: cost,
+          signedPoints: -cost,
+          reason: row.itemName ? `Purchased: ${row.itemName}` : "Purchase",
+          source: "purchases",
+        });
+      });
+    } catch (err) {
+      console.warn("driver point history: unable to read purchases:", err.message);
+    }
+  }
+
+  history.sort((a, b) => new Date(a.occurredAt) - new Date(b.occurredAt));
+  return history;
+}
+
 // Require JWT + driver role for all driver routes in this file
 router.use(auth);
 router.use((req, res, next) => {
@@ -40,6 +178,56 @@ router.get("/driver/points", async (req, res) => {
   } catch (e) {
     console.error(e);
     return res.status(500).json({ ok: false, error: "Server error" });
+  }
+});
+
+/**
+ * GET /api/driver/point-history
+ * Returns timeline-ready point activity events.
+ */
+router.get("/driver/point-history", async (req, res) => {
+  try {
+    const userId = parsePositiveInt(req.user?.id);
+    if (!userId) return res.status(401).json({ ok: false, error: "invalid user" });
+
+    const history = await loadPointHistory(userId);
+    return res.json({ ok: true, history });
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({ ok: false, error: "failed to fetch point history" });
+  }
+});
+
+/**
+ * GET /api/driver/point-history.csv
+ * Downloads point history as CSV.
+ */
+router.get("/driver/point-history.csv", async (req, res) => {
+  try {
+    const userId = parsePositiveInt(req.user?.id);
+    if (!userId) return res.status(401).json({ ok: false, error: "invalid user" });
+
+    const history = await loadPointHistory(userId);
+    const rows = [
+      ["Date", "Type", "Points", "SignedPoints", "Reason", "Source"],
+      ...history.map((event) => [
+        event.occurredAt,
+        event.direction,
+        event.points,
+        event.signedPoints,
+        event.reason,
+        event.source,
+      ]),
+    ];
+    const csv = rows.map((row) => row.map(escapeCsvCell).join(",")).join("\n");
+
+    const filename = `point-history-${new Date().toISOString().slice(0, 10)}.csv`;
+    res.setHeader("Content-Type", "text/csv; charset=utf-8");
+    res.setHeader("Content-Disposition", `attachment; filename=\"${filename}\"`);
+    return res.status(200).send(csv);
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({ ok: false, error: "failed to export point history csv" });
   }
 });
 

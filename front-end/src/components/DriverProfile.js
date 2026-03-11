@@ -33,11 +33,21 @@ function StarRating({ value, onChange, readOnly = false }) {
   );
 }
 
+function formatEventDate(isoString) {
+  const d = new Date(isoString);
+  if (Number.isNaN(d.getTime())) return "Unknown date";
+  return d.toLocaleString();
+}
+
 export default function DriverProfile({ token, onLogout, onChangePassword, onChangeUsername }) {
   const [activeTab, setActiveTab] = useState("dashboard");
   const [points, setPoints] = useState(null);
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState("");
+  const [pointHistory, setPointHistory] = useState([]);
+  const [historyLoading, setHistoryLoading] = useState(false);
+  const [historyError, setHistoryError] = useState("");
+  const [csvDownloading, setCsvDownloading] = useState(false);
 
   // Sponsors tab state
   const [sponsors, setSponsors] = useState([]);
@@ -71,6 +81,28 @@ export default function DriverProfile({ token, onLogout, onChangePassword, onCha
         setErr(e.message);
       } finally {
         setLoading(false);
+      }
+    })();
+  }, [token]);
+
+  // -- Point history fetch (timeline + csv source) ----
+  useEffect(() => {
+    if (!token) return;
+    (async () => {
+      setHistoryLoading(true);
+      setHistoryError("");
+      try {
+        const res = await fetch(`${API_BASE}/driver/point-history`, {
+          headers: { Authorization: `Bearer ${token}` },
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || "Failed to load point history");
+        setPointHistory(Array.isArray(data.history) ? data.history : []);
+      } catch (e) {
+        setPointHistory([]);
+        setHistoryError(e.message || "Failed to load point history");
+      } finally {
+        setHistoryLoading(false);
       }
     })();
   }, [token]);
@@ -150,6 +182,40 @@ export default function DriverProfile({ token, onLogout, onChangePassword, onCha
     }
   };
 
+  const handleDownloadPointHistoryCsv = async () => {
+    if (!token) return;
+    setCsvDownloading(true);
+    try {
+      const res = await fetch(`${API_BASE}/driver/point-history.csv`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (!res.ok) {
+        let message = "Failed to export CSV";
+        try {
+          const data = await res.json();
+          message = data.error || message;
+        } catch {
+          // keep default fallback message
+        }
+        throw new Error(message);
+      }
+      const blob = await res.blob();
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      const dateStamp = new Date().toISOString().slice(0, 10);
+      a.href = url;
+      a.download = `point-history-${dateStamp}.csv`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      window.URL.revokeObjectURL(url);
+    } catch (e) {
+      setHistoryError(e.message || "Failed to export CSV");
+    } finally {
+      setCsvDownloading(false);
+    }
+  };
+
   // Applications fetch
   useEffect(() => {
     if (!token) return;
@@ -184,6 +250,10 @@ export default function DriverProfile({ token, onLogout, onChangePassword, onCha
     }, [token]);
   
 
+
+  const timelineEvents = [...pointHistory].sort(
+    (a, b) => new Date(a.occurredAt) - new Date(b.occurredAt)
+  );
 
   // ── Render ────────────────────────────────────────────────────────────────
   return (
@@ -288,6 +358,24 @@ export default function DriverProfile({ token, onLogout, onChangePassword, onCha
               <div style={{ marginTop: 10, color: "var(--muted)", fontSize: 13 }}>
                 Points reflect your latest approved driving performance events.
               </div>
+              <button
+                type="button"
+                onClick={handleDownloadPointHistoryCsv}
+                disabled={csvDownloading}
+                style={{
+                  marginTop: 12,
+                  padding: "8px 12px",
+                  borderRadius: 8,
+                  border: "1px solid var(--border, #d1d5db)",
+                  background: "var(--card)",
+                  color: "var(--text)",
+                  fontWeight: 600,
+                  cursor: csvDownloading ? "not-allowed" : "pointer",
+                  opacity: csvDownloading ? 0.7 : 1,
+                }}
+              >
+                {csvDownloading ? "Preparing CSV..." : "Download Point History CSV"}
+              </button>
             </div>
 
             <div style={card}>
@@ -301,6 +389,57 @@ export default function DriverProfile({ token, onLogout, onChangePassword, onCha
               <div style={{ marginTop: 10, fontSize: 18, fontWeight: 700 }}>Coming soon</div>
               <div style={{ marginTop: 6, color: "var(--muted)", fontSize: 13 }}>Later: catalog + redeem flow.</div>
             </div>
+          </div>
+
+          <div style={{ ...card, marginTop: 14 }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
+              <div style={{ color: "var(--muted)", fontSize: 12 }}>
+                Point Activity Timeline
+              </div>
+              <div style={{ fontSize: 12, color: "var(--muted)" }}>
+                {timelineEvents.length} event{timelineEvents.length === 1 ? "" : "s"}
+              </div>
+            </div>
+
+            {historyLoading ? (
+              <div style={{ color: "var(--muted)", fontSize: 13 }}>Loading point history…</div>
+            ) : historyError ? (
+              <div style={{ color: "#b91c1c", fontSize: 13 }}>{historyError}</div>
+            ) : timelineEvents.length === 0 ? (
+              <div style={{ color: "var(--muted)", fontSize: 13 }}>
+                No point activity available yet.
+              </div>
+            ) : (
+              <div style={{ display: "grid", gap: 8 }}>
+                {timelineEvents.map((event) => {
+                  const earned = event.direction === "EARNED";
+                  return (
+                    <div
+                      key={event.id}
+                      style={{
+                        display: "grid",
+                        gridTemplateColumns: "170px 90px 1fr",
+                        gap: 10,
+                        alignItems: "center",
+                        padding: "10px 12px",
+                        border: "1px solid var(--border, #e5e7eb)",
+                        borderRadius: 10,
+                        background: earned ? "#ecfdf5" : "#fef2f2",
+                      }}
+                    >
+                      <div style={{ fontSize: 12, color: "var(--muted)" }}>
+                        {formatEventDate(event.occurredAt)}
+                      </div>
+                      <div style={{ fontSize: 14, fontWeight: 700, color: earned ? "#166534" : "#991b1b" }}>
+                        {earned ? "+" : "-"}
+                        {event.points}
+                      </div>
+                      <div style={{ fontSize: 13, color: "var(--text)" }}>{event.reason}</div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
           </div>
 
           {/* Sponsorship Apply Card*/}
