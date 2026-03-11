@@ -458,4 +458,33 @@ router.get("/settings/notifications", async(req, res) => {
 });
 
 
+
+/**
+ * GET /api/driver/catalog/hidden
+ * Returns the set of product IDs hidden by this driver's active sponsor.
+ */
+router.get("/driver/catalog/hidden", async (req, res) => {
+  const driverUserId = parsePositiveInt(req.user?.id);
+  if (!driverUserId) return res.status(401).json({ ok: false, error: "invalid session" });
+
+  try {
+    // Find the driver's active sponsor
+    const [dRows] = await pool.query(
+      "SELECT sponsor_id FROM drivers WHERE user_id = ? AND status = 'ACTIVE' ORDER BY id DESC LIMIT 1",
+      [driverUserId]
+    );
+    if (!dRows[0]) return res.json({ ok: true, hiddenIds: [] });
+
+    const sponsorId = dRows[0].sponsor_id;
+    const [rows] = await pool.query(
+      "SELECT product_id FROM sponsor_hidden_products WHERE sponsor_id = ?",
+      [sponsorId]
+    );
+    return res.json({ ok: true, hiddenIds: rows.map((r) => r.product_id) });
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({ ok: false, error: "failed to fetch hidden products" });
+  }
+});
+
 module.exports = router;

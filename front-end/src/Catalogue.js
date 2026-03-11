@@ -3,6 +3,7 @@ import "./Catalogue.css";
 import { useNavigate } from "react-router-dom";
 
 const API_BASE       = "http://localhost:8002/api/catalogue";
+const DRIVER_API     = "http://localhost:8001/api";
 const ITUNES_API     = "https://itunes.apple.com/search";
 const POINTS_PER_USD = 100;
 
@@ -48,6 +49,7 @@ export default function Catalogue({ token, initialPoints = 100, onPointsChange }
   const [toast,    setToast]    = useState(null);
   const [log,      setLog]      = useState(loadLog);
   const [showLog,  setShowLog]  = useState(false);
+  const [hiddenIds, setHiddenIds] = useState(new Set());
 
  
   useEffect(() => 
@@ -56,6 +58,16 @@ export default function Catalogue({ token, initialPoints = 100, onPointsChange }
     fetch(`${API_BASE}/points`, { headers: { Authorization: `Bearer ${token}` } })
       .then(r => r.ok ? r.json() : null)
       .then(d => { if (d?.points != null) setPoints(d.points); })
+      .catch(() => {});
+  }, [token]);
+
+  // Fetch hidden product IDs from this driver's sponsor
+  useEffect(() =>
+  {
+    if (!token) return;
+    fetch(`${DRIVER_API}/driver/catalog/hidden`, { headers: { Authorization: `Bearer ${token}` } })
+      .then(r => r.ok ? r.json() : null)
+      .then(d => { if (d?.hiddenIds) setHiddenIds(new Set(d.hiddenIds.map(String))); })
       .catch(() => {});
   }, [token]);
 
@@ -256,7 +268,7 @@ export default function Catalogue({ token, initialPoints = 100, onPointsChange }
             {loading && <div className="cat-empty">Loading…</div>}
             {!loading && items.length === 0 && <div className="cat-empty">No results found.</div>}
             <div className="cat-grid">
-              {items.map(item => {
+              {items.filter(item => !hiddenIds.has(String(item.trackId || item.collectionId))).map(item => {
                 const cost      = toPoints(item.trackPrice ?? item.price ?? 0);
                 const canAfford = points >= cost;
                 const name      = item.trackName || item.collectionName || "Unknown";
