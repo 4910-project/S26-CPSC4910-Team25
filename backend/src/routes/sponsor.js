@@ -748,4 +748,88 @@ router.get("/drivers/:driverId/rate", async (req, res) => {
   }
 });
 
+
+/**
+ * GET /sponsor/catalog/hidden
+ * Returns all hidden products with their stored details.
+ */
+router.get("/catalog/hidden", async (req, res) => {
+  try {
+    const sponsorId = getSponsorIdFromSession(req);
+    if (!sponsorId) return res.status(400).json({ ok: false, error: "sponsor account is not linked" });
+
+    const [rows] = await pool.query(
+      `SELECT product_id, product_name, artist_name, artwork_url, price
+       FROM sponsor_hidden_products WHERE sponsor_id = ?`,
+      [sponsorId]
+    );
+    return res.json({
+      ok: true,
+      hiddenIds: rows.map(r => r.product_id),
+      hiddenProducts: rows,
+    });
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({ ok: false, error: "failed to fetch hidden products" });
+  }
+});
+
+/**
+ * POST /sponsor/catalog/hide
+ * Body: { productId, productName, artistName, artworkUrl, price }
+ */
+router.post("/catalog/hide", async (req, res) => {
+  try {
+    const sponsorId = getSponsorIdFromSession(req);
+    if (!sponsorId) return res.status(400).json({ ok: false, error: "sponsor account is not linked" });
+
+    const productId   = String(req.body?.productId   || "").trim();
+    const productName = String(req.body?.productName  || "").trim() || null;
+    const artistName  = String(req.body?.artistName   || "").trim() || null;
+    const artworkUrl  = String(req.body?.artworkUrl   || "").trim() || null;
+    const price       = req.body?.price != null ? parseFloat(req.body.price) : null;
+
+    if (!productId) return res.status(400).json({ ok: false, error: "productId required" });
+
+    await pool.query(
+      `INSERT INTO sponsor_hidden_products (sponsor_id, product_id, product_name, artist_name, artwork_url, price)
+       VALUES (?, ?, ?, ?, ?, ?)
+       ON DUPLICATE KEY UPDATE
+         product_name = VALUES(product_name),
+         artist_name  = VALUES(artist_name),
+         artwork_url  = VALUES(artwork_url),
+         price        = VALUES(price),
+         hidden_at    = CURRENT_TIMESTAMP`,
+      [sponsorId, productId, productName, artistName, artworkUrl, price]
+    );
+    return res.json({ ok: true, message: "Product hidden" });
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({ ok: false, error: "failed to hide product" });
+  }
+});
+
+/**
+ * POST /sponsor/catalog/unhide
+ * Body: { productId: string }
+ */
+router.post("/catalog/unhide", async (req, res) => {
+  try {
+    const sponsorId = getSponsorIdFromSession(req);
+    if (!sponsorId) return res.status(400).json({ ok: false, error: "sponsor account is not linked" });
+
+    const productId = String(req.body?.productId || "").trim();
+    if (!productId) return res.status(400).json({ ok: false, error: "productId required" });
+
+    await pool.query(
+      "DELETE FROM sponsor_hidden_products WHERE sponsor_id = ? AND product_id = ?",
+      [sponsorId, productId]
+    );
+    return res.json({ ok: true, message: "Product unhidden" });
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({ ok: false, error: "failed to unhide product" });
+  }
+});
+
 module.exports = router;

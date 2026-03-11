@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useCallback } from "react";
 import "./SponsorProfile.css";
 
+const API_BASE = "http://localhost:8001/api/profile";
 const SPONSOR_API = "http://localhost:8001/sponsor";
 
 export default function SponsorProfile({ token, onLogout, onChangeUsername }) {
@@ -28,20 +29,39 @@ export default function SponsorProfile({ token, onLogout, onChangeUsername }) {
   const [driverError, setDriverError] = useState("");
   const [driverSuccess, setDriverSuccess] = useState("");
   const [blockReason, setBlockReason] = useState({});       // { [driverId]: "reason text" }
-  const [activeTab, setActiveTab] = useState("drivers");     // "drivers" | "applications"
-  const [ratings, setRatings] = useState({});               // { [driverId]: "thumbs_up" | "thumbs_down" | null }
-  const [sortByRating, setSortByRating] = useState(false);  // when true, sort thumbs_up to top
+  const [activeTab, setActiveTab] = useState("drivers");     // "drivers" | "applications" | "catalog"
+
+  // ─── Catalog management state ───────────────────────────────────────────────
+  const [catalogSearch, setCatalogSearch]     = useState("music");
+  const [catalogResults, setCatalogResults]   = useState([]);
+  const [catalogLoading, setCatalogLoading]   = useState(false);
+  const [catalogError, setCatalogError]       = useState("");
+  const [hiddenIds, setHiddenIds]             = useState(new Set());
+  const [hiddenProducts, setHiddenProducts]   = useState({});  // { [id]: product row }
+  const [catalogToggling, setCatalogToggling] = useState({});
+  const [showHiddenOnly, setShowHiddenOnly]   = useState(false);
+  const CATALOG_CATEGORIES = [
+    { label: "Music",   media: "music",    entity: "song"      },
+    { label: "Movies",  media: "movie",    entity: "movie"     },
+    { label: "Apps",    media: "software", entity: "software"  },
+    { label: "Books",   media: "ebook",    entity: "ebook"     },
+    { label: "TV",      media: "tvShow",   entity: "tvEpisode" },
+  ];
+  const [catalogCategory, setCatalogCategory] = useState(CATALOG_CATEGORIES[0]);
 
   // ─── Existing profile fetch (unchanged) ────────────────────────────────────
-  const fetchProfile = useCallback(async () => {
+  useEffect(() => {
+    fetchProfile();
+  }, []);
+
+  const fetchProfile = async () => {
     try {
       setLoading(true);
-      // GET /sponsor/org returns: { sponsorId, sponsorName, sponsorStatus, address, contactName, contactEmail, contactPhone }
       const res = await fetch(`${SPONSOR_API}/org`, {
         headers: { "Authorization": `Bearer ${token}` }
       });
       const data = await res.json();
-      if (res.ok) {
+      if (res.ok && data.sponsorId) {
         setProfile({
           company_name: data.sponsorName || "",
           contact_name: data.contactName || "",
@@ -56,18 +76,14 @@ export default function SponsorProfile({ token, onLogout, onChangeUsername }) {
       } else if (res.status === 404) {
         setIsEditing(true);
       } else {
-        throw new Error(data.error || data.message || "Failed to fetch profile");
+        throw new Error(data.error || "Failed to fetch profile");
       }
     } catch (err) {
       setError(err.message);
     } finally {
       setLoading(false);
     }
-  }, [token]);
-
-  useEffect(() => {
-    fetchProfile();
-  }, [fetchProfile]);
+  };
 
   const handleChange = (e) => {
     setProfile({ ...profile, [e.target.name]: e.target.value });
@@ -82,20 +98,20 @@ export default function SponsorProfile({ token, onLogout, onChangeUsername }) {
     setSaving(true);
     try {
       if (!profile.company_name) throw new Error("Company name is required");
-
+      const pointValue = parseFloat(profile.point_value);
+      if (isNaN(pointValue) || pointValue < 0) throw new Error("Point value must be a valid positive number");
       const res = await fetch(`${SPONSOR_API}/org`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json", "Authorization": `Bearer ${token}` },
         body: JSON.stringify({
-          name:         profile.company_name,
-          contactName:  profile.contact_name,
+          name: profile.company_name,
+          contactName: profile.contact_name,
           contactPhone: profile.phone,
-          address:      [profile.address, profile.city, profile.state, profile.zip_code]
-                          .filter(Boolean).join(", "),
+          address: profile.address,
         })
       });
       const data = await res.json();
-      if (!res.ok) throw new Error(data.error || data.message || "Failed to save profile");
+      if (!res.ok) throw new Error(data.error || "Failed to save profile");
       setSuccess(data.message);
       setIsEditing(false);
       await fetchProfile();
@@ -124,26 +140,7 @@ export default function SponsorProfile({ token, onLogout, onChangeUsername }) {
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "Failed to fetch drivers");
-      const driverList = data.drivers || [];
-      setDrivers(driverList);
-
-      // Fetch existing ratings for all drivers in parallel
-      const ratingEntries = await Promise.all(
-        driverList
-          .filter((d) => d.driverId)
-          .map(async (d) => {
-            try {
-              const r = await fetch(`${SPONSOR_API}/drivers/${d.driverId}/rate`, {
-                headers: { "Authorization": `Bearer ${token}` }
-              });
-              const rd = await r.json();
-              return [d.driverId, rd.rating || null];
-            } catch {
-              return [d.driverId, null];
-            }
-          })
-      );
-      setRatings(Object.fromEntries(ratingEntries));
+      setDrivers(data.drivers || []);
     } catch (err) {
       setDriverError(err.message);
     } finally {
@@ -155,21 +152,12 @@ export default function SponsorProfile({ token, onLogout, onChangeUsername }) {
     setDriverLoading(true);
     setDriverError("");
     try {
-      // Correct route: /sponsor/driver-applications
       const res = await fetch(`${SPONSOR_API}/driver-applications`, {
         headers: { "Authorization": `Bearer ${token}` }
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "Failed to fetch applications");
-      // Backend returns: { applications: [{ applicationId, email, status, appliedAt, ... }] }
-      // Normalize to consistent shape used in JSX below
-      const normalized = (data.applications || []).map((a) => ({
-        id: a.applicationId,
-        driver_email: a.email,
-        status: a.status,
-        applied_at: a.appliedAt,
-      }));
-      setApplications(normalized);
+      setApplications(data.applications || []);
     } catch (err) {
       setDriverError(err.message);
     } finally {
@@ -179,32 +167,109 @@ export default function SponsorProfile({ token, onLogout, onChangeUsername }) {
 
   useEffect(() => {
     if (activeTab === "drivers") fetchDrivers();
-    else fetchApplications();
+    else if (activeTab === "applications") fetchApplications();
+    else if (activeTab === "catalog") {
+      fetchHiddenIds();
+      fetchCatalog(catalogSearch, catalogCategory);
+    }
   }, [activeTab, fetchDrivers, fetchApplications]);
 
-  const handleRate = async (driverId, rating) => {
-    // Toggle off if clicking the same rating again
-    const newRating = ratings[driverId] === rating ? null : rating;
-
-    // Optimistic update
-    setRatings((prev) => ({ ...prev, [driverId]: newRating }));
-
+  // ─── Catalog: fetch hidden product IDs for this sponsor ─────────────────────
+  const fetchHiddenIds = useCallback(async () => {
     try {
-      if (newRating) {
-        const res = await fetch(`${SPONSOR_API}/drivers/${driverId}/rate`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json", "Authorization": `Bearer ${token}` },
-          body: JSON.stringify({ rating: newRating }),
-        });
-        const data = await res.json();
-        if (!res.ok) throw new Error(data.error || "Failed to save rating");
+      const res = await fetch(`${SPONSOR_API}/catalog/hidden`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      const data = await res.json();
+      if (data.ok) {
+        setHiddenIds(new Set(data.hiddenIds));
+        // Build a map of id → product details for the hidden-only view
+        const map = {};
+        (data.hiddenProducts || []).forEach(p => { map[p.product_id] = p; });
+        setHiddenProducts(map);
       }
     } catch (err) {
-      // Revert on failure
-      setRatings((prev) => ({ ...prev, [driverId]: ratings[driverId] }));
-      setDriverError(err.message);
+      console.error("Failed to load hidden products", err);
     }
-  };
+  }, [token]);
+
+  // ─── Catalog: search iTunes API ─────────────────────────────────────────────
+  const fetchCatalog = useCallback(async (term, category) => {
+    const cat = category || catalogCategory;
+    if (!term.trim()) return;
+    setCatalogLoading(true);
+    setCatalogError("");
+    try {
+      const url = `https://itunes.apple.com/search?term=${encodeURIComponent(term)}&media=${cat.media}&entity=${cat.entity}&limit=24&country=US`;
+      const res = await fetch(url);
+      const data = await res.json();
+      setCatalogResults(data.results || []);
+    } catch (err) {
+      setCatalogError("Failed to load catalog. Please try again.");
+    } finally {
+      setCatalogLoading(false);
+    }
+  }, [catalogCategory]);
+
+  // ─── Catalog: toggle hide/unhide ────────────────────────────────────────────
+  const handleToggleHide = useCallback(async (product) => {
+    const id = String(product.trackId || product.collectionId);
+    const isHidden = hiddenIds.has(id);
+    setCatalogToggling(prev => ({ ...prev, [id]: true }));
+
+    // Optimistic update
+    setHiddenIds(prev => {
+      const next = new Set(prev);
+      isHidden ? next.delete(id) : next.add(id);
+      return next;
+    });
+    if (!isHidden) {
+      setHiddenProducts(prev => ({
+        ...prev,
+        [id]: {
+          product_id:   id,
+          product_name: product.trackName || product.collectionName || null,
+          artist_name:  product.artistName || null,
+          artwork_url:  product.artworkUrl100 || null,
+          price:        product.trackPrice ?? product.collectionPrice ?? null,
+        }
+      }));
+    } else {
+      setHiddenProducts(prev => { const n = { ...prev }; delete n[id]; return n; });
+    }
+
+    try {
+      const endpoint = isHidden ? "/catalog/unhide" : "/catalog/hide";
+      const body = isHidden
+        ? { productId: id }
+        : {
+            productId:   id,
+            productName: product.trackName || product.collectionName || null,
+            artistName:  product.artistName || null,
+            artworkUrl:  product.artworkUrl100 || null,
+            price:       product.trackPrice ?? product.collectionPrice ?? null,
+          };
+      const res = await fetch(`${SPONSOR_API}${endpoint}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+        body: JSON.stringify(body),
+      });
+      const data = await res.json();
+      if (!data.ok) throw new Error(data.error);
+    } catch (err) {
+      // Revert on failure
+      setHiddenIds(prev => {
+        const next = new Set(prev);
+        isHidden ? next.add(id) : next.delete(id);
+        return next;
+      });
+      if (!isHidden) {
+        setHiddenProducts(prev => { const n = { ...prev }; delete n[id]; return n; });
+      }
+    } finally {
+      setCatalogToggling(prev => ({ ...prev, [id]: false }));
+    }
+  }, [hiddenIds, token]);
 
   const handleBlock = async (driverId) => {
     const reason = blockReason[driverId] || "";
@@ -247,11 +312,27 @@ export default function SponsorProfile({ token, onLogout, onChangeUsername }) {
     }
   };
 
+  const handleApplicationAction = async (appId, action) => {
+    try {
+      const res = await fetch(`${SPONSOR_API}/driver-applications/${appId}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ action }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || `Failed to ${action} application`);
+      setDriverSuccess(`Application ${action}d successfully`);
+      fetchApplications();
+    } catch (err) {
+      setDriverError(err.message);
+    }
+  };
+
   const handleReopen = async (appId) => {
     setDriverError("");
     setDriverSuccess("");
     try {
-      const res = await fetch(`${SPONSOR_API}/applications/${appId}/reopen`, {
+      const res = await fetch(`${SPONSOR_API}/driver-applications/${appId}/reopen`, {
         method: "POST",
         headers: { "Authorization": `Bearer ${token}` }
       });
@@ -293,7 +374,7 @@ export default function SponsorProfile({ token, onLogout, onChangeUsername }) {
 
   return (
     <div className="sponsor-profile-container">
-      {/* ── Page header ── */}
+      {/* ── Existing header (unchanged) ── */}
       <div className="profile-header">
         <h1>Sponsor Profile</h1>
         <div className="header-actions">
@@ -303,6 +384,7 @@ export default function SponsorProfile({ token, onLogout, onChangeUsername }) {
           {!isEditing && (
             <button onClick={onChangeUsername} className="btn-edit">Change Username</button>
           )}
+          <button onClick={onLogout} className="btn-logout">Logout</button>
         </div>
       </div>
 
@@ -386,7 +468,7 @@ export default function SponsorProfile({ token, onLogout, onChangeUsername }) {
 
         {/* Tab bar */}
         <div style={{ display: "flex", gap: 8, marginBottom: 20 }}>
-          {["drivers", "applications"].map((tab) => (
+          {["drivers", "applications", "catalog"].map((tab) => (
             <button
               key={tab}
               type="button"
@@ -416,104 +498,33 @@ export default function SponsorProfile({ token, onLogout, onChangeUsername }) {
         {!driverLoading && activeTab === "drivers" && (
           drivers.length === 0
             ? <p style={{ color: "#6b7280" }}>No drivers found under your sponsor.</p>
-            : (() => {
-              const ratingScore = (d) =>
-                ratings[d.driverId] === "thumbs_up" ? 1 :
-                ratings[d.driverId] === "thumbs_down" ? -1 : 0;
-
-              const sortedDrivers = sortByRating
-                ? [...drivers].sort((a, b) => ratingScore(b) - ratingScore(a))
-                : drivers;
-
-              return (
-              <div>
-                {/* Sort control */}
-                <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: 10 }}>
-                  <button
-                    type="button"
-                    onClick={() => setSortByRating((s) => !s)}
-                    style={{
-                      display: "flex",
-                      alignItems: "center",
-                      gap: 6,
-                      padding: "6px 14px",
-                      borderRadius: 8,
-                      border: sortByRating ? "2px solid #16a34a" : "1px solid var(--border, #d1d5db)",
-                      background: sortByRating ? "#dcfce7" : "var(--card, #fff)",
-                      color: sortByRating ? "#15803d" : "inherit",
-                      fontWeight: 600,
-                      fontSize: 13,
-                      cursor: "pointer",
-                      transition: "all 0.15s",
-                    }}
-                  >
-                    👍 {sortByRating ? "Sorted by reliability" : "Sort by reliability"}
-                  </button>
-                </div>
-
-                <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 14 }}>
-                  <thead>
-                    <tr style={{ borderBottom: "2px solid #e5e7eb" }}>
-                      <th style={{ textAlign: "left", padding: "8px 12px" }}>Email</th>
-                      <th style={{ textAlign: "left", padding: "8px 12px" }}>Status</th>
-                      <th style={{ textAlign: "left", padding: "8px 12px" }}>Reason</th>
-                      <th style={{ textAlign: "left", padding: "8px 12px" }}>Reliability</th>
-                      <th style={{ textAlign: "left", padding: "8px 12px" }}>Actions</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {sortedDrivers.map((d) => (
-                    <tr key={d.driverId} style={{ borderBottom: "1px solid #f3f4f6" }}>
+            : (
+              <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 14 }}>
+                <thead>
+                  <tr style={{ borderBottom: "2px solid #e5e7eb" }}>
+                    <th style={{ textAlign: "left", padding: "8px 12px" }}>Email</th>
+                    <th style={{ textAlign: "left", padding: "8px 12px" }}>Status</th>
+                    <th style={{ textAlign: "left", padding: "8px 12px" }}>Reason</th>
+                    <th style={{ textAlign: "left", padding: "8px 12px" }}>Actions</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {drivers.map((d) => (
+                    <tr key={d.driver_id} style={{ borderBottom: "1px solid #f3f4f6" }}>
                       <td style={{ padding: "10px 12px" }}>{d.email}</td>
-                      <td style={{ padding: "10px 12px" }}><StatusBadge status={d.status} /></td>
+                      <td style={{ padding: "10px 12px" }}><StatusBadge status={d.driver_status} /></td>
                       <td style={{ padding: "10px 12px", color: "#6b7280", fontSize: 12 }}>
-                        {d.blockReason || "—"}
+                        {d.dropped_reason || "—"}
                       </td>
                       <td style={{ padding: "10px 12px" }}>
-                        <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
-                          <button
-                            type="button"
-                            title="Reliable"
-                            onClick={() => handleRate(d.driverId, "thumbs_up")}
-                            style={{
-                              background: ratings[d.driverId] === "thumbs_up" ? "#dcfce7" : "var(--card)",
-                              border: ratings[d.driverId] === "thumbs_up" ? "2px solid #16a34a" : "1px solid var(--border)",
-                              borderRadius: 8,
-                              padding: "4px 10px",
-                              cursor: "pointer",
-                              fontSize: 16,
-                              transition: "all 0.15s",
-                            }}
-                          >
-                            👍
-                          </button>
-                          <button
-                            type="button"
-                            title="Unreliable"
-                            onClick={() => handleRate(d.driverId, "thumbs_down")}
-                            style={{
-                              background: ratings[d.driverId] === "thumbs_down" ? "#fee2e2" : "var(--card)",
-                              border: ratings[d.driverId] === "thumbs_down" ? "2px solid #dc2626" : "1px solid var(--border)",
-                              borderRadius: 8,
-                              padding: "4px 10px",
-                              cursor: "pointer",
-                              fontSize: 16,
-                              transition: "all 0.15s",
-                            }}
-                          >
-                            👎
-                          </button>
-                        </div>
-                      </td>
-                      <td style={{ padding: "10px 12px" }}>
-                        {d.status?.toLowerCase() !== "blocked" ? (
+                        {d.driver_status !== "BLOCKED" ? (
                           <div style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" }}>
                             <input
                               type="text"
                               placeholder="Reason (required)"
-                              value={blockReason[d.driverId] || ""}
+                              value={blockReason[d.driver_id] || ""}
                               onChange={(e) =>
-                                setBlockReason((prev) => ({ ...prev, [d.driverId]: e.target.value }))
+                                setBlockReason((prev) => ({ ...prev, [d.driver_id]: e.target.value }))
                               }
                               style={{
                                 padding: "5px 8px", borderRadius: 6,
@@ -522,7 +533,7 @@ export default function SponsorProfile({ token, onLogout, onChangeUsername }) {
                             />
                             <button
                               type="button"
-                              onClick={() => handleBlock(d.driverId)}
+                              onClick={() => handleBlock(d.driver_id)}
                               style={{
                                 padding: "5px 12px", borderRadius: 6, border: "none",
                                 background: "#ef4444", color: "#fff", fontWeight: 600,
@@ -535,7 +546,7 @@ export default function SponsorProfile({ token, onLogout, onChangeUsername }) {
                         ) : (
                           <button
                             type="button"
-                            onClick={() => handleUnblock(d.driverId)}
+                            onClick={() => handleUnblock(d.driver_id)}
                             style={{
                               padding: "5px 12px", borderRadius: 6, border: "none",
                               background: "#10b981", color: "#fff", fontWeight: 600,
@@ -550,9 +561,7 @@ export default function SponsorProfile({ token, onLogout, onChangeUsername }) {
                   ))}
                 </tbody>
               </table>
-            </div>
-            );
-          })()
+            )
         )}
 
         {/* Applications tab */}
@@ -571,33 +580,275 @@ export default function SponsorProfile({ token, onLogout, onChangeUsername }) {
                 </thead>
                 <tbody>
                   {applications.map((a) => (
-                    <tr key={a.id} style={{ borderBottom: "1px solid #f3f4f6" }}>
-                      <td style={{ padding: "10px 12px" }}>{a.driver_email}</td>
+                    <tr key={a.applicationId} style={{ borderBottom: "1px solid #f3f4f6" }}>
+                      <td style={{ padding: "10px 12px" }}>{a.email}</td>
                       <td style={{ padding: "10px 12px" }}><StatusBadge status={a.status} /></td>
                       <td style={{ padding: "10px 12px", color: "#6b7280", fontSize: 12 }}>
-                        {new Date(a.applied_at).toLocaleDateString()}
+                        {a.appliedAt ? new Date(a.appliedAt).toLocaleDateString() : "—"}
                       </td>
-                      <td style={{ padding: "10px 12px" }}>
+                      <td style={{ padding: "10px 12px", display: "flex", gap: 6, flexWrap: "wrap" }}>
+                        {a.status === "PENDING" && (
+                          <>
+                            <button
+                              type="button"
+                              onClick={() => handleApplicationAction(a.applicationId, "approve")}
+                              style={{ padding: "5px 12px", borderRadius: 6, border: "none", background: "#059669", color: "#fff", fontWeight: 600, cursor: "pointer", fontSize: 12 }}
+                            >
+                              Approve
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => handleApplicationAction(a.applicationId, "reject")}
+                              style={{ padding: "5px 12px", borderRadius: 6, border: "none", background: "#dc2626", color: "#fff", fontWeight: 600, cursor: "pointer", fontSize: 12 }}
+                            >
+                              Reject
+                            </button>
+                          </>
+                        )}
                         {a.status === "REJECTED" && (
                           <button
                             type="button"
-                            onClick={() => handleReopen(a.id)}
-                            style={{
-                              padding: "5px 12px", borderRadius: 6, border: "none",
-                              background: "#4f46e5", color: "#fff", fontWeight: 600,
-                              cursor: "pointer", fontSize: 12
-                            }}
+                            onClick={() => handleReopen(a.applicationId)}
+                            style={{ padding: "5px 12px", borderRadius: 6, border: "none", background: "#4f46e5", color: "#fff", fontWeight: 600, cursor: "pointer", fontSize: 12 }}
                           >
                             Reopen
                           </button>
                         )}
-                        {a.status !== "REJECTED" && <span style={{ color: "#9ca3af", fontSize: 12 }}>—</span>}
+                        {a.status === "APPROVED" && <span style={{ color: "#9ca3af", fontSize: 12 }}>—</span>}
                       </td>
                     </tr>
                   ))}
                 </tbody>
               </table>
             )
+        )}
+
+        {/* ── Catalog Management tab ── */}
+        {activeTab === "catalog" && (
+          <div>
+            {/* Header row */}
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 16, flexWrap: "wrap", gap: 12 }}>
+              <div>
+                <h3 style={{ margin: 0, fontSize: 17, fontWeight: 700 }}>Catalog Management</h3>
+                <p style={{ margin: "4px 0 0", fontSize: 13, color: "#6b7280" }}>
+                  Hide products from your drivers' catalog view. Hidden items won't appear when they browse.
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowHiddenOnly(p => !p)}
+                style={{
+                  padding: "7px 16px", borderRadius: 8, fontWeight: 600, fontSize: 13,
+                  border: "1px solid var(--border, #d1d5db)",
+                  background: showHiddenOnly ? "#fef2f2" : "transparent",
+                  color: showHiddenOnly ? "#991b1b" : "inherit",
+                  cursor: "pointer",
+                }}
+              >
+                {showHiddenOnly ? "👁 Showing hidden only" : "👁 Show all"}
+              </button>
+            </div>
+
+            {/* Search bar */}
+            <div style={{ display: "flex", gap: 8, marginBottom: 12 }}>
+              <input
+                type="text"
+                value={catalogSearch}
+                onChange={e => setCatalogSearch(e.target.value)}
+                onKeyDown={e => e.key === "Enter" && fetchCatalog(catalogSearch, catalogCategory)}
+                placeholder="Search catalog…"
+                style={{
+                  flex: 1, padding: "9px 12px", borderRadius: 8, fontSize: 14,
+                  border: "1px solid var(--border, #d1d5db)",
+                  background: "var(--card)", color: "var(--text)",
+                }}
+              />
+              <button
+                type="button"
+                onClick={() => fetchCatalog(catalogSearch, catalogCategory)}
+                style={{
+                  padding: "9px 20px", borderRadius: 8, border: "none",
+                  background: "#4f46e5", color: "#fff", fontWeight: 700,
+                  fontSize: 14, cursor: "pointer",
+                }}
+              >
+                Search
+              </button>
+            </div>
+
+            {/* Category pills — same as driver Catalogue page */}
+            <div style={{ display: "flex", gap: 8, marginBottom: 20, flexWrap: "wrap" }}>
+              {CATALOG_CATEGORIES.map(c => (
+                <button
+                  key={c.media}
+                  type="button"
+                  onClick={() => {
+                    setCatalogCategory(c);
+                    fetchCatalog(catalogSearch || "top hits", c);
+                  }}
+                  style={{
+                    padding: "6px 16px", borderRadius: 20, fontSize: 13, fontWeight: 600,
+                    border: "1px solid var(--border, #d1d5db)", cursor: "pointer",
+                    background: catalogCategory.media === c.media ? "#4f46e5" : "transparent",
+                    color: catalogCategory.media === c.media ? "#fff" : "inherit",
+                  }}
+                >
+                  {c.label}
+                </button>
+              ))}
+            </div>
+
+            {/* Hidden count badge */}
+            {hiddenIds.size > 0 && (
+              <div style={{
+                marginBottom: 12, padding: "8px 12px", borderRadius: 8,
+                background: "#fef2f2", color: "#991b1b",
+                fontSize: 13, fontWeight: 600, display: "inline-block",
+              }}>
+                🚫 {hiddenIds.size} product{hiddenIds.size !== 1 ? "s" : ""} hidden from drivers
+              </div>
+            )}
+
+            {catalogError && (
+              <div style={{ color: "#991b1b", marginBottom: 12, fontSize: 14 }}>{catalogError}</div>
+            )}
+            {catalogLoading && <p style={{ color: "#6b7280" }}>Loading catalog...</p>}
+
+            {/* Product grid */}
+            {!catalogLoading && (() => {
+              // When showing hidden only, use the hiddenProducts map directly
+              // so items hidden in previous sessions always appear
+              if (showHiddenOnly) {
+                const hiddenList = Object.values(hiddenProducts);
+                if (hiddenList.length === 0) {
+                  return <p style={{ color: "#6b7280", fontSize: 14 }}>No hidden products yet.</p>;
+                }
+                return (
+                  <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(180px, 1fr))", gap: 14 }}>
+                    {hiddenList.map(p => {
+                      const id = p.product_id;
+                      const isToggling = catalogToggling[id];
+                      // Build a synthetic product object for handleToggleHide
+                      const synthetic = { trackId: id, trackName: p.product_name, artistName: p.artist_name, artworkUrl100: p.artwork_url, trackPrice: p.price };
+                      return (
+                        <div key={id} style={{ border: "1px solid var(--border, #e5e7eb)", borderRadius: 12, overflow: "hidden", background: "var(--card)", opacity: 0.65, position: "relative" }}>
+                          <div style={{ position: "absolute", top: 8, left: 8, zIndex: 2, background: "#dc2626", color: "#fff", fontSize: 10, fontWeight: 700, padding: "2px 7px", borderRadius: 10 }}>
+                            HIDDEN
+                          </div>
+                          {p.artwork_url && <img src={p.artwork_url} alt={p.product_name} style={{ width: "100%", aspectRatio: "1 / 1", objectFit: "cover", display: "block" }} />}
+                          <div style={{ padding: "10px 10px 12px" }}>
+                            <div style={{ fontSize: 12, color: "#6b7280", marginBottom: 2 }}>{p.artist_name}</div>
+                            <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 6, lineHeight: 1.3 }}>
+                              {(p.product_name || "Unknown").length > 40 ? (p.product_name || "").slice(0, 40) + "…" : (p.product_name || "Unknown")}
+                            </div>
+                            {p.price > 0 && <div style={{ fontSize: 12, color: "#4f46e5", fontWeight: 700, marginBottom: 8 }}>${parseFloat(p.price).toFixed(2)}</div>}
+                            <button
+                              type="button"
+                              disabled={isToggling}
+                              onClick={() => handleToggleHide(synthetic)}
+                              style={{ width: "100%", padding: "6px 0", borderRadius: 7, border: "none", background: "#d1fae5", color: "#065f46", fontWeight: 700, fontSize: 12, cursor: isToggling ? "not-allowed" : "pointer", opacity: isToggling ? 0.6 : 1 }}
+                            >
+                              {isToggling ? "…" : "✓ Unhide"}
+                            </button>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                );
+              }
+
+              // Normal view — show search results
+              const displayed = catalogResults;
+              if (displayed.length === 0) {
+                return <p style={{ color: "#6b7280", fontSize: 14 }}>Search for products above to manage your catalog.</p>;
+              }
+
+              return (
+                <div style={{
+                  display: "grid",
+                  gridTemplateColumns: "repeat(auto-fill, minmax(180px, 1fr))",
+                  gap: 14,
+                }}>
+                  {displayed.map(product => {
+                    const id = String(product.trackId || product.collectionId);
+                    const isHidden = hiddenIds.has(id);
+                    const isToggling = catalogToggling[id];
+                    const thumb = product.artworkUrl100 || product.artworkUrl60;
+                    const name = product.trackName || product.collectionName || "Unknown";
+                    const artist = product.artistName || "";
+                    const price = product.trackPrice ?? product.collectionPrice ?? null;
+
+                    return (
+                      <div
+                        key={id}
+                        style={{
+                          border: "1px solid var(--border, #e5e7eb)",
+                          borderRadius: 12,
+                          overflow: "hidden",
+                          background: "var(--card)",
+                          opacity: isHidden ? 0.55 : 1,
+                          transition: "opacity 0.2s",
+                          position: "relative",
+                        }}
+                      >
+                        {/* Hidden overlay badge */}
+                        {isHidden && (
+                          <div style={{
+                            position: "absolute", top: 8, left: 8, zIndex: 2,
+                            background: "#dc2626", color: "#fff",
+                            fontSize: 10, fontWeight: 700, padding: "2px 7px",
+                            borderRadius: 10, letterSpacing: "0.05em",
+                          }}>
+                            HIDDEN
+                          </div>
+                        )}
+                        {thumb && (
+                          <img
+                            src={thumb}
+                            alt={name}
+                            style={{ width: "100%", aspectRatio: "1 / 1", objectFit: "cover", display: "block" }}
+                          />
+                        )}
+                        <div style={{ padding: "10px 10px 12px" }}>
+                          <div style={{ fontSize: 12, color: "#6b7280", marginBottom: 2, textTransform: "uppercase", letterSpacing: "0.04em" }}>
+                            {artist}
+                          </div>
+                          <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 6, lineHeight: 1.3 }}>
+                            {name.length > 40 ? name.slice(0, 40) + "…" : name}
+                          </div>
+                          {price !== null && price > 0 && (
+                            <div style={{ fontSize: 12, color: "#4f46e5", fontWeight: 700, marginBottom: 8 }}>
+                              ${price.toFixed(2)}
+                            </div>
+                          )}
+                          <button
+                            type="button"
+                            disabled={isToggling}
+                            onClick={() => handleToggleHide(product)}
+                            style={{
+                              width: "100%",
+                              padding: "6px 0",
+                              borderRadius: 7,
+                              border: "none",
+                              background: isHidden ? "#d1fae5" : "#fee2e2",
+                              color: isHidden ? "#065f46" : "#991b1b",
+                              fontWeight: 700,
+                              fontSize: 12,
+                              cursor: isToggling ? "not-allowed" : "pointer",
+                              opacity: isToggling ? 0.6 : 1,
+                            }}
+                          >
+                            {isToggling ? "…" : isHidden ? "✓ Unhide" : "🚫 Hide"}
+                          </button>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              );
+            })()}
+          </div>
         )}
       </div>
     </div>
