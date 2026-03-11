@@ -48,6 +48,14 @@ const register = async (req, res) => {
     const newUser = await userModel.createUser(username, email, hashedPassword);
 
     await require("../models/profileModel").updateUserRole(newUser.id, userRole);
+    // to make drivers drivers rows instaed of just users
+    if (userRole === "DRIVER") {
+      const pool = require("../db");
+      await pool.query(
+        "INSERT INTO drivers (user_id, sponsor_id, status) VALUES (?, NULL, 'ACTIVE')",
+        [newUser.id]
+      );
+    }
 
     res.status(201).json({
       message: "User registered successfully",

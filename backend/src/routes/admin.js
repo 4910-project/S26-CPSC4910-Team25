@@ -105,7 +105,7 @@ router.get("/drivers", async (req, res) => {
       `
       SELECT
         d.id AS driver_id,
-        d.user_id,
+        u.id AS user_id,
         u.email,
         u.status AS user_status,
         d.status AS driver_status,
@@ -114,11 +114,11 @@ router.get("/drivers", async (req, res) => {
         d.dropped_reason,
         d.dropped_at,
         d.flagged
-      FROM drivers d
-      JOIN users u ON u.id = d.user_id
+      FROM users u
+      LEFT JOIN drivers d ON d.user_id = u.id
       LEFT JOIN sponsors s ON s.id = d.sponsor_id
-      ${where}
-      ORDER BY d.id DESC
+      WHERE u.role = 'DRIVER'
+      ORDER BY u.id DESC
       LIMIT ${lim}
       `,
       params
@@ -126,7 +126,7 @@ router.get("/drivers", async (req, res) => {
 
     return res.json({ ok: true, drivers: rows });
   } catch (err) {
-    console.error(err);
+    console.error("GET /admin/drivers error:", err); // for debugging
     return res.status(500).json({ ok: false, error: "failed to fetch drivers" });
   }
 });
@@ -155,7 +155,7 @@ router.get("/drivers/:driverId", async (req, res) => {
         d.dropped_reason,
         d.dropped_at,
         d.flagged
-      FROM drivers d
+      FROM users u
       JOIN users u ON u.id = d.user_id
       LEFT JOIN sponsors s ON s.id = d.sponsor_id
       WHERE d.id = ?
