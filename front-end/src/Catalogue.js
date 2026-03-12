@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useMemo } from "react";
 import "./Catalogue.css";
 import { useNavigate } from "react-router-dom";
 
@@ -30,28 +30,57 @@ function bigArt(url)
 }
 
 const LOG_KEY = "driver_purchase_log";
-function loadLog() 
+function usePurchaseLog(serverLog)
 {
-  try { return JSON.parse(localStorage.getItem(LOG_KEY)) || []; }
-  catch { return []; }
+  const [log, setLog] = useState(() =>
+  {
+    try { return JSON.parse(localStorage.getItem(LOG_KEY)) || []; }
+    catch { return []; }
+  });
+
+  useEffect(() =>
+  {
+    if (!serverLog?.length) return;
+    setLog(prev =>
+    {
+      const existingIds = new Set(prev.map(e => e.id));
+      const merged = [...serverLog.filter(e => !existingIds.has(e.id)), ...prev];
+      localStorage.setItem(LOG_KEY, JSON.stringify(merged));
+      return merged;
+    });
+  }, [serverLog]);
+
+  function addEntry(entry)
+  {
+    setLog(prev =>
+    {
+      const updated = [entry, ...prev];
+      localStorage.setItem(LOG_KEY, JSON.stringify(updated));
+      return updated;
+    });
+  }
+
+  return [log, addEntry];
 }
 
 export default function Catalogue({ token, initialPoints = 100, onPointsChange }) 
 {
   const navigate = useNavigate();
-  const [points,   setPoints]   = useState(initialPoints);
-  const [input,    setInput]    = useState("");
-  const [cat,      setCat]      = useState(CATEGORIES[0]);
-  const [items,    setItems]    = useState([]);
-  const [loading,  setLoading]  = useState(false);
-  const [confirm,  setConfirm]  = useState(null);
-  const [buying,   setBuying]   = useState(false);
-  const [toast,    setToast]    = useState(null);
-  const [log,      setLog]      = useState(loadLog);
-  const [showLog,  setShowLog]  = useState(false);
+  const [points,    setPoints]    = useState(initialPoints);
+  const [input,     setInput]     = useState("");
+  const [cat,       setCat]       = useState(CATEGORIES[0]);
+  const [items,     setItems]     = useState([]);
+  const [loading,   setLoading]   = useState(false);
+  const [confirm,   setConfirm]   = useState(null);
+  const [buying,    setBuying]    = useState(false);
+  const [toast,     setToast]     = useState(null);
+  const [serverLog, setServerLog] = useState(null);
+  const [log,       addEntry]     = usePurchaseLog(serverLog);
+  const [showLog,   setShowLog]   = useState(false);
   const [hiddenIds, setHiddenIds] = useState(new Set());
 
- 
+  useEffect(() => { setPoints(initialPoints); }, [initialPoints]);
+
   useEffect(() => 
   {
     if (!token) return;
@@ -59,6 +88,15 @@ export default function Catalogue({ token, initialPoints = 100, onPointsChange }
       .then(r => r.ok ? r.json() : null)
       .then(d => { if (d?.points != null) setPoints(d.points); })
       .catch(() => {});
+  }, [token]);
+
+  useEffect(() =>
+  {
+    if (!token) return;
+    fetch(`${API_BASE}/purchases`, { headers: { Authorization: `Bearer ${token}` } })
+      .then(r => r.ok ? r.json() : null)
+      .then(d => { if (Array.isArray(d)) setServerLog(d); })
+      .catch(err => console.warn("Could not load purchase history:", err));
   }, [token]);
 
   // Fetch hidden product IDs from this driver's sponsor
@@ -152,12 +190,10 @@ export default function Catalogue({ token, initialPoints = 100, onPointsChange }
           method: "POST",
           headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
           body: JSON.stringify(entry),
-        }).catch(() => {});
+        }).catch(err => console.error("Failed to save purchase to server:", err));
       }
 
-      const newLog = [entry, ...log];
-      setLog(newLog);
-      localStorage.setItem(LOG_KEY, JSON.stringify(newLog));
+      addEntry(entry);
 
       showToast(`Redeemed for ${cost} pts!`, "success");
       setConfirm(null);
@@ -175,7 +211,10 @@ export default function Catalogue({ token, initialPoints = 100, onPointsChange }
     setTimeout(() => setToast(null), 2800);
   }
 
-  const confirmCost = confirm ? toPoints(confirm.trackPrice ?? confirm.price ?? 0) : 0;
+  const confirmCost = useMemo(
+    () => confirm ? toPoints(confirm.trackPrice ?? confirm.price ?? 0) : 0,
+    [confirm]
+  );
 
   return (
     <div>
@@ -273,12 +312,16 @@ export default function Catalogue({ token, initialPoints = 100, onPointsChange }
                 const canAfford = points >= cost;
                 const name      = item.trackName || item.collectionName || "Unknown";
                 const img       = bigArt(item.artworkUrl100);
+                const isFree    = !parseFloat(item.trackPrice ?? item.price ?? 0);
                 return (
                   <div key={item.trackId || item.collectionId} className="cat-card" style={{ opacity: canAfford ? 1 : 0.5 }}>
                     {img && <img src={img} alt={name} />}
                     <div className="cat-card-body">
                       <p className="cat-card-artist">{item.artistName}</p>
                       <p className="cat-card-name">{name}</p>
+                      {isFree && (
+                        <p className="cat-card-free-note">Base price: 50 pts</p>
+                      )}
                       <div className="cat-card-footer">
                         <span className="cat-card-pts">{cost.toLocaleString()} pts</span>
                         <button
