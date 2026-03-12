@@ -50,8 +50,10 @@ export default function DriverProfile({ token, onLogout, onChangePassword, onCha
   const [applications, setApplications] = useState([null]); // applications state
   const [driverStatus, setDriverStatus] = useState(null);
 
-  // Notifications Switch
+  // Notifications 
   const [notificationsEnabled, setNotificationsEnabled] = useState(true);
+  const [dismissedIds, setDismissedIds] = useState([]);
+  const [droppedDismissed, setDroppedDismissed] = useState(false);
 
   // ── Points fetch ──────────────────────────────────────────────────────────
   useEffect(() => {
@@ -226,7 +228,9 @@ export default function DriverProfile({ token, onLogout, onChangePassword, onCha
           {/* -- Notification Banners */}
           {notificationsEnabled && (
             <>
-              {applications.filter(a => a && a.status === "REJECTED").map(a => (
+              {applications
+                .filter(a => a && a.status === "REJECTED" && !dismissedIds.includes(a.applicationId))
+                .map(a => (
                 <div key={a.applicationId} style={{
                   background: "#fef2f2",
                   border: "1px solid #fca5a5",
@@ -247,9 +251,20 @@ export default function DriverProfile({ token, onLogout, onChangePassword, onCha
                       </div>
                     )}
                   </div>
+                  <button
+                    type="button"
+                    onClick={() => setDismissedIds(prev => [...prev, a.applicationId])}
+                    style={{
+                      background: "none", border: "none",
+                      fontSize: 18, cursor: "pointer",
+                      color: "#991b1b", lineHeight: 1, padding: "0 4px",
+                    }}
+                  >
+                    ×
+                  </button>
                 </div>
               ))}
-              {driverStatus?.status === "DROPPED" && (
+              {!droppedDismissed && driverStatus?.status === "DROPPED" && (
                 <div style={{
                   background: "#fef2f2",
                   border: "1px solid #fca5a5",
@@ -270,6 +285,17 @@ export default function DriverProfile({ token, onLogout, onChangePassword, onCha
                       </div>
                     )}
                   </div>
+                  <button
+                    type="button"
+                    onClick={() => setDroppedDismissed(true)}
+                    style={{
+                      background: "none", border: "none",
+                      fontSize: 18, cursor: "pointer",
+                      color: "#991b1b", lineHeight: 1, padding: "0 4px",
+                    }}
+                  >
+                    ×
+                  </button>
                 </div>
               )}
             </>

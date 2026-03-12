@@ -23,20 +23,6 @@ router.post("/", auth, async (req, res) => {
             return res.status(403).json({ error: "This sponsor is not currently accepting new drivers"});
         }
 
-        const [pending] = await pool.query(
-            `
-            SELECT id
-            FROM driver_applications
-            WHERE driver_user_id=? AND status='pending' 
-            LIMIT 1
-            `,
-            [driverUserId]
-        );
-
-        if (pending.length > 0) {
-            return res.status(409).json({ error: "You already have one pending application"});
-        }
-
 
         const [result] = await pool.query(
             `

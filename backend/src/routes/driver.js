@@ -209,6 +209,7 @@ router.get("/driver/applications", async (req, res) => {
       `
       SELECT
         da.id AS applicationId,
+        da.sponsor_id,
         s.name AS sponsorName,
         da.status,
         da.decision_message AS decisionMessage,
