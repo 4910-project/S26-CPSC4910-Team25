@@ -33,6 +33,12 @@ function parseLimit(value, fallback, max = 500) {
   return Math.min(parsed, max);
 }
 
+function parseRequiredReason(value) {
+  const reason = String(value ?? "").trim();
+  if (!reason) return null;
+  return reason.slice(0, 500);
+}
+
 /**
  * Small helper to write audit logs safely.
  * Table: audit_logs(id, created_at, category, actor_user_id, target_user_id, sponsor_id, success, details)
@@ -811,6 +817,90 @@ router.patch("/drivers/:driverId/flag", async (req, res) => {
   } catch (err) {
     console.error(err);
     return res.status(500).json({ ok: false, error: "failed to update driver"});
+  }
+});
+
+/**
+ * NEW STORY 10908 — Admin can issue formal warnings to sponsors
+ * POST /admin/sponsors/:sponsorId/warn
+ * Body: { reason: string }
+ */
+router.post("/sponsors/:sponsorId/warn", async (req, res) => {
+  const sponsorId = parsePositiveInt(req.params.sponsorId);
+  if (!sponsorId) {
+    return res.status(400).json({ ok: false, error: "invalid sponsorId " });
+  }
+
+  const reason = parseRequiredReason(req.body?.reason);
+  if (!reason) {
+    return res.status(400).json({ ok: false, error: "warning reason is required" });
+  }
+
+  try {
+    const [result] = await pool.query(
+      "UPDATE sponsors SET flagged = 1 WHERE id = ? LIMIT 1",
+      [sponsorId]
+    );
+
+    if (!result.affectedRows) {
+      return res.status(404).json({ ok: false, error: "sponsor not found" });
+    }
+
+    await writeAudit({
+      category: "SPONSOR_WARNING",
+      actorUserId: req.user.id,
+      sponsorId,
+      success: 1,
+      details: `formal warning issued to sponsorId=${sponsorId}; reason=${reason}`,
+    });
+
+    return res.json({ ok: true, sponsorId, flagged: true, reason });
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({ ok: false, error: "failed to issue sponsor warning" });
+  }
+});
+
+/**
+ * NEW STORY 10909 — Admin can issue formal warnings to drivers
+ * POST /admin/drivers/:driverId/warn
+ * Body: { reason: string }
+ */
+router.post("/drivers/:driverId/warn", async (req, res) => {
+  const driverId = parsePositiveInt(req.params.driverId);
+  if (!driverId) {
+    return res.status(400).json({ ok: false, error: "invalid driverId " });
+  }
+
+  const reason = parseRequiredReason(req.body?.reason);
+  if (!reason) {
+    return res.status(400).json({ ok: false, error: "warning reason is required" });
+  }
+
+  try {
+    const [driverRows] = await pool.query(
+      "SELECT id, user_id FROM drivers WHERE id = ? LIMIT 1",
+      [driverId]
+    );
+    const driver = driverRows[0];
+    if (!driver) {
+      return res.status(404).json({ ok: false, error: "driver not found" });
+    }
+
+    await pool.query("UPDATE drivers SET flagged = 1 WHERE id = ? LIMIT 1", [driverId]);
+
+    await writeAudit({
+      category: "DRIVER_WARNING",
+      actorUserId: req.user.id,
+      targetUserId: driver.user_id,
+      success: 1,
+      details: `formal warning issued to driverId=${driverId}; reason=${reason}`,
+    });
+
+    return res.json({ ok: true, driverId, flagged: true, reason });
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({ ok: false, error: "failed to issue driver warning" });
   }
 });
 

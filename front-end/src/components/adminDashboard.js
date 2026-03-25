@@ -62,12 +62,14 @@ export default function AdminDashboard({ token, onLogout }) {
   const [sponsorError, setSponsorError] = useState("");
   const [lockingId, setLockingId] = useState(null);
   const [flaggingId, setFlaggingId] = useState(null);
+  const [sponsorWarningId, setSponsorWarningId] = useState(null);
 
   // Drivers state
   const [drivers, setDrivers] = useState([]);
   const [driverLoading, setDriverLoading] = useState(false);
   const [driverError, setDriverError] = useState("");
   const [driverFlaggingId, setDriverFlaggingId] = useState(null);
+  const [driverWarningId, setDriverWarningId] = useState(null);
 
   // Settings state
   const [notificationsEnabled, setNotificationsEnabled] = useState(true);
@@ -238,6 +240,38 @@ export default function AdminDashboard({ token, onLogout }) {
     }
   };
 
+  const handleSponsorWarn = async (sponsorId, sponsorName) => {
+    const rawReason = window.prompt(`Enter warning reason for sponsor "${sponsorName}":`);
+    if (rawReason === null) return;
+
+    const reason = rawReason.trim();
+    if (!reason) {
+      setSponsorError("Warning reason is required.");
+      return;
+    }
+
+    setSponsorWarningId(sponsorId);
+    setSponsorError("");
+    try {
+      const res = await fetch(`${ADMIN_API}/sponsors/${sponsorId}/warn`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({ reason }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Failed to issue sponsor warning");
+      await fetchSponsors();
+      window.alert("Sponsor warning issued.");
+    } catch (err) {
+      setSponsorError(err?.message || "Unknown error");
+    } finally {
+      setSponsorWarningId(null);
+    }
+  };
+
   const handleDriverFlagToggle = async (driverId, currentValue) => {
     setDriverFlaggingId(driverId);
     try {
@@ -256,6 +290,38 @@ export default function AdminDashboard({ token, onLogout }) {
       setDriverError(err?.message || "Unknown error");
     } finally {
       setDriverFlaggingId(null);
+    }
+  };
+
+  const handleDriverWarn = async (driverId, driverEmail) => {
+    const rawReason = window.prompt(`Enter warning reason for driver "${driverEmail}":`);
+    if (rawReason === null) return;
+
+    const reason = rawReason.trim();
+    if (!reason) {
+      setDriverError("Warning reason is required.");
+      return;
+    }
+
+    setDriverWarningId(driverId);
+    setDriverError("");
+    try {
+      const res = await fetch(`${ADMIN_API}/drivers/${driverId}/warn`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({ reason }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Failed to issue driver warning");
+      await fetchDrivers();
+      window.alert("Driver warning issued.");
+    } catch (err) {
+      setDriverError(err?.message || "Unknown error");
+    } finally {
+      setDriverWarningId(null);
     }
   };
 
@@ -665,6 +731,25 @@ export default function AdminDashboard({ token, onLogout }) {
                 <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
                   <button
                     type="button"
+                    disabled={sponsorWarningId === s.id}
+                    onClick={() => handleSponsorWarn(s.id, s.name)}
+                    style={{
+                      padding: "7px 16px",
+                      borderRadius: 8,
+                      border: "1px solid #fbbf24",
+                      background: "#fef3c7",
+                      color: "#92400e",
+                      fontWeight: 600,
+                      fontSize: 13,
+                      cursor: sponsorWarningId === s.id ? "not-allowed" : "pointer",
+                      opacity: sponsorWarningId === s.id ? 0.6 : 1,
+                    }}
+                  >
+                    {sponsorWarningId === s.id ? "Saving..." : "⚠️ Warn"}
+                  </button>
+
+                  <button
+                    type="button"
                     disabled={flaggingId === s.id}
                     onClick={() => handleFlagToggle(s.id, s.flagged)}
                     style={{
@@ -770,24 +855,45 @@ export default function AdminDashboard({ token, onLogout }) {
                   </div>
                 </div>
 
-                <button
-                  type="button"
-                  disabled={driverFlaggingId === d.driver_id}
-                  onClick={() => handleDriverFlagToggle(d.driver_id, d.flagged)}
-                  style={{
-                    padding: "7px 16px",
-                    borderRadius: 8,
-                    border: !!d.flagged ? "1px solid #fca5a5" : "1px solid var(--border, #d1d5db)",
-                    background: !!d.flagged ? "#fee2e2" : "transparent",
-                    color: !!d.flagged ? "#b91c1c" : "var(--text, #374151)",
-                    fontWeight: 600,
-                    fontSize: 13,
-                    cursor: driverFlaggingId === d.driver_id ? "not-allowed" : "pointer",
-                    opacity: driverFlaggingId === d.driver_id ? 0.6 : 1,
-                  }}
-                >
-                  {driverFlaggingId === d.driver_id ? "Saving..." : !!d.flagged ? "🚩 Unflag" : "🚩 Flag"}
-                </button>
+                <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                  <button
+                    type="button"
+                    disabled={driverWarningId === d.driver_id}
+                    onClick={() => handleDriverWarn(d.driver_id, d.email)}
+                    style={{
+                      padding: "7px 16px",
+                      borderRadius: 8,
+                      border: "1px solid #fbbf24",
+                      background: "#fef3c7",
+                      color: "#92400e",
+                      fontWeight: 600,
+                      fontSize: 13,
+                      cursor: driverWarningId === d.driver_id ? "not-allowed" : "pointer",
+                      opacity: driverWarningId === d.driver_id ? 0.6 : 1,
+                    }}
+                  >
+                    {driverWarningId === d.driver_id ? "Saving..." : "⚠️ Warn"}
+                  </button>
+
+                  <button
+                    type="button"
+                    disabled={driverFlaggingId === d.driver_id}
+                    onClick={() => handleDriverFlagToggle(d.driver_id, d.flagged)}
+                    style={{
+                      padding: "7px 16px",
+                      borderRadius: 8,
+                      border: !!d.flagged ? "1px solid #fca5a5" : "1px solid var(--border, #d1d5db)",
+                      background: !!d.flagged ? "#fee2e2" : "transparent",
+                      color: !!d.flagged ? "#b91c1c" : "var(--text, #374151)",
+                      fontWeight: 600,
+                      fontSize: 13,
+                      cursor: driverFlaggingId === d.driver_id ? "not-allowed" : "pointer",
+                      opacity: driverFlaggingId === d.driver_id ? 0.6 : 1,
+                    }}
+                  >
+                    {driverFlaggingId === d.driver_id ? "Saving..." : !!d.flagged ? "🚩 Unflag" : "🚩 Flag"}
+                  </button>
+                </div>
               </div>
             ))}
         </div>
