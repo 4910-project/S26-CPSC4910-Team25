@@ -141,6 +141,7 @@ export default function Catalogue({ token, initialPoints = 100, onPointsChange }
   {
     setCat(c);
     setItems([]);
+    setShowLog(false);
     search(input.trim() || "top hits", c);
   }
  
