@@ -56,6 +56,8 @@ export default function DriverProfile({
   // Notification settings state
   const [notifyPointsAdded, setNotifyPointsAdded] = useState(true);
   const [notifyPointsRemoved, setNotifyPointsRemoved] = useState(true);
+  const [notifyOrderPlaced, setNotifyOrderPlaced] = useState(true);
+  const [notifyLogin, setNotifyLogin] = useState(true);
   const [notifLoading, setNotifLoading] = useState(false);
   const [notifSaving, setNotifSaving] = useState(false);
   const [notifMessage, setNotifMessage] = useState("");
@@ -127,6 +129,14 @@ export default function DriverProfile({
         if (res.ok) {
           setNotifyPointsAdded(!!data.notify_points_added);
           setNotifyPointsRemoved(!!data.notify_points_removed);
+          setNotifyOrderPlaced(
+            data.notify_order_placed === undefined
+              ? true
+              : !!data.notify_order_placed
+          );
+          setNotifyLogin(
+            data.notify_login === undefined ? true : !!data.notify_login
+          );
         }
       } catch (err) {
         console.error(err);
@@ -136,7 +146,12 @@ export default function DriverProfile({
     })();
   }, [token]);
 
-  async function saveNotificationPreferences(updatedAdded, updatedRemoved) {
+  async function saveNotificationPreferences(
+    updatedAdded,
+    updatedRemoved,
+    updatedOrderPlaced,
+    updatedLogin
+  ) {
     setNotifSaving(true);
     setNotifMessage("");
 
@@ -150,21 +165,25 @@ export default function DriverProfile({
         body: JSON.stringify({
           notify_points_added: updatedAdded,
           notify_points_removed: updatedRemoved,
+          notify_order_placed: updatedOrderPlaced,
+          notify_login: updatedLogin,
         }),
       });
 
       const data = await res.json();
 
       if (!res.ok) {
-        throw new Error(data.error || "Failed to update notification setting");
+        throw new Error(data.error || "Failed to update notification settings");
       }
 
       setNotifyPointsAdded(updatedAdded);
       setNotifyPointsRemoved(updatedRemoved);
+      setNotifyOrderPlaced(updatedOrderPlaced);
+      setNotifyLogin(updatedLogin);
       setNotifMessage("Notification preferences updated.");
     } catch (err) {
       console.error(err);
-      setNotifMessage(err.message);
+      setNotifMessage(err.message || "Failed to update notification settings");
     } finally {
       setNotifSaving(false);
     }
@@ -579,11 +598,11 @@ export default function DriverProfile({
               ) : (
                 <>
                   <div style={{ marginTop: 10, fontSize: 18, fontWeight: 700 }}>
-                    Points Notifications
+                    Notification Preferences
                   </div>
 
                   <div style={{ marginTop: 6, color: "var(--muted)", fontSize: 13 }}>
-                    Choose when you want to be notified about point changes.
+                    Choose when you want to be notified.
                   </div>
 
                   <div style={{ marginTop: 14, display: "flex", flexDirection: "column", gap: 10 }}>
@@ -592,7 +611,12 @@ export default function DriverProfile({
                         type="checkbox"
                         checked={notifyPointsAdded}
                         onChange={(e) =>
-                          saveNotificationPreferences(e.target.checked, notifyPointsRemoved)
+                          saveNotificationPreferences(
+                            e.target.checked,
+                            notifyPointsRemoved,
+                            notifyOrderPlaced,
+                            notifyLogin
+                          )
                         }
                         disabled={notifSaving}
                       />
@@ -604,11 +628,50 @@ export default function DriverProfile({
                         type="checkbox"
                         checked={notifyPointsRemoved}
                         onChange={(e) =>
-                          saveNotificationPreferences(notifyPointsAdded, e.target.checked)
+                          saveNotificationPreferences(
+                            notifyPointsAdded,
+                            e.target.checked,
+                            notifyOrderPlaced,
+                            notifyLogin
+                          )
                         }
                         disabled={notifSaving}
                       />
                       Notify me when points are removed
+                    </label>
+
+                    <label style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                      <input
+                        type="checkbox"
+                        checked={notifyOrderPlaced}
+                        onChange={(e) =>
+                          saveNotificationPreferences(
+                            notifyPointsAdded,
+                            notifyPointsRemoved,
+                            e.target.checked,
+                            notifyLogin
+                          )
+                        }
+                        disabled={notifSaving}
+                      />
+                      Notify me when an order is placed
+                    </label>
+
+                    <label style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                      <input
+                        type="checkbox"
+                        checked={notifyLogin}
+                        onChange={(e) =>
+                          saveNotificationPreferences(
+                            notifyPointsAdded,
+                            notifyPointsRemoved,
+                            notifyOrderPlaced,
+                            e.target.checked
+                          )
+                        }
+                        disabled={notifSaving}
+                      />
+                      Notify me when a login occurs on my account
                     </label>
                   </div>
 

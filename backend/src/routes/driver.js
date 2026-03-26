@@ -158,26 +158,108 @@ router.get("/sponsors", async (req, res) => {
 // Notification settings
 // ─────────────────────────────────────────────────────────────
 router.get("/notification-settings", async (req, res) => {
-  const [rows] = await pool.query(
-    "SELECT notify_points_added, notify_points_removed FROM users WHERE id=?",
-    [req.user.id]
-  );
+  try {
+    const [rows] = await pool.query(
+      `
+      SELECT
+        notify_points_added,
+        notify_points_removed,
+        notify_order_placed,
+        notify_login
+      FROM users
+      WHERE id = ?
+      LIMIT 1
+      `,
+      [req.user.id]
+    );
 
-  res.json({
-    notify_points_added: !!rows[0]?.notify_points_added,
-    notify_points_removed: !!rows[0]?.notify_points_removed,
-  });
+    const user = rows[0] || {};
+
+    res.json({
+      notify_points_added: !!user.notify_points_added,
+      notify_points_removed: !!user.notify_points_removed,
+      notify_order_placed:
+        user.notify_order_placed === undefined ? true : !!user.notify_order_placed,
+      notify_login:
+        user.notify_login === undefined ? true : !!user.notify_login,
+    });
+  } catch (err) {
+    console.error("Failed to load notification settings:", err);
+    res.status(500).json({ ok: false, error: "failed to load notification settings" });
+  }
 });
 
 router.patch("/notification-settings", async (req, res) => {
-  const { notify_points_added, notify_points_removed } = req.body;
+  try {
+    const [currentRows] = await pool.query(
+      `
+      SELECT
+        notify_points_added,
+        notify_points_removed,
+        notify_order_placed,
+        notify_login
+      FROM users
+      WHERE id = ?
+      LIMIT 1
+      `,
+      [req.user.id]
+    );
 
-  await pool.query(
-    "UPDATE users SET notify_points_added=?, notify_points_removed=? WHERE id=?",
-    [notify_points_added ? 1 : 0, notify_points_removed ? 1 : 0, req.user.id]
-  );
+    const current = currentRows[0];
+    if (!current) {
+      return res.status(404).json({ ok: false, error: "user not found" });
+    }
 
-  res.json({ ok: true });
+    const notifyPointsAdded =
+      req.body.notify_points_added === undefined
+        ? !!current.notify_points_added
+        : !!req.body.notify_points_added;
+
+    const notifyPointsRemoved =
+      req.body.notify_points_removed === undefined
+        ? !!current.notify_points_removed
+        : !!req.body.notify_points_removed;
+
+    const notifyOrderPlaced =
+      req.body.notify_order_placed === undefined
+        ? !!current.notify_order_placed
+        : !!req.body.notify_order_placed;
+
+    const notifyLogin =
+      req.body.notify_login === undefined
+        ? !!current.notify_login
+        : !!req.body.notify_login;
+
+    await pool.query(
+      `
+      UPDATE users
+      SET
+        notify_points_added = ?,
+        notify_points_removed = ?,
+        notify_order_placed = ?,
+        notify_login = ?
+      WHERE id = ?
+      `,
+      [
+        notifyPointsAdded ? 1 : 0,
+        notifyPointsRemoved ? 1 : 0,
+        notifyOrderPlaced ? 1 : 0,
+        notifyLogin ? 1 : 0,
+        req.user.id,
+      ]
+    );
+
+    res.json({
+      ok: true,
+      notify_points_added: notifyPointsAdded,
+      notify_points_removed: notifyPointsRemoved,
+      notify_order_placed: notifyOrderPlaced,
+      notify_login: notifyLogin,
+    });
+  } catch (err) {
+    console.error("Failed to update notification settings:", err);
+    res.status(500).json({ ok: false, error: "failed to update notification settings" });
+  }
 });
 
 // ─────────────────────────────────────────────────────────────
