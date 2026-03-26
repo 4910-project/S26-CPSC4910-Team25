@@ -1,20 +1,20 @@
 import React, { useState, useEffect, useMemo } from "react";
 import "./Catalogue.css";
 import { useNavigate } from "react-router-dom";
-
+ 
 const API_BASE       = "http://localhost:8002/api/catalogue";
 const DRIVER_API     = "http://localhost:8001/api";
 const ITUNES_API     = "https://itunes.apple.com/search";
 const POINTS_PER_USD = 100;
-
+ 
 const CATEGORIES = [
   { label: "Music",   media: "music",    entity: "song"      },
-  { label: "Movies",  media: "movie",    entity: "movie"     },
+  { label: "Movies",  media: "movie",    entity: "movieArtist" },
   { label: "Apps",    media: "software", entity: "software"  },
   { label: "Books",   media: "ebook",    entity: "ebook"     },
   { label: "TV",      media: "tvShow",   entity: "tvEpisode" },
 ];
-
+ 
 //Take the price from itunes then make it a decimal num
 //if the price is free charge 50 points (hopefully the drivers do not find out about that)
 //else multiple the price by points, the points are scuffed at this point
@@ -23,12 +23,12 @@ function toPoints(price)
   const p = parseFloat(price);
   return (!p || p <= 0) ? 50 : Math.round(p * POINTS_PER_USD);
 }
-
+ 
 function bigArt(url) 
 {
   return url ? url.replace("100x100bb", "200x200bb") : null;
 }
-
+ 
 const LOG_KEY = "driver_purchase_log";
 function usePurchaseLog(serverLog)
 {
@@ -37,7 +37,7 @@ function usePurchaseLog(serverLog)
     try { return JSON.parse(localStorage.getItem(LOG_KEY)) || []; }
     catch { return []; }
   });
-
+ 
   useEffect(() =>
   {
     if (!serverLog?.length) return;
@@ -49,7 +49,7 @@ function usePurchaseLog(serverLog)
       return merged;
     });
   }, [serverLog]);
-
+ 
   function addEntry(entry)
   {
     setLog(prev =>
@@ -59,10 +59,10 @@ function usePurchaseLog(serverLog)
       return updated;
     });
   }
-
+ 
   return [log, addEntry];
 }
-
+ 
 export default function Catalogue({ token, initialPoints = 100, onPointsChange }) 
 {
   const navigate = useNavigate();
@@ -78,9 +78,9 @@ export default function Catalogue({ token, initialPoints = 100, onPointsChange }
   const [log,       addEntry]     = usePurchaseLog(serverLog);
   const [showLog,   setShowLog]   = useState(false);
   const [hiddenIds, setHiddenIds] = useState(new Set());
-
+ 
   useEffect(() => { setPoints(initialPoints); }, [initialPoints]);
-
+ 
   useEffect(() => 
   {
     if (!token) return;
@@ -89,7 +89,7 @@ export default function Catalogue({ token, initialPoints = 100, onPointsChange }
       .then(d => { if (d?.points != null) setPoints(d.points); })
       .catch(() => {});
   }, [token]);
-
+ 
   useEffect(() =>
   {
     if (!token) return;
@@ -98,7 +98,7 @@ export default function Catalogue({ token, initialPoints = 100, onPointsChange }
       .then(d => { if (Array.isArray(d)) setServerLog(d); })
       .catch(err => console.warn("Could not load purchase history:", err));
   }, [token]);
-
+ 
   // Fetch hidden product IDs from this driver's sponsor
   useEffect(() =>
   {
@@ -108,7 +108,7 @@ export default function Catalogue({ token, initialPoints = 100, onPointsChange }
       .then(d => { if (d?.hiddenIds) setHiddenIds(new Set(d.hiddenIds.map(String))); })
       .catch(() => {});
   }, [token]);
-
+ 
   
   async function search(term, category) 
   {
@@ -127,39 +127,41 @@ export default function Catalogue({ token, initialPoints = 100, onPointsChange }
     }
     setLoading(false);
   }
-
+ 
   useEffect(() => { search("top hits", cat); }, []); // eslint-disable-line
-
+ 
   function handleSearch(e) 
   {
     e.preventDefault();
     search(input.trim() || "top hits", cat);
   }
-
+ 
   function handleCategory(c) 
   {
     setCat(c);
+    setItems([]);
     search(input.trim() || "top hits", c);
   }
-
+ 
   
   async function handleBuy() 
   {
-    const cost = toPoints(confirm.trackPrice ?? confirm.price ?? 0);
+    const item = confirm;
+    const cost = toPoints(item.trackPrice ?? item.price ?? 0);
     if (cost > points) { showToast("Not enough points!", "error"); setConfirm(null); return; }
-
+ 
     setBuying(true);
     try 
     {
       let newPoints = points - cost;
-
+ 
       if (token) 
       {
         const res = await fetch(`${API_BASE}/points/deduct`, 
         {
           method: "POST",
           headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
-          body: JSON.stringify({ amount: cost, itemName: confirm.trackName || confirm.collectionName }),
+          body: JSON.stringify({ amount: cost, itemName: item.trackName || item.collectionName }),
         });
         if (res.ok)
         {
@@ -167,22 +169,22 @@ export default function Catalogue({ token, initialPoints = 100, onPointsChange }
           if (d.remainingPoints != null) newPoints = d.remainingPoints;
         }
       }
-
+ 
       setPoints(newPoints);
       if (onPointsChange) onPointsChange(newPoints);
-
+ 
       const entry = {
         id:          `${Date.now()}`,
         date:        new Date().toISOString(),
-        name:        confirm.trackName || confirm.collectionName || "Unknown",
-        artist:      confirm.artistName || "",
-        kind:        confirm.kind || cat.label,
-        artwork:     bigArt(confirm.artworkUrl100),
+        name:        item.trackName || item.collectionName || "Unknown",
+        artist:      item.artistName || "",
+        kind:        item.kind || cat.label,
+        artwork:     bigArt(item.artworkUrl100),
         cost,
         pointsAfter: newPoints,
-        trackViewUrl: confirm.trackViewUrl || confirm.collectionViewUrl || null,
+        trackViewUrl: item.trackViewUrl || item.collectionViewUrl || null,
       };
-
+ 
       if (token) 
       {
         fetch(`${API_BASE}/purchases`, 
@@ -192,9 +194,9 @@ export default function Catalogue({ token, initialPoints = 100, onPointsChange }
           body: JSON.stringify(entry),
         }).catch(err => console.error("Failed to save purchase to server:", err));
       }
-
+ 
       addEntry(entry);
-
+ 
       showToast(`Redeemed for ${cost} pts!`, "success");
       setConfirm(null);
     } 
@@ -204,18 +206,18 @@ export default function Catalogue({ token, initialPoints = 100, onPointsChange }
     }
     setBuying(false);
   }
-
+ 
   function showToast(msg, type = "success") 
   {
     setToast({ msg, type });
     setTimeout(() => setToast(null), 2800);
   }
-
+ 
   const confirmCost = useMemo(
     () => confirm ? toPoints(confirm.trackPrice ?? confirm.price ?? 0) : 0,
     [confirm]
   );
-
+ 
   return (
     <div>
       {/* Hero */}
@@ -245,7 +247,7 @@ export default function Catalogue({ token, initialPoints = 100, onPointsChange }
           <strong>{points.toLocaleString()} pts</strong>
         </div>
       </div>
-
+ 
       <div className="cat-body">
         {/* Search */}
         <form className="cat-search-row" onSubmit={handleSearch}>
@@ -259,7 +261,7 @@ export default function Catalogue({ token, initialPoints = 100, onPointsChange }
             {loading ? "…" : "Search"}
           </button>
         </form>
-
+ 
         {/* Category pills */}
         <div className="cat-pills">
           {CATEGORIES.map(c => (
@@ -278,7 +280,7 @@ export default function Catalogue({ token, initialPoints = 100, onPointsChange }
             My Purchases {log.length > 0 && `(${log.length})`}
           </button>
         </div>
-
+ 
         {/* Purchase log */}
         {showLog && (
           <div>
@@ -300,7 +302,7 @@ export default function Catalogue({ token, initialPoints = 100, onPointsChange }
             ))}
           </div>
         )}
-
+ 
         {/* Grid */}
         {!showLog && (
           <>
@@ -340,7 +342,7 @@ export default function Catalogue({ token, initialPoints = 100, onPointsChange }
           </>
         )}
       </div>
-
+ 
       {/* Confirm modal */}
       {confirm && (
         <div className="cat-overlay" onClick={() => setConfirm(null)}>
@@ -369,7 +371,7 @@ export default function Catalogue({ token, initialPoints = 100, onPointsChange }
           </div>
         </div>
       )}
-
+ 
       {/* Toast */}
       {toast && (
         <div className={`cat-toast ${toast.type}`}>{toast.msg}</div>
@@ -377,3 +379,4 @@ export default function Catalogue({ token, initialPoints = 100, onPointsChange }
     </div>
   );
 }
+ 
