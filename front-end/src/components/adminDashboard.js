@@ -55,19 +55,27 @@ export default function AdminDashboard({ token, onLogout }) {
   const [noteText, setNoteText] = useState("");
   const [updating, setUpdating] = useState({});
 
-  // Sponsors state tab
+  // Sponsors state
   const [activeTab, setActiveTab] = useState("feedback");
   const [sponsors, setSponsors] = useState([]);
   const [sponsorLoading, setSponsorLoading] = useState(false);
   const [sponsorError, setSponsorError] = useState("");
   const [lockingId, setLockingId] = useState(null);
-  const [flaggingId, setFlaggingId] = useState(null); 
+  const [flaggingId, setFlaggingId] = useState(null);
+  const [sponsorWarningId, setSponsorWarningId] = useState(null);
 
-  // Drivers state tab
+  // Drivers state
   const [drivers, setDrivers] = useState([]);
   const [driverLoading, setDriverLoading] = useState(false);
   const [driverError, setDriverError] = useState("");
-  const [driverFlaggingId, setDriverFlaggingId] = useState(null); 
+  const [driverFlaggingId, setDriverFlaggingId] = useState(null);
+  const [driverWarningId, setDriverWarningId] = useState(null);
+
+  // Settings state
+  const [notificationsEnabled, setNotificationsEnabled] = useState(true);
+  const [settingsLoading, setSettingsLoading] = useState(false);
+  const [settingsError, setSettingsError] = useState("");
+  const [settingsToggling, setSettingsToggling] = useState(false);
 
   const fetchFeedback = useCallback(async () => {
     setLoading(true);
@@ -130,7 +138,6 @@ export default function AdminDashboard({ token, onLogout }) {
       const res = await fetch(`${ADMIN_API}/drivers`, {
         headers: { Authorization: `Bearer ${token}` },
       });
-
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "Failed to fetch drivers");
       setDrivers(data.drivers || []);
@@ -144,6 +151,50 @@ export default function AdminDashboard({ token, onLogout }) {
   useEffect(() => {
     if (activeTab === "drivers") fetchDrivers();
   }, [activeTab, fetchDrivers]);
+
+  // Fetch notification setting when settings tab opens
+  const fetchSettings = useCallback(async () => {
+    setSettingsLoading(true);
+    setSettingsError("");
+    try {
+      const res = await fetch(`${ADMIN_API}/settings/notifications`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Failed to fetch settings");
+      setNotificationsEnabled(data.notifications_enabled);
+    } catch (err) {
+      setSettingsError(err?.message || "Unknown error");
+    } finally {
+      setSettingsLoading(false);
+    }
+  }, [token]);
+
+  useEffect(() => {
+    if (activeTab === "settings") fetchSettings();
+  }, [activeTab, fetchSettings]);
+
+  const handleNotificationsToggle = async () => {
+    setSettingsToggling(true);
+    setSettingsError("");
+    try {
+      const res = await fetch(`${ADMIN_API}/settings/notifications`, {
+        method: "PATCH",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({ notifications_enabled: !notificationsEnabled }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Failed to update setting");
+      setNotificationsEnabled(data.notifications_enabled);
+    } catch (err) {
+      setSettingsError(err?.message || "Unknown error");
+    } finally {
+      setSettingsToggling(false);
+    }
+  };
 
   const handleLockToggle = async (sponsorId, currentValue) => {
     setLockingId(sponsorId);
@@ -167,7 +218,6 @@ export default function AdminDashboard({ token, onLogout }) {
     }
   };
 
-  // Sponsor flag handler
   const handleFlagToggle = async (sponsorId, currentValue) => {
     setFlaggingId(sponsorId);
     try {
@@ -189,7 +239,39 @@ export default function AdminDashboard({ token, onLogout }) {
       setFlaggingId(null);
     }
   };
-  // Driver Flag Handler
+
+  const handleSponsorWarn = async (sponsorId, sponsorName) => {
+    const rawReason = window.prompt(`Enter warning reason for sponsor "${sponsorName}":`);
+    if (rawReason === null) return;
+
+    const reason = rawReason.trim();
+    if (!reason) {
+      setSponsorError("Warning reason is required.");
+      return;
+    }
+
+    setSponsorWarningId(sponsorId);
+    setSponsorError("");
+    try {
+      const res = await fetch(`${ADMIN_API}/sponsors/${sponsorId}/warn`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({ reason }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Failed to issue sponsor warning");
+      await fetchSponsors();
+      window.alert("Sponsor warning issued.");
+    } catch (err) {
+      setSponsorError(err?.message || "Unknown error");
+    } finally {
+      setSponsorWarningId(null);
+    }
+  };
+
   const handleDriverFlagToggle = async (driverId, currentValue) => {
     setDriverFlaggingId(driverId);
     try {
@@ -201,7 +283,6 @@ export default function AdminDashboard({ token, onLogout }) {
         },
         body: JSON.stringify({ flagged: !currentValue }),
       });
-
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "Failed to flag driver");
       await fetchDrivers();
@@ -209,6 +290,38 @@ export default function AdminDashboard({ token, onLogout }) {
       setDriverError(err?.message || "Unknown error");
     } finally {
       setDriverFlaggingId(null);
+    }
+  };
+
+  const handleDriverWarn = async (driverId, driverEmail) => {
+    const rawReason = window.prompt(`Enter warning reason for driver "${driverEmail}":`);
+    if (rawReason === null) return;
+
+    const reason = rawReason.trim();
+    if (!reason) {
+      setDriverError("Warning reason is required.");
+      return;
+    }
+
+    setDriverWarningId(driverId);
+    setDriverError("");
+    try {
+      const res = await fetch(`${ADMIN_API}/drivers/${driverId}/warn`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({ reason }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Failed to issue driver warning");
+      await fetchDrivers();
+      window.alert("Driver warning issued.");
+    } catch (err) {
+      setDriverError(err?.message || "Unknown error");
+    } finally {
+      setDriverWarningId(null);
     }
   };
 
@@ -243,7 +356,7 @@ export default function AdminDashboard({ token, onLogout }) {
       <h1 style={{ margin: 0, marginBottom: 4 }}>Admin Dashboard</h1>
 
       <div style={{ display: "flex", gap: 8, marginTop: 16, marginBottom: 24 }}>
-        {["feedback", "sponsors", "drivers"].map((tab) => (
+        {["feedback", "sponsors", "drivers", "settings"].map((tab) => (
           <button
             key={tab}
             type="button"
@@ -259,14 +372,20 @@ export default function AdminDashboard({ token, onLogout }) {
               textTransform: "capitalize",
             }}
           >
-            {tab === "feedback" ? "Feedback" : tab === "sponsors" ? "Sponsor Management" : "Driver Management"}
+            {tab === "feedback"
+              ? "Feedback"
+              : tab === "sponsors"
+              ? "Sponsor Management"
+              : tab === "drivers"
+              ? "Driver Management"
+              : "Settings"}
           </button>
         ))}
       </div>
 
+      {/* ── Feedback tab ── */}
       {activeTab === "feedback" && (
         <>
-          {/* ── Filters ── */}
           <div
             style={{
               display: "flex",
@@ -326,7 +445,6 @@ export default function AdminDashboard({ token, onLogout }) {
 
           {loading && <p style={{ color: "var(--muted)" }}>Loading…</p>}
 
-          {/* ── Feedback table ── */}
           {!loading && feedback.length === 0 && (
             <p style={{ color: "var(--muted)" }}>No feedback found.</p>
           )}
@@ -345,7 +463,6 @@ export default function AdminDashboard({ token, onLogout }) {
                       background: "var(--card)",
                     }}
                   >
-                    {/* Row header */}
                     <div
                       style={{
                         display: "flex",
@@ -407,7 +524,6 @@ export default function AdminDashboard({ token, onLogout }) {
                         )}
                       </div>
 
-                      {/* Quick status buttons */}
                       <div
                         style={{
                           display: "flex",
@@ -464,7 +580,6 @@ export default function AdminDashboard({ token, onLogout }) {
                       </div>
                     </div>
 
-                    {/* Expandable note editor */}
                     {isOpen && (
                       <div
                         style={{
@@ -521,7 +636,6 @@ export default function AdminDashboard({ token, onLogout }) {
             </div>
           )}
 
-          {/* ── Pagination ── */}
           {totalPages > 1 && (
             <div style={{ display: "flex", justifyContent: "center", gap: 8, marginTop: 24 }}>
               <button
@@ -550,6 +664,7 @@ export default function AdminDashboard({ token, onLogout }) {
         </>
       )}
 
+      {/* ── Sponsors tab ── */}
       {activeTab === "sponsors" && (
         <div>
           {sponsorError && (
@@ -587,11 +702,9 @@ export default function AdminDashboard({ token, onLogout }) {
                   alignItems: "center",
                 }}
               >
-                
                 <div>
                   <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
                     <span style={{ fontWeight: 700, fontSize: 15 }}>{s.name}</span>
-                    {/* flagged badge */}
                     {!!s.flagged && (
                       <span
                         style={{
@@ -615,9 +728,26 @@ export default function AdminDashboard({ token, onLogout }) {
                   </div>
                 </div>
 
-                
                 <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-                  {/* flag button */}
+                  <button
+                    type="button"
+                    disabled={sponsorWarningId === s.id}
+                    onClick={() => handleSponsorWarn(s.id, s.name)}
+                    style={{
+                      padding: "7px 16px",
+                      borderRadius: 8,
+                      border: "1px solid #fbbf24",
+                      background: "#fef3c7",
+                      color: "#92400e",
+                      fontWeight: 600,
+                      fontSize: 13,
+                      cursor: sponsorWarningId === s.id ? "not-allowed" : "pointer",
+                      opacity: sponsorWarningId === s.id ? 0.6 : 1,
+                    }}
+                  >
+                    {sponsorWarningId === s.id ? "Saving..." : "⚠️ Warn"}
+                  </button>
+
                   <button
                     type="button"
                     disabled={flaggingId === s.id}
@@ -625,9 +755,7 @@ export default function AdminDashboard({ token, onLogout }) {
                     style={{
                       padding: "7px 16px",
                       borderRadius: 8,
-                      border: !!s.flagged
-                        ? "1px solid #fca5a5"
-                        : "1px solid var(--border, #d1d5db)",
+                      border: !!s.flagged ? "1px solid #fca5a5" : "1px solid var(--border, #d1d5db)",
                       background: !!s.flagged ? "#fee2e2" : "transparent",
                       color: !!s.flagged ? "#b91c1c" : "var(--text, #374151)",
                       fontWeight: 600,
@@ -639,7 +767,6 @@ export default function AdminDashboard({ token, onLogout }) {
                     {flaggingId === s.id ? "Saving..." : !!s.flagged ? "🚩 Unflag" : "🚩 Flag"}
                   </button>
 
-                  {/* Lock button */}
                   <button
                     type="button"
                     disabled={lockingId === s.id}
@@ -663,6 +790,8 @@ export default function AdminDashboard({ token, onLogout }) {
             ))}
         </div>
       )}
+
+      {/* ── Drivers tab ── */}
       {activeTab === "drivers" && (
         <div>
           {driverError && (
@@ -700,11 +829,9 @@ export default function AdminDashboard({ token, onLogout }) {
                   alignItems: "center",
                 }}
               >
-                
                 <div>
                   <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
                     <span style={{ fontWeight: 700, fontSize: 15 }}>{d.email}</span>
-                    {/* flagged badge */}
                     {!!d.flagged && (
                       <span
                         style={{
@@ -724,11 +851,30 @@ export default function AdminDashboard({ token, onLogout }) {
                     )}
                   </div>
                   <div style={{ fontSize: 12, color: "var(--muted)", marginTop: 3 }}>
-                    Sponsor: {d.sponsor_name || "--"} · Status: {d.driver_status}
+                    Sponsor: {d.sponsor_name || "—"} · Status: {d.driver_status}
                   </div>
                 </div>
 
-                  {/* flag button */}
+                <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                  <button
+                    type="button"
+                    disabled={driverWarningId === d.driver_id}
+                    onClick={() => handleDriverWarn(d.driver_id, d.email)}
+                    style={{
+                      padding: "7px 16px",
+                      borderRadius: 8,
+                      border: "1px solid #fbbf24",
+                      background: "#fef3c7",
+                      color: "#92400e",
+                      fontWeight: 600,
+                      fontSize: 13,
+                      cursor: driverWarningId === d.driver_id ? "not-allowed" : "pointer",
+                      opacity: driverWarningId === d.driver_id ? 0.6 : 1,
+                    }}
+                  >
+                    {driverWarningId === d.driver_id ? "Saving..." : "⚠️ Warn"}
+                  </button>
+
                   <button
                     type="button"
                     disabled={driverFlaggingId === d.driver_id}
@@ -736,9 +882,7 @@ export default function AdminDashboard({ token, onLogout }) {
                     style={{
                       padding: "7px 16px",
                       borderRadius: 8,
-                      border: !!d.flagged
-                        ? "1px solid #fca5a5"
-                        : "1px solid var(--border, #d1d5db)",
+                      border: !!d.flagged ? "1px solid #fca5a5" : "1px solid var(--border, #d1d5db)",
                       background: !!d.flagged ? "#fee2e2" : "transparent",
                       color: !!d.flagged ? "#b91c1c" : "var(--text, #374151)",
                       fontWeight: 600,
@@ -750,8 +894,101 @@ export default function AdminDashboard({ token, onLogout }) {
                     {driverFlaggingId === d.driver_id ? "Saving..." : !!d.flagged ? "🚩 Unflag" : "🚩 Flag"}
                   </button>
                 </div>
+              </div>
             ))}
-          </div>
+        </div>
+      )}
+
+      {/* ── Settings tab ── */}
+      {activeTab === "settings" && (
+        <div>
+          <h2 style={{ marginTop: 0, marginBottom: 4 }}>System Settings</h2>
+          <p style={{ color: "var(--muted)", fontSize: 14, marginTop: 0, marginBottom: 24 }}>
+            Global controls that affect all accounts.
+          </p>
+
+          {settingsError && (
+            <div
+              style={{
+                padding: "10px 14px",
+                borderRadius: 8,
+                background: "#fef2f2",
+                color: "#991b1b",
+                marginBottom: 16,
+              }}
+            >
+              {settingsError}
+            </div>
+          )}
+
+          {settingsLoading && <p style={{ color: "var(--muted)" }}>Loading settings...</p>}
+
+          {!settingsLoading && (
+            <div
+              style={{
+                border: `1px solid ${!notificationsEnabled ? "#fca5a5" : "var(--border, #e5e7eb)"}`,
+                borderRadius: 12,
+                padding: 20,
+                background: !notificationsEnabled ? "#fff7f7" : "var(--card)",
+                display: "flex",
+                justifyContent: "space-between",
+                alignItems: "center",
+                gap: 16,
+              }}
+            >
+              <div>
+                <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                  <span style={{ fontWeight: 700, fontSize: 15 }}>
+                    🔔 Driver Notifications
+                  </span>
+                  {!notificationsEnabled && (
+                    <span
+                      style={{
+                        padding: "2px 8px",
+                        borderRadius: 10,
+                        fontSize: 11,
+                        fontWeight: 700,
+                        background: "#fee2e2",
+                        color: "#b91c1c",
+                      }}
+                    >
+                      ⚠️ Muted — Incident Mode
+                    </span>
+                  )}
+                </div>
+                <div style={{ fontSize: 13, color: "var(--muted)", marginTop: 4 }}>
+                  {notificationsEnabled
+                    ? "Drivers can currently see rejection and dropped status alerts on their dashboard."
+                    : "All driver notification banners are suppressed. Re-enable once the incident is resolved."}
+                </div>
+              </div>
+
+              <button
+                type="button"
+                disabled={settingsToggling}
+                onClick={handleNotificationsToggle}
+                style={{
+                  padding: "9px 20px",
+                  borderRadius: 8,
+                  border: "none",
+                  background: notificationsEnabled ? "#ef4444" : "#10b981",
+                  color: "#fff",
+                  fontWeight: 600,
+                  fontSize: 13,
+                  cursor: settingsToggling ? "not-allowed" : "pointer",
+                  opacity: settingsToggling ? 0.6 : 1,
+                  whiteSpace: "nowrap",
+                }}
+              >
+                {settingsToggling
+                  ? "Saving..."
+                  : notificationsEnabled
+                  ? "Disable Notifications"
+                  : "Re-enable Notifications"}
+              </button>
+            </div>
+          )}
+        </div>
       )}
     </div>
   );

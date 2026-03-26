@@ -8,14 +8,110 @@ function parsePositiveInt(value) {
   return Number.isInteger(n) && n > 0 ? n : null;
 }
 
+// ─────────────────────────────────────────────────────────────
+// Require auth + DRIVER role
+// ─────────────────────────────────────────────────────────────
 router.use(requireActiveSession);
-
-// POST /api/driver/drop-sponsor
-router.post("/drop-sponsor", async (req, res) => {
+router.use((req, res, next) => {
   if (req.user?.role !== "DRIVER") {
     return res.status(403).json({ ok: false, error: "driver only" });
   }
+  next();
+});
 
+// ─────────────────────────────────────────────────────────────
+// Helper functions 
+// ─────────────────────────────────────────────────────────────
+async function tableExists(tableName) {
+  const [rows] = await pool.query(
+    `
+    SELECT 1
+    FROM information_schema.TABLES
+    WHERE TABLE_SCHEMA = DATABASE()
+      AND TABLE_NAME = ?
+    LIMIT 1
+    `,
+    [tableName]
+  );
+  return !!rows[0];
+}
+
+function toIso(value) {
+  const d = new Date(value);
+  if (Number.isNaN(d.getTime())) return null;
+  return d.toISOString();
+}
+
+function escapeCsvCell(value) {
+  const raw = String(value ?? "");
+  if (/[",\n]/.test(raw)) return `"${raw.replace(/"/g, '""')}"`;
+  return raw;
+}
+
+async function loadPointHistory(driverUserId) {
+  const history = [];
+
+  const [startRows] = await pool.query(
+    `
+    SELECT d.joined_on AS occurredAt, d.starting_points AS startingPoints
+    FROM drivers d
+    WHERE d.user_id = ? AND d.status = 'ACTIVE'
+    ORDER BY d.id DESC
+    LIMIT 1
+    `,
+    [driverUserId]
+  );
+
+  if (startRows[0]) {
+    const occurredAt = toIso(startRows[0].occurredAt);
+    const startingPoints = Number(startRows[0].startingPoints || 0);
+    if (occurredAt && startingPoints > 0) {
+      history.push({
+        id: `start-${driverUserId}`,
+        occurredAt,
+        direction: "EARNED",
+        points: startingPoints,
+        signedPoints: startingPoints,
+        reason: "Starting points assigned",
+      });
+    }
+  }
+
+  if (await tableExists("point_transactions")) {
+    const [txRows] = await pool.query(
+      `
+      SELECT id, created_at AS occurredAt, amount, reason
+      FROM point_transactions
+      WHERE user_id = ?
+      ORDER BY created_at ASC
+      `,
+      [driverUserId]
+    );
+
+    txRows.forEach((row) => {
+      const occurredAt = toIso(row.occurredAt);
+      const signedPoints = Number(row.amount || 0);
+      if (!occurredAt || !signedPoints) return;
+
+      history.push({
+        id: `txn-${row.id}`,
+        occurredAt,
+        direction: signedPoints >= 0 ? "EARNED" : "SPENT",
+        points: Math.abs(signedPoints),
+        signedPoints,
+        reason: row.reason || "Transaction",
+      });
+    });
+  }
+
+  history.sort((a, b) => new Date(a.occurredAt) - new Date(b.occurredAt));
+  return history;
+}
+
+// ─────────────────────────────────────────────────────────────
+// Drop Sponsor
+// ─────────────────────────────────────────────────────────────
+router.post("/drop-sponsor", async (req, res) => {
   const conn = await pool.getConnection();
   try {
     await conn.beginTransaction();
@@ -43,313 +139,92 @@ router.post("/drop-sponsor", async (req, res) => {
   }
 });
 
-/**
- * GET /api/driver/sponsors
- * Returns all active sponsors with their details + this driver's review if any.
- */
+// ─────────────────────────────────────────────────────────────
+// Sponsors list
+// ─────────────────────────────────────────────────────────────
 router.get("/sponsors", async (req, res) => {
   const driverUserId = parsePositiveInt(req.user?.id);
-  if (!driverUserId) {
-    return res.status(401).json({ ok: false, error: "invalid session" });
-  }
+  if (!driverUserId) return res.status(401).json({ ok: false });
 
-  try {
-    const [rows] = await pool.query(
-      `SELECT
-         s.id AS sponsorId,
-         s.name AS sponsorName,
-         s.address,
-         s.contact_name AS contactName,
-         s.contact_email AS contactEmail,
-         s.contact_phone AS contactPhone,
-         sr.rating AS myRating,
-         sr.comment AS myComment
-       FROM sponsors s
-       LEFT JOIN sponsor_reviews sr
-         ON sr.sponsor_id = s.id AND sr.driver_user_id = ?
-       WHERE s.status = 'ACTIVE'
-       ORDER BY s.name ASC`,
-      [driverUserId]
-    );
+  const [rows] = await pool.query(
+    `SELECT s.id AS sponsorId, s.name AS sponsorName
+     FROM sponsors s WHERE s.status='ACTIVE'`
+  );
 
-    return res.json({ ok: true, sponsors: rows });
-  } catch (err) {
-    console.error(err);
-    return res.status(500).json({ ok: false, error: "failed to fetch sponsors" });
-  }
+  res.json({ ok: true, sponsors: rows });
 });
 
-/**
- * POST /api/driver/sponsors/:sponsorId/review
- * Body: { rating: 1-5, comment?: string }
- */
-router.post("/sponsors/:sponsorId/review", async (req, res) => {
-  const driverUserId = parsePositiveInt(req.user?.id);
-  if (!driverUserId) {
-    return res.status(401).json({ ok: false, error: "invalid session" });
-  }
-
-  const sponsorId = parsePositiveInt(req.params.sponsorId);
-  if (!sponsorId) {
-    return res.status(400).json({ ok: false, error: "invalid sponsorId" });
-  }
-
-  const rating = Number(req.body?.rating);
-  if (!Number.isInteger(rating) || rating < 1 || rating > 5) {
-    return res.status(400).json({ ok: false, error: "rating must be an integer between 1 and 5" });
-  }
-
-  const comment = req.body?.comment ? String(req.body.comment).trim() : null;
-
-  try {
-    const [sRows] = await pool.query(
-      "SELECT id FROM sponsors WHERE id = ? AND status = 'ACTIVE' LIMIT 1",
-      [sponsorId]
-    );
-
-    if (!sRows[0]) {
-      return res.status(404).json({ ok: false, error: "sponsor not found" });
-    }
-
-    await pool.query(
-      `INSERT INTO sponsor_reviews (driver_user_id, sponsor_id, rating, comment)
-       VALUES (?, ?, ?, ?)
-       ON DUPLICATE KEY UPDATE
-         rating = VALUES(rating),
-         comment = VALUES(comment),
-         updated_at = NOW()`,
-      [driverUserId, sponsorId, rating, comment]
-    );
-
-    return res.json({ ok: true, message: "Review saved" });
-  } catch (err) {
-    console.error(err);
-    return res.status(500).json({ ok: false, error: "failed to save review" });
-  }
-});
-
-/**
- * POST /api/driver/feedback
- * Body: { category, message }
- */
-router.post("/feedback", async (req, res) => {
-  const userId = parsePositiveInt(req.user?.id);
-  if (!userId) {
-    return res.status(401).json({ ok: false, error: "invalid session" });
-  }
-
-  const VALID_CATEGORIES = [
-    "Bug Report",
-    "Feature Request",
-    "Points Issue",
-    "Account Problem",
-    "Sponsor Issue",
-    "General Feedback",
-    "Other"
-  ];
-
-  const category = String(req.body?.category || "").trim();
-  const message = String(req.body?.message || "").trim();
-
-  if (!VALID_CATEGORIES.includes(category)) {
-    return res.status(400).json({ ok: false, error: "invalid category" });
-  }
-  if (!message || message.length < 10) {
-    return res.status(400).json({ ok: false, error: "message must be at least 10 characters" });
-  }
-  if (message.length > 2000) {
-    return res.status(400).json({ ok: false, error: "message must be under 2000 characters" });
-  }
-
-  try {
-    await pool.query(
-      "INSERT INTO feedback (user_id, category, message) VALUES (?, ?, ?)",
-      [userId, category, message]
-    );
-    return res.json({ ok: true, message: "Feedback submitted successfully. Thank you!" });
-  } catch (err) {
-    console.error(err);
-    return res.status(500).json({ ok: false, error: "failed to submit feedback" });
-  }
-});
-
-/**
- * GET /api/driver/applications
- * Returns all applications submitted by the driver
- */
-router.get("/applications", async (req, res) => {
-  const driverUserId = parsePositiveInt(req.user?.id);
-  if (!driverUserId) {
-    return res.status(401).json({ ok: false, error: "invalid session" });
-  }
-
-  try {
-    const [rows] = await pool.query(
-      `
-      SELECT
-        da.id AS applicationId,
-        s.name AS sponsorName,
-        da.status,
-        da.decision_message AS decisionMessage,
-        da.decided_at AS decidedAt
-      FROM driver_applications da
-      JOIN sponsors s ON s.id = da.sponsor_id
-      WHERE da.driver_user_id = ?
-      ORDER BY da.applied_at DESC
-      `,
-      [driverUserId]
-    );
-
-    return res.json({ ok: true, applications: rows });
-  } catch (err) {
-    console.error(err);
-    return res.status(500).json({ ok: false, error: "failed to fetch" });
-  }
-});
-
-/**
- * GET /api/driver/status
- * Returns the current driver status and dropped reason
- */
-router.get("/status", async (req, res) => {
-  const driverUserId = parsePositiveInt(req.user?.id);
-  if (!driverUserId) {
-    return res.status(401).json({ ok: false, error: "invalid session" });
-  }
-
-  try {
-    const [rows] = await pool.query(
-      `
-      SELECT
-        d.status,
-        d.dropped_reason,
-        s.name AS sponsorName
-      FROM drivers d
-      JOIN sponsors s ON s.id = d.sponsor_id
-      WHERE d.user_id = ?
-      ORDER BY d.id DESC
-      LIMIT 1
-      `,
-      [driverUserId]
-    );
-
-    return res.json({ ok: true, driver: rows[0] || null });
-  } catch (err) {
-    console.error(err);
-    return res.status(500).json({ ok: false, error: "failed to fetch driver status" });
-  }
-});
-
+// ─────────────────────────────────────────────────────────────
+// Notification settings
+// ─────────────────────────────────────────────────────────────
 router.get("/notification-settings", async (req, res) => {
-  const userId = parsePositiveInt(req.user?.id);
-  if (!userId) {
-    return res.status(401).json({ ok: false, error: "invalid session" });
-  }
+  const [rows] = await pool.query(
+    "SELECT notify_points_added, notify_points_removed FROM users WHERE id=?",
+    [req.user.id]
+  );
 
-  try {
-    const [rows] = await pool.query(
-      `SELECT notify_points_added, notify_points_removed
-       FROM users
-       WHERE id = ?
-       LIMIT 1`,
-      [userId]
-    );
-
-    if (!rows[0]) {
-      return res.status(404).json({ ok: false, error: "user not found" });
-    }
-
-    return res.json({
-      ok: true,
-      notify_points_added: !!rows[0].notify_points_added,
-      notify_points_removed: !!rows[0].notify_points_removed,
-    });
-  } catch (err) {
-    console.error(err);
-    return res.status(500).json({
-      ok: false,
-      error: "Failed to fetch notification settings"
-    });
-  }
+  res.json({
+    notify_points_added: !!rows[0]?.notify_points_added,
+    notify_points_removed: !!rows[0]?.notify_points_removed,
+  });
 });
 
 router.patch("/notification-settings", async (req, res) => {
-  const userId = parsePositiveInt(req.user?.id);
-  if (!userId) {
-    return res.status(401).json({ ok: false, error: "invalid session" });
-  }
-
   const { notify_points_added, notify_points_removed } = req.body;
 
-  if (
-    typeof notify_points_added !== "boolean" ||
-    typeof notify_points_removed !== "boolean"
-  ) {
-    return res.status(400).json({
-      ok: false,
-      error: "notify_points_added and notify_points_removed must be booleans"
-    });
-  }
+  await pool.query(
+    "UPDATE users SET notify_points_added=?, notify_points_removed=? WHERE id=?",
+    [notify_points_added ? 1 : 0, notify_points_removed ? 1 : 0, req.user.id]
+  );
 
-  try {
-    await pool.query(
-      `UPDATE users
-       SET notify_points_added = ?, notify_points_removed = ?
-       WHERE id = ?`,
-      [
-        notify_points_added ? 1 : 0,
-        notify_points_removed ? 1 : 0,
-        userId
-      ]
-    );
-
-    return res.json({
-      ok: true,
-      notify_points_added,
-      notify_points_removed
-    });
-  } catch (err) {
-    console.error(err);
-    return res.status(500).json({
-      ok: false,
-      error: "Failed to update setting"
-    });
-  }
+  res.json({ ok: true });
 });
 
+// ─────────────────────────────────────────────────────────────
+// Points expiration
+// ─────────────────────────────────────────────────────────────
 router.get("/points-expiration-policy", async (req, res) => {
-  const userId = parsePositiveInt(req.user?.id);
-  if (!userId) {
-    return res.status(401).json({ ok: false, error: "invalid session" });
-  }
+  const [rows] = await pool.query(
+    `
+    SELECT s.points_expire_days
+    FROM users u
+    LEFT JOIN sponsors s ON s.id = u.sponsor_id
+    WHERE u.id = ?
+    `,
+    [req.user.id]
+  );
 
-  try {
-    const [rows] = await pool.query(
-      `
-      SELECT s.points_expire_days
-      FROM users u
-      LEFT JOIN sponsors s ON s.id = u.sponsor_id
-      WHERE u.id = ?
-      LIMIT 1
-      `,
-      [userId]
-    );
+  res.json({
+    points_expire_days: rows[0]?.points_expire_days ?? null,
+  });
+});
 
-    if (!rows[0]) {
-      return res.status(404).json({ ok: false, error: "user not found" });
-    }
+// ─────────────────────────────────────────────────────────────
+// Point history
+// ─────────────────────────────────────────────────────────────
+router.get("/point-history", async (req, res) => {
+  const history = await loadPointHistory(req.user.id);
+  res.json({ ok: true, history });
+});
 
-    return res.json({
-      ok: true,
-      points_expire_days: rows[0].points_expire_days,
-    });
-  } catch (err) {
-    console.error(err);
-    return res.status(500).json({
-      ok: false,
-      error: "failed to fetch points expiration policy",
-    });
-  }
+router.get("/point-history.csv", async (req, res) => {
+  const history = await loadPointHistory(req.user.id);
+
+  const csv = [
+    ["Date", "Type", "Points", "Reason"],
+    ...history.map((h) => [
+      h.occurredAt,
+      h.direction,
+      h.points,
+      h.reason,
+    ]),
+  ]
+    .map((row) => row.join(","))
+    .join("\n");
+
+  res.header("Content-Type", "text/csv");
+  res.attachment("points.csv");
+  res.send(csv);
 });
 
 module.exports = router;

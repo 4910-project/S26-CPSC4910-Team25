@@ -215,6 +215,29 @@ export default function SponsorshipApply({ token }) {
         fetchSponsors();
     }, [fetchSponsors]);
 
+    useEffect(() => {
+        if (!token) return;
+        (async () => {
+            try {
+                const res = await fetch("http://localhost:8001/api/driver/applications", {
+                    headers: {Authorization: `Bearer ${token}`},
+                });
+                const appsData = await res.json();
+                console.log("raw applications:", appsData.applications)
+                if (res.ok) {
+                    const pendingIds = (appsData.applications || [])
+                        .filter(a => a.status === "PENDING" || a.status === "pending")
+                        .map(a => Number(a.sponsor_id));
+                    console.log("pendingIds:", pendingIds);
+                    console.log("sponsor sponsorIs:", sponsors.map(s => Number(s.sponsorId)));
+                    setApplied(pendingIds);
+                }
+            } catch (err) {
+                console.error(err);
+            }
+        }) ();
+    }, [token, sponsors]);
+
     if (loading) return <p style={{ color: "var(--text-muted, #6b7280)" }}>Loading sponsors...</p>;
     if (error) return <div className="error-message">{error}</div>;
     if (sponsors.length === 0) return <p style={{ color: "var(--text-muted, #6b7280)" }}>No sponsors available right now.</p>;
@@ -223,7 +246,7 @@ export default function SponsorshipApply({ token }) {
         <>
             <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
                 {sponsors.map((sponsor) => {
-                    const isApplied = applied.includes(sponsor.sponsorId);
+                    const isApplied = applied.includes(Number(sponsor.sponsorId));
                     return (
                         <div
                             key={sponsor.sponsorId}
@@ -288,7 +311,7 @@ export default function SponsorshipApply({ token }) {
                         sponsor={activeSponsor}
                         token={token}
                         onClose={() => {
-                            setApplied((prev) => [...prev, activeSponsor.sponsor_id]);
+                            setApplied((prev) => [...prev, Number(activeSponsor.sponsor_id)]);
                             setActiveSponsor(null);
                         }}
                     />

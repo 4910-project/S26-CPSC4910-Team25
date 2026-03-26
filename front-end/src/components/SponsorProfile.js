@@ -2,6 +2,14 @@ import React, { useState, useEffect, useCallback } from "react";
 import "./SponsorProfile.css";
 
 const SPONSOR_API = "http://localhost:8001/sponsor";
+const ITUNES_API = "https://itunes.apple.com/search";
+const CAT_CATEGORIES = [
+  { label: "Music", media: "music", entity: "song" },
+  { label: "Movies", media: "movie", entity: "movie" },
+  { label: "Apps", media: "software", entity: "software" },
+  { label: "Books", media: "ebook", entity: "ebook" },
+  { label: "TV", media: "tvShow", entity: "tvEpisode" },
+];
 
 export default function SponsorProfile({
   token,
@@ -37,6 +45,15 @@ export default function SponsorProfile({
   const [activeTab, setActiveTab] = useState("drivers");
   const [ratings, setRatings] = useState({});
   const [sortByRating, setSortByRating] = useState(false);
+
+  // Catalog hide/unhide state
+  const [hiddenIds, setHiddenIds] = useState(new Set());
+  const [hiddenProducts, setHiddenProducts] = useState({});
+  const [showHiddenOnly, setShowHiddenOnly] = useState(false);
+  const [catalogResults, setCatalogResults] = useState([]);
+  const [catalogInput, setCatalogInput] = useState("");
+  const [catalogCat, setCatalogCat] = useState(CAT_CATEGORIES[0]);
+  const [catalogLoading, setCatalogLoading] = useState(false);
 
   const fetchProfile = useCallback(async () => {
     try {
@@ -211,8 +228,98 @@ export default function SponsorProfile({
 
   useEffect(() => {
     if (activeTab === "drivers") fetchDrivers();
-    else fetchApplications();
+    else if (activeTab === "applications") fetchApplications();
+    else if (activeTab === "catalog") fetchHiddenIds();
   }, [activeTab, fetchDrivers, fetchApplications]);
+
+  const fetchHiddenIds = async () => {
+    try {
+      const res = await fetch(`${SPONSOR_API}/catalog/hidden`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      const data = await res.json();
+      if (data.ok) {
+        setHiddenIds(new Set(data.hiddenIds || []));
+        const map = {};
+        (data.hiddenProducts || []).forEach((p) => {
+          map[p.product_id] = p;
+        });
+        setHiddenProducts(map);
+      }
+    } catch (err) {
+      setDriverError(err.message);
+    }
+  };
+
+  const fetchCatalog = async (term, category) => {
+    setCatalogLoading(true);
+    setCatalogResults([]);
+    try {
+      const url = `${ITUNES_API}?term=${encodeURIComponent(
+        term || "top hits"
+      )}&media=${category.media}&entity=${category.entity}&limit=24&country=US`;
+      const res = await fetch(url);
+      const data = await res.json();
+      setCatalogResults(data.results || []);
+    } catch {
+      setDriverError("Catalog search failed.");
+    }
+    setCatalogLoading(false);
+  };
+
+  const handleToggleHide = async (item) => {
+    const productId = String(item.trackId || item.collectionId);
+    const isHidden = hiddenIds.has(productId);
+    try {
+      if (isHidden) {
+        await fetch(`${SPONSOR_API}/catalog/unhide`, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${token}`
+          },
+          body: JSON.stringify({ productId }),
+        });
+        setHiddenIds((prev) => {
+          const s = new Set(prev);
+          s.delete(productId);
+          return s;
+        });
+        setHiddenProducts((prev) => {
+          const m = { ...prev };
+          delete m[productId];
+          return m;
+        });
+      } else {
+        await fetch(`${SPONSOR_API}/catalog/hide`, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${token}`
+          },
+          body: JSON.stringify({
+            productId,
+            productName: item.trackName || item.collectionName || "",
+            artistName: item.artistName || "",
+            artworkUrl: item.artworkUrl100 || "",
+            price: item.trackPrice ?? item.price ?? 0,
+          }),
+        });
+        setHiddenIds((prev) => new Set([...prev, productId]));
+        setHiddenProducts((prev) => ({
+          ...prev,
+          [productId]: {
+            product_id: productId,
+            product_name: item.trackName || item.collectionName || "",
+            artist_name: item.artistName || "",
+            artwork_url: item.artworkUrl100 || "",
+          },
+        }));
+      }
+    } catch (err) {
+      setDriverError(err.message);
+    }
+  };
 
   const handleRate = async (driverId, rating) => {
     const newRating = ratings[driverId] === rating ? null : rating;
@@ -289,12 +396,33 @@ export default function SponsorProfile({
     }
   };
 
-  const handleReopen = async (appId) => {
+  const handleApplicationAction = async (appId, action) => {
     setDriverError("");
     setDriverSuccess("");
 
     try {
-      const res = await fetch(`${SPONSOR_API}/applications/${appId}/reopen`, {
+      const res = await fetch(`${SPONSOR_API}/driver-applications/${appId}`, {
+        method: "PATCH",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`
+        },
+        body: JSON.stringify({ action }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || `Failed to ${action} application`);
+      setDriverSuccess(`Application ${action}d successfully`);
+      fetchApplications();
+    } catch (err) {
+      setDriverError(err.message);
+    }
+  };
+
+  const handleReopen = async (appId) => {
+    setDriverError("");
+    setDriverSuccess("");
+    try {
+      const res = await fetch(`${SPONSOR_API}/driver-applications/${appId}/reopen`, {
         method: "POST",
         headers: { Authorization: `Bearer ${token}` }
       });
@@ -319,7 +447,8 @@ export default function SponsorProfile({
       REJECTED: { bg: "#fee2e2", color: "#991b1b" },
     };
 
-    const style = colors[status?.toUpperCase()] || { bg: "#f3f4f6", color: "#374151" };
+    const style =
+      colors[status?.toUpperCase()] || { bg: "#f3f4f6", color: "#374151" };
 
     return (
       <span
@@ -540,7 +669,7 @@ export default function SponsorProfile({
         <h2>Driver Management</h2>
 
         <div style={{ display: "flex", gap: 8, marginBottom: 20 }}>
-          {["drivers", "applications"].map((tab) => (
+          {["drivers", "applications", "catalog"].map((tab) => (
             <button
               key={tab}
               type="button"
@@ -571,8 +700,11 @@ export default function SponsorProfile({
             <p style={{ color: "#6b7280" }}>No drivers found under your sponsor.</p>
           ) : (() => {
             const ratingScore = (d) =>
-              ratings[d.driverId] === "thumbs_up" ? 1 :
-              ratings[d.driverId] === "thumbs_down" ? -1 : 0;
+              ratings[d.driverId] === "thumbs_up"
+                ? 1
+                : ratings[d.driverId] === "thumbs_down"
+                ? -1
+                : 0;
 
             const sortedDrivers = sortByRating
               ? [...drivers].sort((a, b) => ratingScore(b) - ratingScore(a))
@@ -590,7 +722,9 @@ export default function SponsorProfile({
                       gap: 6,
                       padding: "6px 14px",
                       borderRadius: 8,
-                      border: sortByRating ? "2px solid #16a34a" : "1px solid var(--border, #d1d5db)",
+                      border: sortByRating
+                        ? "2px solid #16a34a"
+                        : "1px solid var(--border, #d1d5db)",
                       background: sortByRating ? "#dcfce7" : "var(--card, #fff)",
                       color: sortByRating ? "#15803d" : "inherit",
                       fontWeight: 600,
@@ -630,8 +764,14 @@ export default function SponsorProfile({
                               title="Reliable"
                               onClick={() => handleRate(d.driverId, "thumbs_up")}
                               style={{
-                                background: ratings[d.driverId] === "thumbs_up" ? "#dcfce7" : "var(--card)",
-                                border: ratings[d.driverId] === "thumbs_up" ? "2px solid #16a34a" : "1px solid var(--border)",
+                                background:
+                                  ratings[d.driverId] === "thumbs_up"
+                                    ? "#dcfce7"
+                                    : "var(--card)",
+                                border:
+                                  ratings[d.driverId] === "thumbs_up"
+                                    ? "2px solid #16a34a"
+                                    : "1px solid var(--border)",
                                 borderRadius: 8,
                                 padding: "4px 10px",
                                 cursor: "pointer",
@@ -646,8 +786,14 @@ export default function SponsorProfile({
                               title="Unreliable"
                               onClick={() => handleRate(d.driverId, "thumbs_down")}
                               style={{
-                                background: ratings[d.driverId] === "thumbs_down" ? "#fee2e2" : "var(--card)",
-                                border: ratings[d.driverId] === "thumbs_down" ? "2px solid #dc2626" : "1px solid var(--border)",
+                                background:
+                                  ratings[d.driverId] === "thumbs_down"
+                                    ? "#fee2e2"
+                                    : "var(--card)",
+                                border:
+                                  ratings[d.driverId] === "thumbs_down"
+                                    ? "2px solid #dc2626"
+                                    : "1px solid var(--border)",
                                 borderRadius: 8,
                                 padding: "4px 10px",
                                 cursor: "pointer",
@@ -667,7 +813,10 @@ export default function SponsorProfile({
                                 placeholder="Reason (required)"
                                 value={blockReason[d.driverId] || ""}
                                 onChange={(e) =>
-                                  setBlockReason((prev) => ({ ...prev, [d.driverId]: e.target.value }))
+                                  setBlockReason((prev) => ({
+                                    ...prev,
+                                    [d.driverId]: e.target.value
+                                  }))
                                 }
                                 style={{
                                   padding: "5px 8px",
@@ -746,7 +895,43 @@ export default function SponsorProfile({
                       {new Date(a.applied_at).toLocaleDateString()}
                     </td>
                     <td style={{ padding: "10px 12px" }}>
-                      {a.status === "REJECTED" ? (
+                      {a.status === "PENDING" && (
+                        <div style={{ display: "flex", gap: 6 }}>
+                          <button
+                            type="button"
+                            onClick={() => handleApplicationAction(a.id, "approve")}
+                            style={{
+                              padding: "5px 12px",
+                              borderRadius: 6,
+                              border: "none",
+                              background: "#059669",
+                              color: "#fff",
+                              fontWeight: 600,
+                              cursor: "pointer",
+                              fontSize: 12
+                            }}
+                          >
+                            Approve
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => handleApplicationAction(a.id, "reject")}
+                            style={{
+                              padding: "5px 12px",
+                              borderRadius: 6,
+                              border: "none",
+                              background: "#dc2626",
+                              color: "#fff",
+                              fontWeight: 600,
+                              cursor: "pointer",
+                              fontSize: 12
+                            }}
+                          >
+                            Reject
+                          </button>
+                        </div>
+                      )}
+                      {a.status === "REJECTED" && (
                         <button
                           type="button"
                           onClick={() => handleReopen(a.id)}
@@ -763,7 +948,8 @@ export default function SponsorProfile({
                         >
                           Reopen
                         </button>
-                      ) : (
+                      )}
+                      {a.status === "APPROVED" && (
                         <span style={{ color: "#9ca3af", fontSize: 12 }}>—</span>
                       )}
                     </td>
@@ -772,6 +958,219 @@ export default function SponsorProfile({
               </tbody>
             </table>
           )
+        )}
+
+        {!driverLoading && activeTab === "catalog" && (
+          <div>
+            <div style={{ display: "flex", gap: 8, marginBottom: 14, alignItems: "center", flexWrap: "wrap" }}>
+              <input
+                type="text"
+                placeholder="Search catalog…"
+                value={catalogInput}
+                onChange={(e) => setCatalogInput(e.target.value)}
+                onKeyDown={(e) =>
+                  e.key === "Enter" &&
+                  fetchCatalog(catalogInput.trim() || "top hits", catalogCat)
+                }
+                style={{
+                  padding: "6px 10px",
+                  borderRadius: 6,
+                  border: "1px solid #d1d5db",
+                  fontSize: 13,
+                  minWidth: 200
+                }}
+              />
+              <button
+                type="button"
+                onClick={() => fetchCatalog(catalogInput.trim() || "top hits", catalogCat)}
+                style={{
+                  padding: "6px 14px",
+                  borderRadius: 6,
+                  border: "none",
+                  background: "#4f46e5",
+                  color: "#fff",
+                  fontWeight: 600,
+                  cursor: "pointer",
+                  fontSize: 13
+                }}
+              >
+                Search
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setShowHiddenOnly((v) => !v);
+                  if (!showHiddenOnly) fetchHiddenIds();
+                }}
+                style={{
+                  padding: "6px 14px",
+                  borderRadius: 6,
+                  border: showHiddenOnly ? "2px solid #dc2626" : "1px solid #d1d5db",
+                  background: showHiddenOnly ? "#fee2e2" : "transparent",
+                  color: showHiddenOnly ? "#991b1b" : "inherit",
+                  fontWeight: 600,
+                  cursor: "pointer",
+                  fontSize: 13
+                }}
+              >
+                {showHiddenOnly ? "Showing hidden only" : "Show hidden only"}
+              </button>
+            </div>
+
+            {!showHiddenOnly && (
+              <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 14 }}>
+                {CAT_CATEGORIES.map((c) => (
+                  <button
+                    key={c.media}
+                    type="button"
+                    onClick={() => {
+                      setCatalogCat(c);
+                      fetchCatalog(catalogInput.trim() || "top hits", c);
+                    }}
+                    style={{
+                      padding: "5px 14px",
+                      borderRadius: 20,
+                      border: "none",
+                      fontWeight: 600,
+                      fontSize: 12,
+                      cursor: "pointer",
+                      background: catalogCat.media === c.media ? "#4f46e5" : "#e5e7eb",
+                      color: catalogCat.media === c.media ? "#fff" : "#374151"
+                    }}
+                  >
+                    {c.label}
+                  </button>
+                ))}
+              </div>
+            )}
+
+            {catalogLoading && <p style={{ color: "#6b7280" }}>Loading…</p>}
+
+            {!catalogLoading && showHiddenOnly && (
+              Object.values(hiddenProducts).length === 0 ? (
+                <p style={{ color: "#6b7280" }}>No hidden products yet.</p>
+              ) : (
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(160px, 1fr))", gap: 14 }}>
+                  {Object.values(hiddenProducts).map((p) => (
+                    <div
+                      key={p.product_id}
+                      style={{
+                        border: "1px solid #e5e7eb",
+                        borderRadius: 10,
+                        overflow: "hidden",
+                        background: "var(--card, #fff)",
+                        opacity: 0.75
+                      }}
+                    >
+                      {p.artwork_url && (
+                        <img
+                          src={p.artwork_url}
+                          alt={p.product_name}
+                          style={{ width: "100%", display: "block" }}
+                        />
+                      )}
+                      <div style={{ padding: "8px 10px" }}>
+                        <p style={{ fontSize: 11, color: "#6b7280", margin: "0 0 2px" }}>
+                          {p.artist_name}
+                        </p>
+                        <p style={{ fontSize: 12, fontWeight: 600, margin: "0 0 8px", lineHeight: 1.3 }}>
+                          {p.product_name}
+                        </p>
+                        <button
+                          type="button"
+                          onClick={() =>
+                            handleToggleHide({
+                              trackId: p.product_id,
+                              trackName: p.product_name,
+                              artistName: p.artist_name,
+                              artworkUrl100: p.artwork_url
+                            })
+                          }
+                          style={{
+                            width: "100%",
+                            padding: "5px 0",
+                            borderRadius: 6,
+                            border: "none",
+                            background: "#10b981",
+                            color: "#fff",
+                            fontWeight: 600,
+                            cursor: "pointer",
+                            fontSize: 11
+                          }}
+                        >
+                          Unhide
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )
+            )}
+
+            {!catalogLoading && !showHiddenOnly && catalogResults.length === 0 && (
+              <p style={{ color: "#6b7280" }}>
+                Search for items to hide or unhide them from your drivers.
+              </p>
+            )}
+
+            {!catalogLoading && !showHiddenOnly && catalogResults.length > 0 && (
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(160px, 1fr))", gap: 14 }}>
+                {catalogResults.map((item) => {
+                  const productId = String(item.trackId || item.collectionId);
+                  const isHidden = hiddenIds.has(productId);
+                  const name = item.trackName || item.collectionName || "Unknown";
+                  const img = item.artworkUrl100?.replace("100x100bb", "160x160bb");
+
+                  return (
+                    <div
+                      key={productId}
+                      style={{
+                        border: `1px solid ${isHidden ? "#fca5a5" : "#e5e7eb"}`,
+                        borderRadius: 10,
+                        overflow: "hidden",
+                        background: isHidden ? "#fff5f5" : "var(--card, #fff)",
+                        opacity: isHidden ? 0.7 : 1,
+                        transition: "all 0.15s"
+                      }}
+                    >
+                      {img && (
+                        <img
+                          src={img}
+                          alt={name}
+                          style={{ width: "100%", display: "block" }}
+                        />
+                      )}
+                      <div style={{ padding: "8px 10px" }}>
+                        <p style={{ fontSize: 11, color: "#6b7280", margin: "0 0 2px" }}>
+                          {item.artistName}
+                        </p>
+                        <p style={{ fontSize: 12, fontWeight: 600, margin: "0 0 8px", lineHeight: 1.3 }}>
+                          {name}
+                        </p>
+                        <button
+                          type="button"
+                          onClick={() => handleToggleHide(item)}
+                          style={{
+                            width: "100%",
+                            padding: "5px 0",
+                            borderRadius: 6,
+                            border: "none",
+                            background: isHidden ? "#10b981" : "#ef4444",
+                            color: "#fff",
+                            fontWeight: 600,
+                            cursor: "pointer",
+                            fontSize: 11
+                          }}
+                        >
+                          {isHidden ? "Unhide" : "Hide"}
+                        </button>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
         )}
       </div>
     </div>

@@ -63,8 +63,6 @@ export default function Navbar({ userRole, screen, onNavigate, onLogout, dark, o
           Catalogue
         </button>
 
-        <span className={roleBadgeClass}>{roleLabel}</span>
-
         <button
           type="button"
           className="navbar__icon-btn"

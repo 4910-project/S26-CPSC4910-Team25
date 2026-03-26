@@ -33,6 +33,12 @@ function parseLimit(value, fallback, max = 500) {
   return Math.min(parsed, max);
 }
 
+function parseRequiredReason(value) {
+  const reason = String(value ?? "").trim();
+  if (!reason) return null;
+  return reason.slice(0, 500);
+}
+
 /**
  * Small helper to write audit logs safely.
  * Table: audit_logs(id, created_at, category, actor_user_id, target_user_id, sponsor_id, success, details)
@@ -105,7 +111,7 @@ router.get("/drivers", async (req, res) => {
       `
       SELECT
         d.id AS driver_id,
-        d.user_id,
+        u.id AS user_id,
         u.email,
         u.status AS user_status,
         d.status AS driver_status,
@@ -114,11 +120,11 @@ router.get("/drivers", async (req, res) => {
         d.dropped_reason,
         d.dropped_at,
         d.flagged
-      FROM drivers d
-      JOIN users u ON u.id = d.user_id
+      FROM users u
+      LEFT JOIN drivers d ON d.user_id = u.id
       LEFT JOIN sponsors s ON s.id = d.sponsor_id
-      ${where}
-      ORDER BY d.id DESC
+      WHERE u.role = 'DRIVER'
+      ORDER BY u.id DESC
       LIMIT ${lim}
       `,
       params
@@ -126,7 +132,7 @@ router.get("/drivers", async (req, res) => {
 
     return res.json({ ok: true, drivers: rows });
   } catch (err) {
-    console.error(err);
+    console.error("GET /admin/drivers error:", err); // for debugging
     return res.status(500).json({ ok: false, error: "failed to fetch drivers" });
   }
 });
@@ -155,7 +161,7 @@ router.get("/drivers/:driverId", async (req, res) => {
         d.dropped_reason,
         d.dropped_at,
         d.flagged
-      FROM drivers d
+      FROM users u
       JOIN users u ON u.id = d.user_id
       LEFT JOIN sponsors s ON s.id = d.sponsor_id
       WHERE d.id = ?
@@ -813,5 +819,128 @@ router.patch("/drivers/:driverId/flag", async (req, res) => {
     return res.status(500).json({ ok: false, error: "failed to update driver"});
   }
 });
+
+/**
+ * NEW STORY 10908 — Admin can issue formal warnings to sponsors
+ * POST /admin/sponsors/:sponsorId/warn
+ * Body: { reason: string }
+ */
+router.post("/sponsors/:sponsorId/warn", async (req, res) => {
+  const sponsorId = parsePositiveInt(req.params.sponsorId);
+  if (!sponsorId) {
+    return res.status(400).json({ ok: false, error: "invalid sponsorId " });
+  }
+
+  const reason = parseRequiredReason(req.body?.reason);
+  if (!reason) {
+    return res.status(400).json({ ok: false, error: "warning reason is required" });
+  }
+
+  try {
+    const [result] = await pool.query(
+      "UPDATE sponsors SET flagged = 1 WHERE id = ? LIMIT 1",
+      [sponsorId]
+    );
+
+    if (!result.affectedRows) {
+      return res.status(404).json({ ok: false, error: "sponsor not found" });
+    }
+
+    await writeAudit({
+      category: "SPONSOR_WARNING",
+      actorUserId: req.user.id,
+      sponsorId,
+      success: 1,
+      details: `formal warning issued to sponsorId=${sponsorId}; reason=${reason}`,
+    });
+
+    return res.json({ ok: true, sponsorId, flagged: true, reason });
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({ ok: false, error: "failed to issue sponsor warning" });
+  }
+});
+
+/**
+ * NEW STORY 10909 — Admin can issue formal warnings to drivers
+ * POST /admin/drivers/:driverId/warn
+ * Body: { reason: string }
+ */
+router.post("/drivers/:driverId/warn", async (req, res) => {
+  const driverId = parsePositiveInt(req.params.driverId);
+  if (!driverId) {
+    return res.status(400).json({ ok: false, error: "invalid driverId " });
+  }
+
+  const reason = parseRequiredReason(req.body?.reason);
+  if (!reason) {
+    return res.status(400).json({ ok: false, error: "warning reason is required" });
+  }
+
+  try {
+    const [driverRows] = await pool.query(
+      "SELECT id, user_id FROM drivers WHERE id = ? LIMIT 1",
+      [driverId]
+    );
+    const driver = driverRows[0];
+    if (!driver) {
+      return res.status(404).json({ ok: false, error: "driver not found" });
+    }
+
+    await pool.query("UPDATE drivers SET flagged = 1 WHERE id = ? LIMIT 1", [driverId]);
+
+    await writeAudit({
+      category: "DRIVER_WARNING",
+      actorUserId: req.user.id,
+      targetUserId: driver.user_id,
+      success: 1,
+      details: `formal warning issued to driverId=${driverId}; reason=${reason}`,
+    });
+
+    return res.json({ ok: true, driverId, flagged: true, reason });
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({ ok: false, error: "failed to issue driver warning" });
+  }
+});
+
+/**
+ * NEW STORY 10955 — Admin can disable notifications system-wide
+ * GET /admin/settings/notifications
+ * PATCH /admin/settings/notifications
+ */
+router.get("/settings/notifications", async (req, res) => {
+  const [rows] = await pool.query(
+    `
+    SELECT setting_value 
+    FROM system_settings 
+    WHERE setting_key = 'notifications_enabled'
+    LIMIT 1
+    `
+  );
+  return res.json({ok: true, notifications_enabled: rows[0]?.setting_value === "true"});
+});
+
+router.patch("/settings/notifications", async (req, res) => {
+  const { notifications_enabled } = req.body;
+  if (typeof notifications_enabled !== "boolean")
+    return res.status(400).json({ ok: false, error: "notifications_enabled must be true or false" });
+  
+  await pool.query(
+    `
+    UPDATE system_settings
+    SET setting_value = ?
+    WHERE setting_key = 'notifications_enabled'
+    `,
+    [notifications_enabled ? "true" : "false"]
+  );
+  await writeAudit({
+    category: "NOTIFICATIONS_TOGGLE",
+    actorUserId: req.user.id,
+    success: 1,
+    details: `admin set notifications_enabled=${notifications_enabled}`,
+  });
+  return res.json({ok: true, notifications_enabled});
+})
 
 module.exports = router;

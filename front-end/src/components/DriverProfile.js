@@ -35,7 +35,18 @@ function StarRating({ value, onChange, readOnly = false }) {
   );
 }
 
-export default function DriverProfile({ token, onLogout, onChangePassword, onChangeUsername }) {
+function formatEventDate(isoString) {
+  const d = new Date(isoString);
+  if (Number.isNaN(d.getTime())) return "Unknown date";
+  return d.toLocaleString();
+}
+
+export default function DriverProfile({
+  token,
+  onLogout,
+  onChangePassword,
+  onChangeUsername,
+}) {
   const [activeTab, setActiveTab] = useState("dashboard");
   const [points, setPoints] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -49,8 +60,15 @@ export default function DriverProfile({ token, onLogout, onChangePassword, onCha
   const [notifSaving, setNotifSaving] = useState(false);
   const [notifMessage, setNotifMessage] = useState("");
 
+  // Points expiration state
   const [pointsExpireDays, setPointsExpireDays] = useState(null);
   const [expirationLoading, setExpirationLoading] = useState(false);
+
+  // Point history state
+  const [pointHistory, setPointHistory] = useState([]);
+  const [historyLoading, setHistoryLoading] = useState(false);
+  const [historyError, setHistoryError] = useState("");
+  const [csvDownloading, setCsvDownloading] = useState(false);
 
   // Sponsors tab state
   const [sponsors, setSponsors] = useState([]);
@@ -62,6 +80,10 @@ export default function DriverProfile({ token, onLogout, onChangePassword, onCha
   const [expanded, setExpanded] = useState(null);
   const [applications, setApplications] = useState([]);
   const [driverStatus, setDriverStatus] = useState(null);
+
+  // Banner dismissal state
+  const [dismissedIds, setDismissedIds] = useState([]);
+  const [droppedDismissed, setDroppedDismissed] = useState(false);
 
   // ── Points fetch ──────────────────────────────────────────────────────────
   useEffect(() => {
@@ -147,6 +169,53 @@ export default function DriverProfile({ token, onLogout, onChangePassword, onCha
       setNotifSaving(false);
     }
   }
+
+  // ── Points expiration fetch ──────────────────────────────────────────────
+  useEffect(() => {
+    if (!token) return;
+
+    (async () => {
+      setExpirationLoading(true);
+      try {
+        const res = await fetch(`${API_BASE}/driver/points-expiration-policy`, {
+          headers: { Authorization: `Bearer ${token}` },
+        });
+
+        const data = await res.json();
+
+        if (res.ok) {
+          setPointsExpireDays(data.points_expire_days);
+        }
+      } catch (err) {
+        console.error(err);
+      } finally {
+        setExpirationLoading(false);
+      }
+    })();
+  }, [token]);
+
+  // ── Point history fetch ──────────────────────────────────────────────────
+  useEffect(() => {
+    if (!token) return;
+
+    (async () => {
+      setHistoryLoading(true);
+      setHistoryError("");
+      try {
+        const res = await fetch(`${API_BASE}/driver/point-history`, {
+          headers: { Authorization: `Bearer ${token}` },
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || "Failed to load point history");
+        setPointHistory(Array.isArray(data.history) ? data.history : []);
+      } catch (e) {
+        setPointHistory([]);
+        setHistoryError(e.message || "Failed to load point history");
+      } finally {
+        setHistoryLoading(false);
+      }
+    })();
+  }, [token]);
 
   // ── Drop sponsor ──────────────────────────────────────────────────────────
   async function dropSponsor() {
@@ -241,6 +310,41 @@ export default function DriverProfile({ token, onLogout, onChangePassword, onCha
     }
   };
 
+  const handleDownloadPointHistoryCsv = async () => {
+    if (!token) return;
+    setCsvDownloading(true);
+    try {
+      const res = await fetch(`${API_BASE}/driver/point-history.csv`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (!res.ok) {
+        let message = "Failed to export CSV";
+        try {
+          const data = await res.json();
+          message = data.error || message;
+        } catch {
+          // keep fallback
+        }
+        throw new Error(message);
+      }
+
+      const blob = await res.blob();
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      const dateStamp = new Date().toISOString().slice(0, 10);
+      a.href = url;
+      a.download = `point-history-${dateStamp}.csv`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      window.URL.revokeObjectURL(url);
+    } catch (e) {
+      setHistoryError(e.message || "Failed to export CSV");
+    } finally {
+      setCsvDownloading(false);
+    }
+  };
+
   // Applications fetch
   useEffect(() => {
     if (!token) return;
@@ -275,34 +379,12 @@ export default function DriverProfile({ token, onLogout, onChangePassword, onCha
     })();
   }, [token]);
 
+  const timelineEvents = [...pointHistory].sort(
+    (a, b) => new Date(a.occurredAt) - new Date(b.occurredAt)
+  );
 
-  useEffect(() => {
-  if (!token) return;
-
-  (async () => {
-    setExpirationLoading(true);
-    try {
-      const res = await fetch(`${API_BASE}/driver/points-expiration-policy`, {
-        headers: { Authorization: `Bearer ${token}` },
-      });
-
-      const data = await res.json();
-
-      if (res.ok) {
-        setPointsExpireDays(data.points_expire_days);
-      }
-    } catch (err) {
-      console.error(err);
-    } finally {
-      setExpirationLoading(false);
-    }
-  })();
-}, [token]);
-
-  // ── Render ────────────────────────────────────────────────────────────────
   return (
     <div style={{ maxWidth: 900, margin: "30px auto", padding: 20 }}>
-      {/* Header */}
       <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "center" }}>
         <h1 style={{ margin: 0 }}>Driver Dashboard</h1>
         <div style={{ display: "flex", gap: 10 }}>
@@ -325,7 +407,6 @@ export default function DriverProfile({ token, onLogout, onChangePassword, onCha
         </div>
       </div>
 
-      {/* Tabs */}
       <div style={{ display: "flex", gap: 8, marginTop: 24, marginBottom: 24 }}>
         {["dashboard", "sponsors", "feedback"].map((tab) => (
           <button
@@ -352,37 +433,53 @@ export default function DriverProfile({ token, onLogout, onChangePassword, onCha
         ))}
       </div>
 
-      {/* ── Dashboard tab ── */}
       {activeTab === "dashboard" && (
         <>
-          {applications.filter((a) => a && a.status === "REJECTED").map((a) => (
-            <div
-              key={a.applicationId}
-              style={{
-                background: "#fef2f2",
-                border: "1px solid #fca5a5",
-                borderRadius: 10,
-                padding: "12px 16px",
-                marginBottom: 12,
-                display: "flex",
-                justifyContent: "space-between",
-                alignItems: "center",
-              }}
-            >
-              <div>
-                <div style={{ fontWeight: 700, color: "#991b1b", fontSize: 14 }}>
-                  ❌ Application Rejected - {a.sponsorName}
-                </div>
-                {a.decisionMessage && (
-                  <div style={{ color: "#b91c1c", fontSize: 13, marginTop: 4 }}>
-                    Reason: {a.decisionMessage}
+          {applications
+            .filter((a) => a && a.status === "REJECTED" && !dismissedIds.includes(a.applicationId))
+            .map((a) => (
+              <div
+                key={a.applicationId}
+                style={{
+                  background: "#fef2f2",
+                  border: "1px solid #fca5a5",
+                  borderRadius: 10,
+                  padding: "12px 16px",
+                  marginBottom: 12,
+                  display: "flex",
+                  justifyContent: "space-between",
+                  alignItems: "center",
+                }}
+              >
+                <div>
+                  <div style={{ fontWeight: 700, color: "#991b1b", fontSize: 14 }}>
+                    ❌ Application Rejected - {a.sponsorName}
                   </div>
-                )}
+                  {a.decisionMessage && (
+                    <div style={{ color: "#b91c1c", fontSize: 13, marginTop: 4 }}>
+                      Reason: {a.decisionMessage}
+                    </div>
+                  )}
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setDismissedIds((prev) => [...prev, a.applicationId])}
+                  style={{
+                    background: "none",
+                    border: "none",
+                    fontSize: 18,
+                    cursor: "pointer",
+                    color: "#991b1b",
+                    lineHeight: 1,
+                    padding: "0 4px",
+                  }}
+                >
+                  ×
+                </button>
               </div>
-            </div>
-          ))}
+            ))}
 
-          {driverStatus?.status === "DROPPED" && (
+          {!droppedDismissed && driverStatus?.status === "DROPPED" && (
             <div
               style={{
                 background: "#fef2f2",
@@ -405,6 +502,21 @@ export default function DriverProfile({ token, onLogout, onChangePassword, onCha
                   </div>
                 )}
               </div>
+              <button
+                type="button"
+                onClick={() => setDroppedDismissed(true)}
+                style={{
+                  background: "none",
+                  border: "none",
+                  fontSize: 18,
+                  cursor: "pointer",
+                  color: "#991b1b",
+                  lineHeight: 1,
+                  padding: "0 4px",
+                }}
+              >
+                ×
+              </button>
             </div>
           )}
 
@@ -423,6 +535,24 @@ export default function DriverProfile({ token, onLogout, onChangePassword, onCha
               <div style={{ marginTop: 10, color: "var(--muted)", fontSize: 13 }}>
                 Points reflect your latest approved driving performance events.
               </div>
+              <button
+                type="button"
+                onClick={handleDownloadPointHistoryCsv}
+                disabled={csvDownloading}
+                style={{
+                  marginTop: 12,
+                  padding: "8px 12px",
+                  borderRadius: 8,
+                  border: "1px solid var(--border, #d1d5db)",
+                  background: "var(--card)",
+                  color: "var(--text)",
+                  fontWeight: 600,
+                  cursor: csvDownloading ? "not-allowed" : "pointer",
+                  opacity: csvDownloading ? 0.7 : 1,
+                }}
+              >
+                {csvDownloading ? "Preparing CSV..." : "Download Point History CSV"}
+              </button>
             </div>
 
             <div style={card}>
@@ -442,9 +572,7 @@ export default function DriverProfile({ token, onLogout, onChangePassword, onCha
             </div>
 
             <div style={card}>
-              <div style={{ color: "var(--muted)", fontSize: 12 }}>
-                Notifications
-              </div>
+              <div style={{ color: "var(--muted)", fontSize: 12 }}>Notifications</div>
 
               {notifLoading ? (
                 <div style={{ marginTop: 10, color: "var(--muted)" }}>Loading…</div>
@@ -492,6 +620,85 @@ export default function DriverProfile({ token, onLogout, onChangePassword, onCha
                 </>
               )}
             </div>
+
+            <div style={card}>
+              <div style={{ color: "var(--muted)", fontSize: 12 }}>
+                Points Expiration
+              </div>
+
+              {expirationLoading ? (
+                <div style={{ marginTop: 10, color: "var(--muted)" }}>Loading…</div>
+              ) : pointsExpireDays === null ? (
+                <>
+                  <div style={{ marginTop: 10, fontSize: 18, fontWeight: 700 }}>
+                    Points do not expire
+                  </div>
+                  <div style={{ marginTop: 6, color: "var(--muted)", fontSize: 13 }}>
+                    Your sponsor currently does not set an expiration period for points.
+                  </div>
+                </>
+              ) : (
+                <>
+                  <div style={{ marginTop: 10, fontSize: 18, fontWeight: 700 }}>
+                    {pointsExpireDays} day expiration
+                  </div>
+                  <div style={{ marginTop: 6, color: "var(--muted)", fontSize: 13 }}>
+                    Points expire {pointsExpireDays} days after they are awarded.
+                  </div>
+                </>
+              )}
+            </div>
+          </div>
+
+          <div style={{ ...card, marginTop: 14 }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
+              <div style={{ color: "var(--muted)", fontSize: 12 }}>
+                Point Activity Timeline
+              </div>
+              <div style={{ fontSize: 12, color: "var(--muted)" }}>
+                {timelineEvents.length} event{timelineEvents.length === 1 ? "" : "s"}
+              </div>
+            </div>
+
+            {historyLoading ? (
+              <div style={{ color: "var(--muted)", fontSize: 13 }}>Loading point history…</div>
+            ) : historyError ? (
+              <div style={{ color: "#b91c1c", fontSize: 13 }}>{historyError}</div>
+            ) : timelineEvents.length === 0 ? (
+              <div style={{ color: "var(--muted)", fontSize: 13 }}>
+                No point activity available yet.
+              </div>
+            ) : (
+              <div style={{ display: "grid", gap: 8 }}>
+                {timelineEvents.map((event) => {
+                  const earned = event.direction === "EARNED";
+                  return (
+                    <div
+                      key={event.id}
+                      style={{
+                        display: "grid",
+                        gridTemplateColumns: "170px 90px 1fr",
+                        gap: 10,
+                        alignItems: "center",
+                        padding: "10px 12px",
+                        border: "1px solid var(--border, #e5e7eb)",
+                        borderRadius: 10,
+                        background: earned ? "#ecfdf5" : "#fef2f2",
+                      }}
+                    >
+                      <div style={{ fontSize: 12, color: "var(--muted)" }}>
+                        {formatEventDate(event.occurredAt)}
+                      </div>
+                      <div style={{ fontSize: 14, fontWeight: 700, color: earned ? "#166534" : "#991b1b" }}>
+                        {earned ? "+" : "-"}
+                        {event.points}
+                      </div>
+                      <div style={{ fontSize: 13, color: "var(--text)" }}>{event.reason}</div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
           </div>
 
           <div style={{ ...card, marginTop: 14 }}>
@@ -503,7 +710,6 @@ export default function DriverProfile({ token, onLogout, onChangePassword, onCha
         </>
       )}
 
-      {/* ── Sponsors tab ── */}
       {activeTab === "sponsors" && (
         <div>
           <h2 style={{ marginBottom: 4 }}>Sponsor Reviews</h2>
@@ -700,38 +906,8 @@ export default function DriverProfile({ token, onLogout, onChangePassword, onCha
         </div>
       )}
 
-      <div style={card}>
-  <div style={{ color: "var(--muted)", fontSize: 12 }}>
-    Points Expiration
-  </div>
-
-  {expirationLoading ? (
-    <div style={{ marginTop: 10, color: "var(--muted)" }}>Loading…</div>
-  ) : pointsExpireDays === null ? (
-    <>
-      <div style={{ marginTop: 10, fontSize: 18, fontWeight: 700 }}>
-        Points do not expire
-      </div>
-      <div style={{ marginTop: 6, color: "var(--muted)", fontSize: 13 }}>
-        Your sponsor currently does not set an expiration period for points.
-      </div>
-    </>
-  ) : (
-    <>
-      <div style={{ marginTop: 10, fontSize: 18, fontWeight: 700 }}>
-        {pointsExpireDays} day expiration
-      </div>
-      <div style={{ marginTop: 6, color: "var(--muted)", fontSize: 13 }}>
-        Points expire {pointsExpireDays} days after they are awarded.
-      </div>
-    </>
-  )}
-</div>
-
-      {/* ── Feedback tab ── */}
       {activeTab === "feedback" && <FeedbackForm token={token} />}
 
-      {/* Confirmation Modal */}
       <ConfirmModal
         open={showDropModal}
         title="Drop Sponsor?"
