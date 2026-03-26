@@ -9,7 +9,7 @@ const POINTS_PER_USD = 100;
  
 const CATEGORIES = [
   { label: "Music",   media: "music",    entity: "song"      },
-  { label: "Movies",  media: "movie",    entity: "movieArtist" },
+  { label: "Movies",  media: "movie",    entity: ""           },
   { label: "Apps",    media: "software", entity: "software"  },
   { label: "Books",   media: "ebook",    entity: "ebook"     },
   { label: "TV",      media: "tvShow",   entity: "tvEpisode" },
@@ -71,7 +71,7 @@ export default function Catalogue({ token, initialPoints = 100, onPointsChange }
   const [cat,       setCat]       = useState(CATEGORIES[0]);
   const [items,     setItems]     = useState([]);
   const [loading,   setLoading]   = useState(false);
-  const [confirm,   setConfirm]   = useState(null);
+  const [selectedItem, setSelectedItem] = useState(null);
   const [buying,    setBuying]    = useState(false);
   const [toast,     setToast]     = useState(null);
   const [serverLog, setServerLog] = useState(null);
@@ -116,7 +116,8 @@ export default function Catalogue({ token, initialPoints = 100, onPointsChange }
     setItems([]);
     try 
     {
-      const url = `${ITUNES_API}?term=${encodeURIComponent(term || "top hits")}&media=${category.media}&entity=${category.entity}&limit=24&country=US`;
+      const entityParam = category.entity ? `&entity=${category.entity}` : "";
+      const url = `${ITUNES_API}?term=${encodeURIComponent(term || "top hits")}&media=${category.media}${entityParam}&limit=24&country=US`;
       const res  = await fetch(url);
       const data = await res.json();
       setItems(data.results || []);
@@ -146,9 +147,9 @@ export default function Catalogue({ token, initialPoints = 100, onPointsChange }
   
   async function handleBuy() 
   {
-    const item = confirm;
+    const item = selectedItem;
     const cost = toPoints(item.trackPrice ?? item.price ?? 0);
-    if (cost > points) { showToast("Not enough points!", "error"); setConfirm(null); return; }
+    if (cost > points) { showToast("Not enough points!", "error"); setSelectedItem(null); return; }
  
     setBuying(true);
     try 
@@ -198,7 +199,7 @@ export default function Catalogue({ token, initialPoints = 100, onPointsChange }
       addEntry(entry);
  
       showToast(`Redeemed for ${cost} pts!`, "success");
-      setConfirm(null);
+      setSelectedItem(null);
     } 
     catch 
     {
@@ -214,8 +215,8 @@ export default function Catalogue({ token, initialPoints = 100, onPointsChange }
   }
  
   const confirmCost = useMemo(
-    () => confirm ? toPoints(confirm.trackPrice ?? confirm.price ?? 0) : 0,
-    [confirm]
+    () => selectedItem ? toPoints(selectedItem.trackPrice ?? selectedItem.price ?? 0) : 0,
+    [selectedItem]
   );
  
   return (
@@ -329,7 +330,7 @@ export default function Catalogue({ token, initialPoints = 100, onPointsChange }
                         <button
                           className="cat-buy"
                           disabled={!canAfford}
-                          onClick={() => setConfirm(item)}
+                          onClick={() => setSelectedItem(item)}
                         >
                           {canAfford ? "Redeem" : "Need pts"}
                         </button>
@@ -344,14 +345,14 @@ export default function Catalogue({ token, initialPoints = 100, onPointsChange }
       </div>
  
       {/* Confirm modal */}
-      {confirm && (
-        <div className="cat-overlay" onClick={() => setConfirm(null)}>
+      {selectedItem && (
+        <div className="cat-overlay" onClick={() => setSelectedItem(null)}>
           <div className="cat-modal" onClick={e => e.stopPropagation()}>
-            {bigArt(confirm.artworkUrl100) && (
-              <img src={bigArt(confirm.artworkUrl100)} alt="" />
+            {bigArt(selectedItem.artworkUrl100) && (
+              <img src={bigArt(selectedItem.artworkUrl100)} alt="" />
             )}
-            <h3>{confirm.trackName || confirm.collectionName}</h3>
-            <p>{confirm.artistName}</p>
+            <h3>{selectedItem.trackName || selectedItem.collectionName}</h3>
+            <p>{selectedItem.artistName}</p>
             <div className="cat-modal-row">
               <span>Cost</span>
               <strong style={{ color: "#e53935" }}>−{confirmCost.toLocaleString()} pts</strong>
@@ -363,7 +364,7 @@ export default function Catalogue({ token, initialPoints = 100, onPointsChange }
               </strong>
             </div>
             <div className="cat-modal-actions">
-              <button onClick={() => setConfirm(null)}>Cancel</button>
+              <button onClick={() => setSelectedItem(null)}>Cancel</button>
               <button className="cat-btn" onClick={handleBuy} disabled={buying}>
                 {buying ? "Processing…" : "Confirm"}
               </button>
