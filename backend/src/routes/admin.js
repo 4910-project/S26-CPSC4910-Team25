@@ -943,4 +943,68 @@ router.patch("/settings/notifications", async (req, res) => {
   return res.json({ok: true, notifications_enabled});
 })
 
+/**
+* NEW STORY 10899 — Admin can add notes to sponsor accounts
+* PATCH /admin/sponsors/:sponsorId/note
+*/
+router.patch("/sponsors/:sponsorId/note", async (req, res) => {
+ const sponsorId = parsePositiveInt(req.params.sponsorId);
+ if(!sponsorId) return res.status(400).json({ok: false, error: "invalid sponsorId"});
+ const adminNote = req.body?.adminNote !== undefined ? String(req.body.adminNote).trim() : null;
+
+
+ try {
+   await pool.query(
+     `UPDATE sponsors
+     SET admin_note = ?
+     WHERE id = ?
+     LIMIT 1`,
+     [adminNote, sponsorId]
+   );
+   await writeAudit({
+     category: "SPONSOR_NOTE_UPDATE",
+     actorUserId: req.user.id,
+     sponsorId,
+     success: 1,
+     details: `admin updated note for sponsorId=${sponsorId}`,
+   });
+   return res.json({ ok: true});
+ } catch (err) {
+   console.error(err);
+   return res.status(500).json({ ok: false, error: "failed to save note"});
+ }
+});
+
+/**
+* NEW STORY 10900 — Admin can add notes to driver accounts
+* PATCH /admin/drivers/:driverId/note
+*/
+router.patch("/drivers/:driverId/note", async (req, res) => {
+ const driverId = parsePositiveInt(req.params.driverId);
+ if(!driverId) return res.status(400).json({ok: false, error: "invalid driverId"});
+ const adminNote = req.body?.adminNote !== undefined ? String(req.body.adminNote).trim() : null;
+
+
+ try {
+   await pool.query(
+     `UPDATE drivers
+     SET admin_note = ?
+     WHERE id = ?
+     LIMIT 1`,
+     [adminNote, driverId]
+   );
+   await writeAudit({
+     category: "DRIVER_NOTE_UPDATE",
+     actorUserId: req.user.id,
+     driverId,
+     success: 1,
+     details: `admin updated note for driverId=${driverId}`,
+   });
+   return res.json({ ok: true});
+ } catch (err) {
+   console.error(err);
+   return res.status(500).json({ ok: false, error: "failed to save note"});
+ }
+});
+
 module.exports = router;
