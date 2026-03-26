@@ -9,7 +9,7 @@ const POINTS_PER_USD = 100;
  
 const CATEGORIES = [
   { label: "Music",   media: "music",    entity: "song"      },
-  { label: "Movies",  media: "movie",    entity: ""           },
+  { label: "Movies",  media: "movie",    entity: "movie"      },
   { label: "Apps",    media: "software", entity: "software"  },
   { label: "Books",   media: "ebook",    entity: "ebook"     },
   { label: "TV",      media: "tvShow",   entity: "tvEpisode" },
@@ -116,14 +116,14 @@ export default function Catalogue({ token, initialPoints = 100, onPointsChange }
     setItems([]);
     try 
     {
-      const entityParam = category.entity ? `&entity=${category.entity}` : "";
-      const url = `${ITUNES_API}?term=${encodeURIComponent(term || "top hits")}&media=${category.media}${entityParam}&limit=24&country=US`;
+      const url = `${ITUNES_API}?term=${encodeURIComponent(term || "top hits")}&media=${category.media}&entity=${category.entity}&limit=24&country=US`;
       const res  = await fetch(url);
       const data = await res.json();
       setItems(data.results || []);
     } 
-    catch 
+    catch (err)
     {
+      console.error("Search error:", err);
       showToast("Search failed, try again.", "error");
     }
     setLoading(false);
@@ -158,16 +158,23 @@ export default function Catalogue({ token, initialPoints = 100, onPointsChange }
  
       if (token) 
       {
-        const res = await fetch(`${API_BASE}/points/deduct`, 
+        try
         {
-          method: "POST",
-          headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
-          body: JSON.stringify({ amount: cost, itemName: item.trackName || item.collectionName }),
-        });
-        if (res.ok)
+          const res = await fetch(`${API_BASE}/points/deduct`, 
+          {
+            method: "POST",
+            headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+            body: JSON.stringify({ amount: cost, itemName: item.trackName || item.collectionName }),
+          });
+          if (res.ok)
+          {
+            const d = await res.json();
+            if (d.remainingPoints != null) newPoints = d.remainingPoints;
+          }
+        }
+        catch (err)
         {
-          const d = await res.json();
-          if (d.remainingPoints != null) newPoints = d.remainingPoints;
+          console.warn("Could not reach points server, deducting locally:", err);
         }
       }
  
@@ -380,4 +387,3 @@ export default function Catalogue({ token, initialPoints = 100, onPointsChange }
     </div>
   );
 }
- 
