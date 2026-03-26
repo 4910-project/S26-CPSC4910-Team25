@@ -63,7 +63,7 @@ function usePurchaseLog(serverLog)
   return [log, addEntry];
 }
 
-export default function Catalogue({ token, initialPoints = 100, onPointsChange }) 
+export default function Catalogue({ token, initialPoints = 100, onPointsChange, userRole }) 
 {
   const navigate = useNavigate();
   const [points,    setPoints]    = useState(initialPoints);
@@ -77,7 +77,11 @@ export default function Catalogue({ token, initialPoints = 100, onPointsChange }
   const [serverLog, setServerLog] = useState(null);
   const [log,       addEntry]     = usePurchaseLog(serverLog);
   const [showLog,   setShowLog]   = useState(false);
-  const [hiddenIds, setHiddenIds] = useState(new Set());
+  const [hiddenIds, setHiddenIds] = useState(new Set());       // sponsor-hidden
+  const [driverHiddenIds, setDriverHiddenIds] = useState(new Set()); // driver personal hidden
+  const [cartIds, setCartIds] = useState(new Set());           // items already in cart
+  const [addingToCart, setAddingToCart] = useState(null);      // productId being added
+  const [hidingId, setHidingId] = useState(null);              // productId being hidden/unhidden
 
   useEffect(() => { setPoints(initialPoints); }, [initialPoints]);
 
@@ -106,6 +110,26 @@ export default function Catalogue({ token, initialPoints = 100, onPointsChange }
     fetch(`${DRIVER_API}/driver/catalog/hidden`, { headers: { Authorization: `Bearer ${token}` } })
       .then(r => r.ok ? r.json() : null)
       .then(d => { if (d?.hiddenIds) setHiddenIds(new Set(d.hiddenIds.map(String))); })
+      .catch(() => {});
+  }, [token]);
+
+  // Fetch driver's own personally hidden products
+  useEffect(() =>
+  {
+    if (!token) return;
+    fetch(`${DRIVER_API}/driver/my-hidden`, { headers: { Authorization: `Bearer ${token}` } })
+      .then(r => r.ok ? r.json() : null)
+      .then(d => { if (d?.hiddenIds) setDriverHiddenIds(new Set(d.hiddenIds.map(String))); })
+      .catch(() => {});
+  }, [token]);
+
+  // Fetch cart to know which items are already in cart
+  useEffect(() =>
+  {
+    if (!token) return;
+    fetch(`${DRIVER_API}/driver/cart`, { headers: { Authorization: `Bearer ${token}` } })
+      .then(r => r.ok ? r.json() : null)
+      .then(d => { if (d?.cartItems) setCartIds(new Set(d.cartItems.map(i => String(i.product_id)))); })
       .catch(() => {});
   }, [token]);
 
@@ -205,7 +229,86 @@ export default function Catalogue({ token, initialPoints = 100, onPointsChange }
     setBuying(false);
   }
 
-  function showToast(msg, type = "success") 
+  async function handleAddToCart(item)
+  {
+    const productId = String(item.trackId || item.collectionId);
+    const cost = toPoints(item.trackPrice ?? item.price ?? 0);
+    setAddingToCart(productId);
+    try
+    {
+      const res = await fetch(`${DRIVER_API}/driver/cart`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+        body: JSON.stringify({
+          productId,
+          productName:  item.trackName || item.collectionName || "Unknown",
+          artistName:   item.artistName || "",
+          artworkUrl:   bigArt(item.artworkUrl100) || "",
+          price:        parseFloat(item.trackPrice ?? item.price ?? 0) || 0,
+          pointsCost:   cost,
+          mediaType:    item.kind || cat.label,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Failed to add to cart");
+      setCartIds(prev => new Set([...prev, productId]));
+      showToast("Added to cart!", "success");
+    }
+    catch
+    {
+      showToast("Could not add to cart.", "error");
+    }
+    setAddingToCart(null);
+  }
+
+  async function handleToggleHide(item)
+  {
+    const productId = String(item.trackId || item.collectionId);
+    const isHidden  = driverHiddenIds.has(productId);
+    setHidingId(productId);
+    try
+    {
+      if (isHidden)
+      {
+        // Unhide
+        const res = await fetch(`${DRIVER_API}/driver/my-hidden/${encodeURIComponent(productId)}`,
+        {
+          method: "DELETE",
+          headers: { Authorization: `Bearer ${token}` },
+        });
+        if (!res.ok) throw new Error("Failed to unhide");
+        setDriverHiddenIds(prev => { const next = new Set(prev); next.delete(productId); return next; });
+        showToast("Product unhidden.", "success");
+      }
+      else
+      {
+        // Hide
+        const res = await fetch(`${DRIVER_API}/driver/my-hidden`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+          body: JSON.stringify({
+            productId,
+            productName: item.trackName || item.collectionName || "Unknown",
+            artistName:  item.artistName || "",
+            artworkUrl:  bigArt(item.artworkUrl100) || "",
+            price:       parseFloat(item.trackPrice ?? item.price ?? 0) || 0,
+          }),
+        });
+        if (!res.ok) throw new Error("Failed to hide");
+        setDriverHiddenIds(prev => new Set([...prev, productId]));
+        showToast("Product hidden from your catalogue.", "success");
+      }
+    }
+    catch
+    {
+      showToast("Could not update hidden status.", "error");
+    }
+    setHidingId(null);
+  }
+
+  function showToast(msg, type = "success")
   {
     setToast({ msg, type });
     setTimeout(() => setToast(null), 2800);
@@ -307,12 +410,19 @@ export default function Catalogue({ token, initialPoints = 100, onPointsChange }
             {loading && <div className="cat-empty">Loading…</div>}
             {!loading && items.length === 0 && <div className="cat-empty">No results found.</div>}
             <div className="cat-grid">
-              {items.filter(item => !hiddenIds.has(String(item.trackId || item.collectionId))).map(item => {
+              {items.filter(item => {
+                const id = String(item.trackId || item.collectionId);
+                return !hiddenIds.has(id) && !driverHiddenIds.has(id);
+              }).map(item => {
                 const cost      = toPoints(item.trackPrice ?? item.price ?? 0);
                 const canAfford = points >= cost;
                 const name      = item.trackName || item.collectionName || "Unknown";
                 const img       = bigArt(item.artworkUrl100);
                 const isFree    = !parseFloat(item.trackPrice ?? item.price ?? 0);
+                const productId = String(item.trackId || item.collectionId);
+                const inCart    = cartIds.has(productId);
+                const isAdding  = addingToCart === productId;
+                const isHiding  = hidingId === productId;
                 return (
                   <div key={item.trackId || item.collectionId} className="cat-card" style={{ opacity: canAfford ? 1 : 0.5 }}>
                     {img && <img src={img} alt={name} />}
@@ -332,6 +442,46 @@ export default function Catalogue({ token, initialPoints = 100, onPointsChange }
                           {canAfford ? "Redeem" : "Need pts"}
                         </button>
                       </div>
+                      {/* Cart + Hide row — drivers only */}
+                      {userRole === "DRIVER" && (
+                        <div style={{ display: "flex", gap: 6, marginTop: 8 }}>
+                        <button
+                          disabled={isAdding || inCart}
+                          onClick={() => handleAddToCart(item)}
+                          style={{
+                            flex: 1,
+                            padding: "5px 0",
+                            borderRadius: 6,
+                            border: "1px solid #c4b5fd",
+                            background: inCart ? "#ede9fe" : "#f5f3ff",
+                            color: "#4f46e5",
+                            fontWeight: 600,
+                            fontSize: 12,
+                            cursor: isAdding || inCart ? "default" : "pointer",
+                            opacity: isAdding ? 0.6 : 1,
+                          }}
+                        >
+                          {isAdding ? "Adding…" : inCart ? "✓ In Cart" : "🛒 Add to Cart"}
+                        </button>
+                        <button
+                          disabled={isHiding}
+                          onClick={() => handleToggleHide(item)}
+                          style={{
+                            padding: "5px 10px",
+                            borderRadius: 6,
+                            border: "1px solid #d1d5db",
+                            background: "transparent",
+                            color: "var(--muted)",
+                            fontSize: 12,
+                            cursor: isHiding ? "not-allowed" : "pointer",
+                            opacity: isHiding ? 0.6 : 1,
+                          }}
+                          title="Hide this product from your catalogue"
+                        >
+                          {isHiding ? "…" : "🚫 Hide"}
+                        </button>
+                      </div>
+                      )}
                     </div>
                   </div>
                 );

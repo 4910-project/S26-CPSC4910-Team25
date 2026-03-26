@@ -488,4 +488,207 @@ router.get("/driver/catalog/hidden", async (req, res) => {
   }
 });
 
+// ─────────────────────────────────────────────────────────────────────────────
+// CART ROUTES
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * GET /api/driver/cart
+ * Returns all items in the driver's cart.
+ */
+router.get("/driver/cart", async (req, res) => {
+  const userId = parsePositiveInt(req.user?.id);
+  if (!userId) return res.status(401).json({ ok: false, error: "invalid session" });
+
+  try {
+    const [rows] = await pool.query(
+      `SELECT product_id, product_name, artist_name, artwork_url, price, points_cost, media_type, added_at
+       FROM driver_cart WHERE driver_user_id = ? ORDER BY added_at DESC`,
+      [userId]
+    );
+    return res.json({ ok: true, cartItems: rows });
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({ ok: false, error: "failed to fetch cart" });
+  }
+});
+
+/**
+ * POST /api/driver/cart
+ * Body: { productId, productName, artistName, artworkUrl, price, pointsCost, mediaType }
+ * Adds a product to the driver's cart.
+ */
+router.post("/driver/cart", async (req, res) => {
+  const userId = parsePositiveInt(req.user?.id);
+  if (!userId) return res.status(401).json({ ok: false, error: "invalid session" });
+
+  const { productId, productName, artistName, artworkUrl, price, pointsCost, mediaType } = req.body || {};
+  if (!productId) return res.status(400).json({ ok: false, error: "productId is required" });
+
+  try {
+    await pool.query(
+      `INSERT INTO driver_cart (driver_user_id, product_id, product_name, artist_name, artwork_url, price, points_cost, media_type)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+       ON DUPLICATE KEY UPDATE
+         product_name = VALUES(product_name),
+         artist_name  = VALUES(artist_name),
+         artwork_url  = VALUES(artwork_url),
+         price        = VALUES(price),
+         points_cost  = VALUES(points_cost),
+         media_type   = VALUES(media_type)`,
+      [userId, String(productId), productName || null, artistName || null,
+       artworkUrl || null, price || null, pointsCost || null, mediaType || null]
+    );
+    return res.json({ ok: true, message: "Item added to cart" });
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({ ok: false, error: "failed to add item to cart" });
+  }
+});
+
+/**
+ * DELETE /api/driver/cart/:productId
+ * Removes a specific product from the driver's cart.
+ */
+router.delete("/driver/cart/:productId", async (req, res) => {
+  const userId = parsePositiveInt(req.user?.id);
+  if (!userId) return res.status(401).json({ ok: false, error: "invalid session" });
+
+  const productId = req.params.productId;
+  if (!productId) return res.status(400).json({ ok: false, error: "productId is required" });
+
+  try {
+    await pool.query(
+      "DELETE FROM driver_cart WHERE driver_user_id = ? AND product_id = ?",
+      [userId, productId]
+    );
+    return res.json({ ok: true, message: "Item removed from cart" });
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({ ok: false, error: "failed to remove item from cart" });
+  }
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// DO NOT DISTURB (DND) PREFERENCE ROUTES
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * GET /api/driver/preferences
+ * Returns the driver's personal preferences (dnd_enabled, etc.)
+ */
+router.get("/driver/preferences", async (req, res) => {
+  const userId = parsePositiveInt(req.user?.id);
+  if (!userId) return res.status(401).json({ ok: false, error: "invalid session" });
+
+  try {
+    const [rows] = await pool.query(
+      "SELECT dnd_enabled FROM driver_preferences WHERE driver_user_id = ? LIMIT 1",
+      [userId]
+    );
+    return res.json({ ok: true, dnd_enabled: rows[0] ? !!rows[0].dnd_enabled : false });
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({ ok: false, error: "failed to fetch preferences" });
+  }
+});
+
+/**
+ * POST /api/driver/preferences/dnd
+ * Body: { enabled: true | false }
+ * Toggles Do Not Disturb for this driver.
+ */
+router.post("/driver/preferences/dnd", async (req, res) => {
+  const userId = parsePositiveInt(req.user?.id);
+  if (!userId) return res.status(401).json({ ok: false, error: "invalid session" });
+
+  const enabled = req.body?.enabled === true || req.body?.enabled === "true";
+
+  try {
+    await pool.query(
+      `INSERT INTO driver_preferences (driver_user_id, dnd_enabled)
+       VALUES (?, ?)
+       ON DUPLICATE KEY UPDATE dnd_enabled = VALUES(dnd_enabled)`,
+      [userId, enabled ? 1 : 0]
+    );
+    return res.json({ ok: true, dnd_enabled: enabled });
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({ ok: false, error: "failed to update DND preference" });
+  }
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// DRIVER PERSONAL HIDDEN PRODUCTS ROUTES
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * GET /api/driver/my-hidden
+ * Returns the list of product IDs the driver has personally hidden.
+ */
+router.get("/driver/my-hidden", async (req, res) => {
+  const userId = parsePositiveInt(req.user?.id);
+  if (!userId) return res.status(401).json({ ok: false, error: "invalid session" });
+
+  try {
+    const [rows] = await pool.query(
+      "SELECT product_id, product_name, artist_name, artwork_url, price FROM driver_hidden_products WHERE driver_user_id = ?",
+      [userId]
+    );
+    return res.json({ ok: true, hiddenIds: rows.map(r => r.product_id), hiddenProducts: rows });
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({ ok: false, error: "failed to fetch hidden products" });
+  }
+});
+
+/**
+ * POST /api/driver/my-hidden
+ * Body: { productId, productName, artistName, artworkUrl, price }
+ * Hides a product for this driver personally.
+ */
+router.post("/driver/my-hidden", async (req, res) => {
+  const userId = parsePositiveInt(req.user?.id);
+  if (!userId) return res.status(401).json({ ok: false, error: "invalid session" });
+
+  const { productId, productName, artistName, artworkUrl, price } = req.body || {};
+  if (!productId) return res.status(400).json({ ok: false, error: "productId is required" });
+
+  try {
+    await pool.query(
+      `INSERT INTO driver_hidden_products (driver_user_id, product_id, product_name, artist_name, artwork_url, price)
+       VALUES (?, ?, ?, ?, ?, ?)
+       ON DUPLICATE KEY UPDATE product_name = VALUES(product_name)`,
+      [userId, String(productId), productName || null, artistName || null, artworkUrl || null, price || null]
+    );
+    return res.json({ ok: true, message: "Product hidden" });
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({ ok: false, error: "failed to hide product" });
+  }
+});
+
+/**
+ * DELETE /api/driver/my-hidden/:productId
+ * Unhides a product for this driver.
+ */
+router.delete("/driver/my-hidden/:productId", async (req, res) => {
+  const userId = parsePositiveInt(req.user?.id);
+  if (!userId) return res.status(401).json({ ok: false, error: "invalid session" });
+
+  const productId = req.params.productId;
+  if (!productId) return res.status(400).json({ ok: false, error: "productId is required" });
+
+  try {
+    await pool.query(
+      "DELETE FROM driver_hidden_products WHERE driver_user_id = ? AND product_id = ?",
+      [userId, productId]
+    );
+    return res.json({ ok: true, message: "Product unhidden" });
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({ ok: false, error: "failed to unhide product" });
+  }
+});
+
 module.exports = router;

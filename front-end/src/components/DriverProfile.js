@@ -54,16 +54,29 @@ export default function DriverProfile({ token, onLogout, onChangePassword, onCha
   const [sponsorLoading, setSponsorLoading] = useState(false);
   const [sponsorError, setSponsorError] = useState("");
   const [sponsorSuccess, setSponsorSuccess] = useState("");
-  const [reviewForm, setReviewForm] = useState({}); // { [sponsorId]: { rating, comment } }
-  const [submitting, setSubmitting] = useState({}); // { [sponsorId]: bool }
-  const [expanded, setExpanded] = useState(null);   // which sponsor's review form is open
-  const [applications, setApplications] = useState([null]); // applications state
+  const [reviewForm, setReviewForm] = useState({});
+  const [submitting, setSubmitting] = useState({});
+  const [expanded, setExpanded] = useState(null);
+  const [applications, setApplications] = useState([null]);
   const [driverStatus, setDriverStatus] = useState(null);
 
-  // Notifications 
-  const [notificationsEnabled, setNotificationsEnabled] = useState(true);
+  // Notifications / DND
+  const [dndEnabled, setDndEnabled] = useState(false);
+  const [dndSaving, setDndSaving] = useState(false);
   const [dismissedIds, setDismissedIds] = useState([]);
   const [droppedDismissed, setDroppedDismissed] = useState(false);
+
+  // Cart state
+  const [cartItems, setCartItems] = useState([]);
+  const [cartLoading, setCartLoading] = useState(false);
+  const [cartError, setCartError] = useState("");
+  const [cartSuccess, setCartSuccess] = useState("");
+  const [removingIds, setRemovingIds] = useState(new Set());
+
+  // Hidden products state
+  const [hiddenProducts, setHiddenProducts] = useState([]);
+  const [hiddenLoading, setHiddenLoading] = useState(false);
+  const [unhidingIds, setUnhidingIds] = useState(new Set());
 
   // ── Points fetch ──────────────────────────────────────────────────────────
   useEffect(() => {
@@ -87,7 +100,7 @@ export default function DriverProfile({ token, onLogout, onChangePassword, onCha
     })();
   }, [token]);
 
-  // -- Point history fetch (timeline + csv source) ----
+  // -- Point history fetch ----
   useEffect(() => {
     if (!token) return;
     (async () => {
@@ -109,20 +122,20 @@ export default function DriverProfile({ token, onLogout, onChangePassword, onCha
     })();
   }, [token]);
 
-  // -- Notifications Setting Fetch ----
+  // -- DND preference fetch ----
   useEffect(() => {
     if (!token) return;
     (async () => {
       try {
-        const res = await fetch(`${API_BASE}/settings/notifications`, {
-          headers: {Authorization: `Bearer ${token}`},
+        const res = await fetch(`${API_BASE}/driver/preferences`, {
+          headers: { Authorization: `Bearer ${token}` },
         });
         const data = await res.json();
-        if (res.ok) setNotificationsEnabled(data.notifications_enabled);
-      } catch(err) {
+        if (res.ok) setDndEnabled(!!data.dnd_enabled);
+      } catch (err) {
         console.error(err);
       }
-    }) ();
+    })();
   }, [token]);
 
   // ── Sponsors fetch ────────────────────────────────────────────────────────
@@ -137,7 +150,6 @@ export default function DriverProfile({ token, onLogout, onChangePassword, onCha
       if (!res.ok) throw new Error(data.error || "Failed to fetch sponsors");
       const list = data.sponsors || [];
       setSponsors(list);
-      // Seed review form with existing ratings
       const seed = {};
       list.forEach((s) => {
         seed[s.sponsorId] = {
@@ -156,6 +168,71 @@ export default function DriverProfile({ token, onLogout, onChangePassword, onCha
   useEffect(() => {
     if (activeTab === "sponsors") fetchSponsors();
   }, [activeTab, fetchSponsors]);
+
+  // ── Cart fetch ────────────────────────────────────────────────────────────
+  const fetchCart = useCallback(async () => {
+    if (!token) return;
+    setCartLoading(true);
+    setCartError("");
+    try {
+      const res = await fetch(`${API_BASE}/driver/cart`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Failed to fetch cart");
+      setCartItems(data.cartItems || []);
+    } catch (err) {
+      setCartError(err.message);
+    } finally {
+      setCartLoading(false);
+    }
+  }, [token]);
+
+  useEffect(() => {
+    if (activeTab === "cart") fetchCart();
+  }, [activeTab, fetchCart]);
+
+  // ── Hidden products fetch (loads when settings tab opens) ─────────────────
+  const fetchHiddenProducts = useCallback(async () => {
+    if (!token) return;
+    setHiddenLoading(true);
+    try {
+      const res = await fetch(`${API_BASE}/driver/my-hidden`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      const data = await res.json();
+      if (res.ok) setHiddenProducts(data.hiddenProducts || []);
+    } catch (err) {
+      console.error(err);
+    } finally {
+      setHiddenLoading(false);
+    }
+  }, [token]);
+
+  useEffect(() => {
+    if (activeTab === "settings") fetchHiddenProducts();
+  }, [activeTab, fetchHiddenProducts]);
+
+  // ── Unhide a product ──────────────────────────────────────────────────────
+  const handleUnhide = async (productId) => {
+    setUnhidingIds((prev) => new Set([...prev, productId]));
+    try {
+      const res = await fetch(`${API_BASE}/driver/my-hidden/${encodeURIComponent(productId)}`, {
+        method: "DELETE",
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (!res.ok) throw new Error("Failed to unhide");
+      setHiddenProducts((prev) => prev.filter((p) => p.product_id !== productId));
+    } catch (err) {
+      console.error(err);
+    } finally {
+      setUnhidingIds((prev) => {
+        const next = new Set(prev);
+        next.delete(productId);
+        return next;
+      });
+    }
+  };
 
   const handleReviewSubmit = async (sponsorId) => {
     const form = reviewForm[sponsorId] || {};
@@ -197,7 +274,7 @@ export default function DriverProfile({ token, onLogout, onChangePassword, onCha
           const data = await res.json();
           message = data.error || message;
         } catch {
-          // keep default fallback message
+          // keep default
         }
         throw new Error(message);
       }
@@ -224,15 +301,14 @@ export default function DriverProfile({ token, onLogout, onChangePassword, onCha
     (async () => {
       try {
         const res = await fetch(`${API_BASE}/driver/applications`, {
-          headers: { Authorization: `Bearer ${token}`},
+          headers: { Authorization: `Bearer ${token}` },
         });
         const data = await res.json();
-        console.log("applications response:", data); // debugging purposes
         if (res.ok) setApplications(data.applications || []);
-      } catch(err) {
+      } catch (err) {
         console.error(err);
       }
-    }) ();
+    })();
   }, [token]);
 
   // Driver status fetch
@@ -241,21 +317,70 @@ export default function DriverProfile({ token, onLogout, onChangePassword, onCha
     (async () => {
       try {
         const res = await fetch(`${API_BASE}/driver/status`, {
-          headers: {Authorization: `Bearer ${token}`},
+          headers: { Authorization: `Bearer ${token}` },
         });
         const data = await res.json();
         if (res.ok) setDriverStatus(data.driver);
-        } catch(err) {
-          console.error(err);
-        }
-      }) ();
-    }, [token]);
-  
+      } catch (err) {
+        console.error(err);
+      }
+    })();
+  }, [token]);
 
+  // ── DND toggle ────────────────────────────────────────────────────────────
+  const handleDndToggle = async () => {
+    setDndSaving(true);
+    const newVal = !dndEnabled;
+    try {
+      const res = await fetch(`${API_BASE}/driver/preferences/dnd`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ enabled: newVal }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Failed to update DND");
+      setDndEnabled(newVal);
+    } catch (err) {
+      console.error(err);
+    } finally {
+      setDndSaving(false);
+    }
+  };
+
+  // ── Remove from cart ──────────────────────────────────────────────────────
+  const handleRemoveFromCart = async (productId) => {
+    setRemovingIds((prev) => new Set([...prev, productId]));
+    setCartError("");
+    setCartSuccess("");
+    try {
+      const res = await fetch(`${API_BASE}/driver/cart/${encodeURIComponent(productId)}`, {
+        method: "DELETE",
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Failed to remove item");
+      setCartItems((prev) => prev.filter((item) => item.product_id !== productId));
+      setCartSuccess("Item removed from cart.");
+      setTimeout(() => setCartSuccess(""), 3000);
+    } catch (err) {
+      setCartError(err.message);
+    } finally {
+      setRemovingIds((prev) => {
+        const next = new Set(prev);
+        next.delete(productId);
+        return next;
+      });
+    }
+  };
 
   const timelineEvents = [...pointHistory].sort(
     (a, b) => new Date(a.occurredAt) - new Date(b.occurredAt)
   );
+
+  const cartTotal = cartItems.reduce((sum, item) => sum + (item.points_cost || 0), 0);
+
+  // Notifications are suppressed when DND is on
+  const notificationsEnabled = !dndEnabled;
 
   // ── Render ────────────────────────────────────────────────────────────────
   return (
@@ -270,24 +395,29 @@ export default function DriverProfile({ token, onLogout, onChangePassword, onCha
       </div>
 
       {/* Tabs */}
-      <div style={{ display: "flex", gap: 8, marginTop: 24, marginBottom: 24 }}>
-        {["dashboard", "sponsors", "feedback"].map((tab) => (
+      <div style={{ display: "flex", gap: 8, marginTop: 24, marginBottom: 24, flexWrap: "wrap" }}>
+        {[
+          { key: "dashboard",  label: "Dashboard" },
+          { key: "cart",       label: `🛒 Cart${cartItems.length > 0 ? ` (${cartItems.length})` : ""}` },
+          { key: "sponsors",   label: "Sponsor Reviews" },
+          { key: "settings",   label: "⚙️ Settings" },
+          { key: "feedback",   label: "Help & Feedback" },
+        ].map(({ key, label }) => (
           <button
-            key={tab}
+            key={key}
             type="button"
-            onClick={() => setActiveTab(tab)}
+            onClick={() => setActiveTab(key)}
             style={{
               padding: "8px 18px",
               borderRadius: 8,
               border: "1px solid var(--border, #d1d5db)",
-              background: activeTab === tab ? "#4f46e5" : "transparent",
-              color: activeTab === tab ? "#fff" : "inherit",
+              background: activeTab === key ? "#4f46e5" : "transparent",
+              color: activeTab === key ? "#fff" : "inherit",
               fontWeight: 600,
               cursor: "pointer",
-              textTransform: "capitalize",
             }}
           >
-            {tab === "dashboard" ? "Dashboard" : tab === "sponsors" ? "Sponsor Reviews" : "Help & Feedback"}
+            {label}
           </button>
         ))}
       </div>
@@ -295,7 +425,7 @@ export default function DriverProfile({ token, onLogout, onChangePassword, onCha
       {/* ── Dashboard tab ── */}
       {activeTab === "dashboard" && (
         <>
-          {/* -- Notification Banners */}
+          {/* -- Notification Banners (suppressed when DND is on) */}
           {notificationsEnabled && (
             <>
               {applications
@@ -312,11 +442,11 @@ export default function DriverProfile({ token, onLogout, onChangePassword, onCha
                   alignItems: "center",
                 }}>
                   <div>
-                    <div style={{ fontWeight: 700, color: "#991b1b", fontSize: 14}}>
+                    <div style={{ fontWeight: 700, color: "#991b1b", fontSize: 14 }}>
                       ❌ Application Rejected - {a.sponsorName}
                     </div>
                     {a.decisionMessage && (
-                      <div style={{ color: "#b91c1c", fontSize: 13, marginTop: 4}}>
+                      <div style={{ color: "#b91c1c", fontSize: 13, marginTop: 4 }}>
                         Reason: {a.decisionMessage}
                       </div>
                     )}
@@ -346,11 +476,11 @@ export default function DriverProfile({ token, onLogout, onChangePassword, onCha
                   alignItems: "center",
                 }}>
                   <div>
-                    <div style={{ fontWeight: 700, color: "#991b1b", fontSize: 14}}>
+                    <div style={{ fontWeight: 700, color: "#991b1b", fontSize: 14 }}>
                       ❌ You have been dropped from {driverStatus.sponsorName}
                     </div>
                     {driverStatus.dropped_reason && (
-                      <div style={{ color: "#b91c1c", fontSize: 13, marginTop: 4}}>
+                      <div style={{ color: "#b91c1c", fontSize: 13, marginTop: 4 }}>
                         Reason: {driverStatus.dropped_reason}
                       </div>
                     )}
@@ -369,6 +499,35 @@ export default function DriverProfile({ token, onLogout, onChangePassword, onCha
                 </div>
               )}
             </>
+          )}
+
+          {/* DND banner when active */}
+          {dndEnabled && (
+            <div style={{
+              background: "#f0f9ff",
+              border: "1px solid #7dd3fc",
+              borderRadius: 10,
+              padding: "10px 16px",
+              marginBottom: 12,
+              display: "flex",
+              justifyContent: "space-between",
+              alignItems: "center",
+            }}>
+              <span style={{ fontSize: 13, color: "#0369a1", fontWeight: 600 }}>
+                🔕 Do Not Disturb is ON — notifications are silenced
+              </span>
+              <button
+                type="button"
+                onClick={handleDndToggle}
+                style={{
+                  background: "none", border: "1px solid #7dd3fc",
+                  borderRadius: 6, padding: "3px 10px",
+                  fontSize: 12, cursor: "pointer", color: "#0369a1",
+                }}
+              >
+                Turn Off
+              </button>
+            </div>
           )}
 
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(260px, 1fr))", gap: 14 }}>
@@ -411,9 +570,30 @@ export default function DriverProfile({ token, onLogout, onChangePassword, onCha
             </div>
 
             <div style={card}>
-              <div style={{ color: "var(--muted)", fontSize: 12 }}>Rewards</div>
-              <div style={{ marginTop: 10, fontSize: 18, fontWeight: 700 }}>Coming soon</div>
-              <div style={{ marginTop: 6, color: "var(--muted)", fontSize: 13 }}>Later: catalog + redeem flow.</div>
+              <div style={{ color: "var(--muted)", fontSize: 12 }}>Cart</div>
+              <div style={{ marginTop: 10, fontSize: 28, fontWeight: 800 }}>{cartItems.length}</div>
+              <div style={{ marginTop: 4, color: "var(--muted)", fontSize: 13 }}>
+                {cartItems.length === 0
+                  ? "Your cart is empty"
+                  : `${cartTotal.toLocaleString()} pts total`}
+              </div>
+              <button
+                type="button"
+                onClick={() => setActiveTab("cart")}
+                style={{
+                  marginTop: 12,
+                  padding: "8px 12px",
+                  borderRadius: 8,
+                  border: "none",
+                  background: "#4f46e5",
+                  color: "#fff",
+                  fontWeight: 600,
+                  cursor: "pointer",
+                  fontSize: 13,
+                }}
+              >
+                View Cart
+              </button>
             </div>
           </div>
 
@@ -457,8 +637,7 @@ export default function DriverProfile({ token, onLogout, onChangePassword, onCha
                         {formatEventDate(event.occurredAt)}
                       </div>
                       <div style={{ fontSize: 14, fontWeight: 700, color: earned ? "#166534" : "#991b1b" }}>
-                        {earned ? "+" : "-"}
-                        {event.points}
+                        {earned ? "+" : "-"}{event.points}
                       </div>
                       <div style={{ fontSize: 13, color: "var(--text)" }}>{event.reason}</div>
                     </div>
@@ -468,14 +647,145 @@ export default function DriverProfile({ token, onLogout, onChangePassword, onCha
             )}
           </div>
 
-          {/* Sponsorship Apply Card*/}
-          <div style={{...card, marginTop: 14 }}>
-            <div style={{ color: "var(--muted)", fontSize: 12, marginBottom: 14}}> Available Sponsorships</div>
+          {/* Sponsorship Apply Card */}
+          <div style={{ ...card, marginTop: 14 }}>
+            <div style={{ color: "var(--muted)", fontSize: 12, marginBottom: 14 }}>Available Sponsorships</div>
             <SponsorshipApply token={token} />
           </div>
         </>
       )}
-      
+
+      {/* ── Cart tab ── */}
+      {activeTab === "cart" && (
+        <div>
+          <h2 style={{ marginBottom: 4 }}>My Cart</h2>
+          <p style={{ color: "var(--muted)", fontSize: 14, marginTop: 0, marginBottom: 20 }}>
+            Items you've saved. Head to the catalogue to redeem them with your points.
+          </p>
+
+          {cartError && (
+            <div style={{ padding: "10px 14px", borderRadius: 8, background: "#fef2f2", color: "#991b1b", marginBottom: 12 }}>
+              {cartError}
+            </div>
+          )}
+          {cartSuccess && (
+            <div style={{ padding: "10px 14px", borderRadius: 8, background: "#ecfdf5", color: "#065f46", marginBottom: 12 }}>
+              ✓ {cartSuccess}
+            </div>
+          )}
+
+          {cartLoading && <p style={{ color: "var(--muted)" }}>Loading cart…</p>}
+
+          {!cartLoading && cartItems.length === 0 && (
+            <div style={{ ...card, textAlign: "center", padding: 40 }}>
+              <div style={{ fontSize: 48, marginBottom: 12 }}>🛒</div>
+              <div style={{ fontWeight: 700, fontSize: 16, marginBottom: 6 }}>Your cart is empty</div>
+              <div style={{ color: "var(--muted)", fontSize: 14 }}>
+                Browse the catalogue and add items you're interested in.
+              </div>
+            </div>
+          )}
+
+          {!cartLoading && cartItems.length > 0 && (
+            <>
+              {/* Cart summary bar */}
+              <div style={{
+                ...card,
+                marginBottom: 16,
+                display: "flex",
+                justifyContent: "space-between",
+                alignItems: "center",
+                background: "#f5f3ff",
+                border: "1px solid #c4b5fd",
+              }}>
+                <div>
+                  <span style={{ fontWeight: 700, color: "#4f46e5" }}>
+                    {cartItems.length} item{cartItems.length !== 1 ? "s" : ""}
+                  </span>
+                  <span style={{ color: "var(--muted)", fontSize: 14, marginLeft: 8 }}>in your cart</span>
+                </div>
+                <div style={{ textAlign: "right" }}>
+                  <div style={{ fontSize: 13, color: "var(--muted)" }}>Total cost</div>
+                  <div style={{ fontWeight: 800, fontSize: 20, color: "#4f46e5" }}>
+                    {cartTotal.toLocaleString()} pts
+                  </div>
+                </div>
+              </div>
+
+              {/* Cart items */}
+              <div style={{ display: "grid", gap: 12 }}>
+                {cartItems.map((item) => {
+                  const isRemoving = removingIds.has(item.product_id);
+                  return (
+                    <div key={item.product_id} style={{
+                      ...card,
+                      display: "flex",
+                      alignItems: "center",
+                      gap: 14,
+                      opacity: isRemoving ? 0.5 : 1,
+                      transition: "opacity 0.2s",
+                    }}>
+                      {item.artwork_url ? (
+                        <img
+                          src={item.artwork_url}
+                          alt={item.product_name}
+                          style={{ width: 60, height: 60, borderRadius: 8, objectFit: "cover", flexShrink: 0 }}
+                        />
+                      ) : (
+                        <div style={{
+                          width: 60, height: 60, borderRadius: 8,
+                          background: "var(--border)", flexShrink: 0,
+                          display: "flex", alignItems: "center", justifyContent: "center",
+                          fontSize: 24,
+                        }}>
+                          🎵
+                        </div>
+                      )}
+
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <div style={{ fontWeight: 700, fontSize: 15, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+                          {item.product_name || "Unknown"}
+                        </div>
+                        <div style={{ color: "var(--muted)", fontSize: 13 }}>{item.artist_name}</div>
+                        {item.media_type && (
+                          <div style={{ fontSize: 11, color: "var(--muted)", marginTop: 2, textTransform: "capitalize" }}>
+                            {item.media_type}
+                          </div>
+                        )}
+                      </div>
+
+                      <div style={{ textAlign: "right", flexShrink: 0 }}>
+                        <div style={{ fontWeight: 800, color: "#4f46e5", fontSize: 16 }}>
+                          {(item.points_cost || 0).toLocaleString()} pts
+                        </div>
+                        <button
+                          type="button"
+                          disabled={isRemoving}
+                          onClick={() => handleRemoveFromCart(item.product_id)}
+                          style={{
+                            marginTop: 6,
+                            padding: "5px 12px",
+                            borderRadius: 6,
+                            border: "1px solid #fca5a5",
+                            background: "#fef2f2",
+                            color: "#991b1b",
+                            fontWeight: 600,
+                            fontSize: 12,
+                            cursor: isRemoving ? "not-allowed" : "pointer",
+                          }}
+                        >
+                          {isRemoving ? "Removing…" : "Remove"}
+                        </button>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </>
+          )}
+        </div>
+      )}
+
       {/* ── Sponsors tab ── */}
       {activeTab === "sponsors" && (
         <div>
@@ -508,7 +818,6 @@ export default function DriverProfile({ token, onLogout, onChangePassword, onCha
 
             return (
               <div key={s.sponsorId} style={{ ...card, marginBottom: 14 }}>
-                {/* Sponsor info row */}
                 <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 12 }}>
                   <div>
                     <div style={{ fontWeight: 700, fontSize: 16 }}>{s.sponsorName}</div>
@@ -548,7 +857,6 @@ export default function DriverProfile({ token, onLogout, onChangePassword, onCha
                   </div>
                 </div>
 
-                {/* Review form (expandable) */}
                 {isOpen && (
                   <div style={{ marginTop: 16, borderTop: "1px solid var(--border, #e5e7eb)", paddingTop: 16 }}>
                     <div style={{ marginBottom: 10 }}>
@@ -608,6 +916,166 @@ export default function DriverProfile({ token, onLogout, onChangePassword, onCha
               </div>
             );
           })}
+        </div>
+      )}
+
+      {/* ── Settings tab ── */}
+      {activeTab === "settings" && (
+        <div>
+          <h2 style={{ marginBottom: 4 }}>Settings</h2>
+          <p style={{ color: "var(--muted)", fontSize: 14, marginTop: 0, marginBottom: 20 }}>
+            Manage your preferences and notification settings.
+          </p>
+
+          {/* DND Card */}
+          <div style={{ ...card, marginBottom: 14 }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+              <div>
+                <div style={{ fontWeight: 700, fontSize: 16 }}>
+                  🔕 Do Not Disturb
+                </div>
+                <div style={{ color: "var(--muted)", fontSize: 13, marginTop: 4 }}>
+                  When enabled, system notifications (rejected applications, dropped status) will be silenced on your dashboard.
+                </div>
+              </div>
+
+              {/* Toggle switch */}
+              <button
+                type="button"
+                disabled={dndSaving}
+                onClick={handleDndToggle}
+                style={{
+                  flexShrink: 0,
+                  marginLeft: 20,
+                  width: 52,
+                  height: 28,
+                  borderRadius: 14,
+                  border: "none",
+                  background: dndEnabled ? "#4f46e5" : "#d1d5db",
+                  cursor: dndSaving ? "not-allowed" : "pointer",
+                  position: "relative",
+                  transition: "background 0.2s",
+                  opacity: dndSaving ? 0.6 : 1,
+                }}
+                aria-label={dndEnabled ? "Disable Do Not Disturb" : "Enable Do Not Disturb"}
+              >
+                <span style={{
+                  position: "absolute",
+                  top: 3,
+                  left: dndEnabled ? 27 : 3,
+                  width: 22,
+                  height: 22,
+                  borderRadius: "50%",
+                  background: "#fff",
+                  transition: "left 0.2s",
+                  boxShadow: "0 1px 4px rgba(0,0,0,0.2)",
+                }} />
+              </button>
+            </div>
+
+            <div style={{
+              marginTop: 14,
+              padding: "10px 14px",
+              borderRadius: 8,
+              background: dndEnabled ? "#ede9fe" : "#f0fdf4",
+              border: `1px solid ${dndEnabled ? "#c4b5fd" : "#bbf7d0"}`,
+              fontSize: 13,
+              color: dndEnabled ? "#5b21b6" : "#166534",
+              fontWeight: 600,
+            }}>
+              {dndEnabled
+                ? "🔕 Do Not Disturb is ON — notifications are silenced"
+                : "🔔 Notifications are ON — you will see system alerts"}
+            </div>
+          </div>
+
+          {/* Hidden Products Card */}
+          <div style={{ ...card }}>
+            <div style={{ fontWeight: 700, fontSize: 16, marginBottom: 4 }}>
+              🚫 Hidden Catalogue Products
+            </div>
+            <div style={{ color: "var(--muted)", fontSize: 13, marginBottom: 16 }}>
+              Products you've personally hidden from your catalogue view. Click Unhide to bring them back.
+            </div>
+
+            {hiddenLoading && (
+              <div style={{ color: "var(--muted)", fontSize: 13 }}>Loading…</div>
+            )}
+
+            {!hiddenLoading && hiddenProducts.length === 0 && (
+              <div style={{
+                padding: "20px",
+                borderRadius: 10,
+                background: "var(--bg, #f9fafb)",
+                border: "1px dashed var(--border, #d1d5db)",
+                textAlign: "center",
+                color: "var(--muted)",
+                fontSize: 13,
+              }}>
+                You haven't hidden any products yet.
+              </div>
+            )}
+
+            {!hiddenLoading && hiddenProducts.length > 0 && (
+              <div style={{ display: "grid", gap: 10 }}>
+                {hiddenProducts.map((p) => {
+                  const isUnhiding = unhidingIds.has(p.product_id);
+                  return (
+                    <div key={p.product_id} style={{
+                      display: "flex",
+                      alignItems: "center",
+                      gap: 12,
+                      padding: "10px 12px",
+                      borderRadius: 10,
+                      border: "1px solid var(--border, #e5e7eb)",
+                      background: "var(--bg, #f9fafb)",
+                      opacity: isUnhiding ? 0.5 : 1,
+                      transition: "opacity 0.2s",
+                    }}>
+                      {p.artwork_url ? (
+                        <img
+                          src={p.artwork_url}
+                          alt={p.product_name}
+                          style={{ width: 48, height: 48, borderRadius: 6, objectFit: "cover", flexShrink: 0 }}
+                        />
+                      ) : (
+                        <div style={{
+                          width: 48, height: 48, borderRadius: 6,
+                          background: "var(--border)", flexShrink: 0,
+                          display: "flex", alignItems: "center", justifyContent: "center",
+                          fontSize: 20,
+                        }}>🎵</div>
+                      )}
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <div style={{ fontWeight: 600, fontSize: 14, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+                          {p.product_name || "Unknown"}
+                        </div>
+                        <div style={{ color: "var(--muted)", fontSize: 12 }}>{p.artist_name}</div>
+                      </div>
+                      <button
+                        type="button"
+                        disabled={isUnhiding}
+                        onClick={() => handleUnhide(p.product_id)}
+                        style={{
+                          flexShrink: 0,
+                          padding: "5px 14px",
+                          borderRadius: 6,
+                          border: "1px solid #bbf7d0",
+                          background: "#f0fdf4",
+                          color: "#166534",
+                          fontWeight: 600,
+                          fontSize: 12,
+                          cursor: isUnhiding ? "not-allowed" : "pointer",
+                        }}
+                      >
+                        {isUnhiding ? "Unhiding…" : "Unhide"}
+                      </button>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
         </div>
       )}
 
