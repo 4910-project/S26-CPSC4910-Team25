@@ -63,6 +63,9 @@ export default function AdminDashboard({ token, onLogout }) {
   const [lockingId, setLockingId] = useState(null);
   const [flaggingId, setFlaggingId] = useState(null);
   const [sponsorWarningId, setSponsorWarningId] = useState(null);
+  const [expandedSponsor, setExpandedSponsor] = useState(null);
+  const [sponsorNoteText, setSponsorNoteText] = useState("");
+  const [savingSponsorNote, setSavingSponsorNote] = useState({});
 
   // Drivers state
   const [drivers, setDrivers] = useState([]);
@@ -70,6 +73,9 @@ export default function AdminDashboard({ token, onLogout }) {
   const [driverError, setDriverError] = useState("");
   const [driverFlaggingId, setDriverFlaggingId] = useState(null);
   const [driverWarningId, setDriverWarningId] = useState(null);
+  const [expandedDriver, setExpandedDriver] = useState(null);
+  const [driverNoteText, setDriverNoteText] = useState("");
+  const [savingDriverNote, setSavingDriverNote] = useState({});
 
   // Settings state
   const [notificationsEnabled, setNotificationsEnabled] = useState(true);
@@ -322,6 +328,50 @@ export default function AdminDashboard({ token, onLogout }) {
       setDriverError(err?.message || "Unknown error");
     } finally {
       setDriverWarningId(null);
+    }
+  };
+
+  const handleSaveSponsorNote = async (sponsorId) => {
+    setSavingSponsorNote((prev) => ({ ...prev, [sponsorId]: true }));
+    try {
+      const res = await fetch(`${ADMIN_API}/sponsors/${sponsorId}/note`, {
+        method: "PATCH",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({ adminNote: sponsorNoteText }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Failed to save note");
+      setExpandedSponsor(null);
+      await fetchSponsors();
+    } catch (err) {
+      setSponsorError(err?.message || "Unknown error");
+    } finally {
+      setSavingSponsorNote((prev) => ({ ...prev, [sponsorId]: false }));
+    }
+  };
+
+  const handleSaveDriverNote = async (driverId) => {
+    setSavingDriverNote((prev) => ({ ...prev, [driverId]: true }));
+    try {
+      const res = await fetch(`${ADMIN_API}/drivers/${driverId}/note`, {
+        method: "PATCH",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({ adminNote: driverNoteText }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Failed to save note");
+      setExpandedDriver(null);
+      await fetchDrivers();
+    } catch (err) {
+      setDriverError(err?.message || "Unknown error");
+    } finally {
+      setSavingDriverNote((prev) => ({ ...prev, [driverId]: false }));
     }
   };
 
@@ -688,106 +738,183 @@ export default function AdminDashboard({ token, onLogout }) {
           )}
 
           {!sponsorLoading &&
-            sponsors.map((s) => (
-              <div
-                key={s.id}
-                style={{
-                  border: `1px solid ${!!s.flagged ? "#fca5a5" : "var(--border, #e5e7eb)"}`,
-                  borderRadius: 12,
-                  padding: 16,
-                  background: !!s.flagged ? "#fff7f7" : "var(--card)",
-                  marginBottom: 10,
-                  display: "flex",
-                  justifyContent: "space-between",
-                  alignItems: "center",
-                }}
-              >
-                <div>
-                  <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                    <span style={{ fontWeight: 700, fontSize: 15 }}>{s.name}</span>
-                    {!!s.flagged && (
-                      <span
+            sponsors.map((s) => {
+              const isNoteOpen = expandedSponsor === s.id;
+              return (
+                <div
+                  key={s.id}
+                  style={{
+                    border: `1px solid ${!!s.flagged ? "#fca5a5" : "var(--border, #e5e7eb)"}`,
+                    borderRadius: 12,
+                    padding: 16,
+                    background: !!s.flagged ? "#fff7f7" : "var(--card)",
+                    marginBottom: 10,
+                  }}
+                >
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 12 }}>
+                    <div>
+                      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8 }}>
+                        <span style={{ fontWeight: 700, fontSize: 15 }}>{s.name}</span>
+                        {!!s.flagged && (
+                          <span
+                            style={{
+                              padding: "2px 8px",
+                              borderRadius: 10,
+                              fontSize: 11,
+                              fontWeight: 700,
+                              background: "#fee2e2",
+                              color: "#b91c1c",
+                              display: "flex",
+                              alignItems: "center",
+                              gap: 3,
+                            }}
+                          >
+                            🚩 Flagged
+                          </span>
+                        )}
+                      </div>
+
+                      <div style={{ fontSize: 12, color: "var(--muted)", marginTop: 3 }}>
+                        Status: {s.status} · {s.accepting_drivers ? "✅ Accepting drivers" : "🔒 Locked"}
+                      </div>
+
+                      {s.admin_note && !isNoteOpen && (
+                        <p style={{ margin: "6px 0 0", fontSize: 13, color: "#6b7280", fontStyle: "italic" }}>
+                          📝 Note: {s.admin_note}
+                        </p>
+                      )}
+                    </div>
+
+                    <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                     <button
+                       type="button"
+                        onClick={() => {
+                          setExpandedSponsor(isNoteOpen ? null : s.id);
+                          setSponsorNoteText(s.admin_note || "");
+                       }}
                         style={{
-                          padding: "2px 8px",
-                          borderRadius: 10,
-                          fontSize: 11,
-                          fontWeight: 700,
-                          background: "#fee2e2",
-                          color: "#b91c1c",
-                          display: "flex",
-                          alignItems: "center",
-                          gap: 3,
+                          padding: "4px 12px",
+                          borderRadius: 6,
+                          fontSize: 12,
+                          fontWeight: 600,
+                          border: "1px solid var(--border, #d1d5db)",
+                          background: isNoteOpen ? "#f3f4f6" : "transparent",
+                          cursor: "pointer",
                         }}
                       >
-                        🚩 Flagged
-                      </span>
-                    )}
+                        {isNoteOpen ? "Cancel" : "✏️ Add Note"}
+                      </button>
+
+                      <button
+                        type="button"
+                        disabled={sponsorWarningId === s.id}
+                        onClick={() => handleSponsorWarn(s.id, s.name)}
+                        style={{
+                          padding: "7px 16px",
+                          borderRadius: 8,
+                          border: "1px solid #fbbf24",
+                          background: "#fef3c7",
+                          color: "#92400e",
+                          fontWeight: 600,
+                          fontSize: 13,
+                          cursor: sponsorWarningId === s.id ? "not-allowed" : "pointer",
+                          opacity: sponsorWarningId === s.id ? 0.6 : 1,
+                        }}
+                      >
+                        {sponsorWarningId === s.id ? "Saving..." : "⚠️ Warn"}
+                      </button>
+
+                      <button
+                        type="button"
+                        disabled={flaggingId === s.id}
+                        onClick={() => handleFlagToggle(s.id, s.flagged)}
+                        style={{
+                          padding: "7px 16px",
+                          borderRadius: 8,
+                          border: !!s.flagged ? "1px solid #fca5a5" : "1px solid var(--border, #d1d5db)",
+                          background: !!s.flagged ? "#fee2e2" : "transparent",
+                          color: !!s.flagged ? "#b91c1c" : "var(--text, #374151)",
+                          fontWeight: 600,
+                          fontSize: 13,
+                          cursor: flaggingId === s.id ? "not-allowed" : "pointer",
+                          opacity: flaggingId === s.id ? 0.6 : 1,
+                        }}
+                      >
+                        {flaggingId === s.id ? "Saving..." : !!s.flagged ? "🚩 Unflag" : "🚩 Flag"}
+                      </button>
+
+                      <button
+                        type="button"
+                        disabled={lockingId === s.id}
+                        onClick={() => handleLockToggle(s.id, s.accepting_drivers)}
+                        style={{
+                          padding: "7px 16px",
+                          borderRadius: 8,
+                          border: "none",
+                          background: s.accepting_drivers ? "#ef4444" : "#10b981",
+                          color: "#fff",
+                          fontWeight: 600,
+                          fontSize: 13,
+                          cursor: lockingId === s.id ? "not-allowed" : "pointer",
+                          opacity: lockingId === s.id ? 0.6 : 1,
+                        }}
+                      >
+                        {lockingId === s.id ? "Saving..." : s.accepting_drivers ? "🔒 Lock" : "🔓 Unlock"}
+                      </button>
+                    </div>
                   </div>
-                  <div style={{ fontSize: 12, color: "var(--muted)", marginTop: 3 }}>
-                    Status: {s.status} · {s.accepting_drivers ? "✅ Accepting drivers" : "🔒 Locked"}
-                  </div>
+
+                  {isNoteOpen && (
+                    <div
+                      style={{
+                        marginTop: 12,
+                        borderTop: "1px solid var(--border, #e5e7eb)",
+                        paddingTop: 12,
+                      }}
+                    >
+                      <label style={{ fontWeight: 600, fontSize: 13, display: "block", marginBottom: 6 }}>
+                        Admin Note
+                      </label>
+                      <textarea
+                        rows={3}
+                        value={sponsorNoteText}
+                        onChange={(e) => setSponsorNoteText(e.target.value)}
+                        placeholder="Add an internal note..."
+                        style={{
+                          width: "100%",
+                          padding: "8px 10px",
+                          borderRadius: 8,
+                          border: "1px solid var(--border, #d1d5db)",
+                          fontSize: 14,
+                          resize: "vertical",
+                          background: "var(--card)",
+                          color: "var(--text)",
+                          boxSizing: "border-box",
+                        }}
+                      />
+                      <button
+                        type="button"
+                        disabled={savingSponsorNote[s.id]}
+                        onClick={() => handleSaveSponsorNote(s.id)}
+                        style={{
+                          marginTop: 8,
+                          padding: "6px 18px",
+                          borderRadius: 8,
+                          border: "none",
+                          background: "#4f46e5",
+                          color: "#fff",
+                          fontWeight: 700,
+                          cursor: savingSponsorNote[s.id] ? "not-allowed" : "pointer",
+                          opacity: savingSponsorNote[s.id] ? 0.6 : 1,
+                        }}
+                      >
+                        {savingSponsorNote[s.id] ? "Saving..." : "Save Note"}
+                      </button>
+                    </div>
+                  )}
                 </div>
-
-                <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-                  <button
-                    type="button"
-                    disabled={sponsorWarningId === s.id}
-                    onClick={() => handleSponsorWarn(s.id, s.name)}
-                    style={{
-                      padding: "7px 16px",
-                      borderRadius: 8,
-                      border: "1px solid #fbbf24",
-                      background: "#fef3c7",
-                      color: "#92400e",
-                      fontWeight: 600,
-                      fontSize: 13,
-                      cursor: sponsorWarningId === s.id ? "not-allowed" : "pointer",
-                      opacity: sponsorWarningId === s.id ? 0.6 : 1,
-                    }}
-                  >
-                    {sponsorWarningId === s.id ? "Saving..." : "⚠️ Warn"}
-                  </button>
-
-                  <button
-                    type="button"
-                    disabled={flaggingId === s.id}
-                    onClick={() => handleFlagToggle(s.id, s.flagged)}
-                    style={{
-                      padding: "7px 16px",
-                      borderRadius: 8,
-                      border: !!s.flagged ? "1px solid #fca5a5" : "1px solid var(--border, #d1d5db)",
-                      background: !!s.flagged ? "#fee2e2" : "transparent",
-                      color: !!s.flagged ? "#b91c1c" : "var(--text, #374151)",
-                      fontWeight: 600,
-                      fontSize: 13,
-                      cursor: flaggingId === s.id ? "not-allowed" : "pointer",
-                      opacity: flaggingId === s.id ? 0.6 : 1,
-                    }}
-                  >
-                    {flaggingId === s.id ? "Saving..." : !!s.flagged ? "🚩 Unflag" : "🚩 Flag"}
-                  </button>
-
-                  <button
-                    type="button"
-                    disabled={lockingId === s.id}
-                    onClick={() => handleLockToggle(s.id, s.accepting_drivers)}
-                    style={{
-                      padding: "7px 16px",
-                      borderRadius: 8,
-                      border: "none",
-                      background: s.accepting_drivers ? "#ef4444" : "#10b981",
-                      color: "#fff",
-                      fontWeight: 600,
-                      fontSize: 13,
-                      cursor: lockingId === s.id ? "not-allowed" : "pointer",
-                      opacity: lockingId === s.id ? 0.6 : 1,
-                    }}
-                  >
-                    {lockingId === s.id ? "Saving..." : s.accepting_drivers ? "🔒 Lock" : "🔓 Unlock"}
-                  </button>
-                </div>
-              </div>
-            ))}
+              );
+            })}
         </div>
       )}
 
@@ -815,90 +942,167 @@ export default function AdminDashboard({ token, onLogout }) {
           )}
 
           {!driverLoading &&
-            drivers.map((d) => (
-              <div
-                key={d.driver_id}
-                style={{
-                  border: `1px solid ${!!d.flagged ? "#fca5a5" : "var(--border, #e5e7eb)"}`,
-                  borderRadius: 12,
-                  padding: 16,
-                  background: !!d.flagged ? "#fff7f7" : "var(--card)",
-                  marginBottom: 10,
-                  display: "flex",
-                  justifyContent: "space-between",
-                  alignItems: "center",
-                }}
-              >
-                <div>
-                  <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                    <span style={{ fontWeight: 700, fontSize: 15 }}>{d.email}</span>
-                    {!!d.flagged && (
-                      <span
+            drivers.map((d) => {
+              const isNoteOpen = d.driver_id != null && expandedDriver === d.driver_id;
+              return (
+                <div
+                  key={d.driver_id || d.email}
+                  style={{
+                    border: `1px solid ${!!d.flagged ? "#fca5a5" : "var(--border, #e5e7eb)"}`,
+                    borderRadius: 12,
+                    padding: 16,
+                    background: !!d.flagged ? "#fff7f7" : "var(--card)",
+                    marginBottom: 10,
+                  }}
+                >
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 12 }}>
+                    <div>
+                      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8 }}>
+                        <span style={{ fontWeight: 700, fontSize: 15 }}>{d.email}</span>
+                        {!!d.flagged && (
+                          <span
+                            style={{
+                              padding: "2px 8px",
+                              borderRadius: 10,
+                              fontSize: 11,
+                              fontWeight: 700,
+                              background: "#fee2e2",
+                              color: "#b91c1c",
+                              display: "flex",
+                              alignItems: "center",
+                              gap: 3,
+                            }}
+                          >
+                            🚩 Flagged
+                          </span>
+                        )}
+                      </div>
+
+                      <div style={{ fontSize: 12, color: "var(--muted)", marginTop: 3 }}>
+                        Sponsor: {d.sponsor_name || "—"} · Status: {d.driver_status}
+                      </div>
+
+                      {d.admin_note && !isNoteOpen && (
+                        <p style={{ margin: "6px 0 0", fontSize: 13, color: "#6b7280", fontStyle: "italic" }}>
+                          📝 Note: {d.admin_note}
+                        </p>
+                      )}
+                    </div>
+
+                    <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                     <button
+                       type="button"
+                        onClick={() => {
+                          setExpandedDriver(isNoteOpen ? null : d.driver_id);
+                          setDriverNoteText(d.admin_note || "");
+                       }}
                         style={{
-                          padding: "2px 8px",
-                          borderRadius: 10,
-                          fontSize: 11,
-                          fontWeight: 700,
-                          background: "#fee2e2",
-                          color: "#b91c1c",
-                          display: "flex",
-                          alignItems: "center",
-                          gap: 3,
+                          padding: "4px 12px",
+                          borderRadius: 6,
+                          fontSize: 12,
+                          fontWeight: 600,
+                          border: "1px solid var(--border, #d1d5db)",
+                          background: isNoteOpen ? "#f3f4f6" : "transparent",
+                          cursor: "pointer",
                         }}
                       >
-                        🚩 Flagged
-                      </span>
-                    )}
-                  </div>
-                  <div style={{ fontSize: 12, color: "var(--muted)", marginTop: 3 }}>
-                    Sponsor: {d.sponsor_name || "—"} · Status: {d.driver_status}
-                  </div>
-                </div>
+                        {isNoteOpen ? "Cancel" : "✏️ Add Note"}
+                      </button>
 
-                <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-                  <button
-                    type="button"
-                    disabled={driverWarningId === d.driver_id}
-                    onClick={() => handleDriverWarn(d.driver_id, d.email)}
-                    style={{
-                      padding: "7px 16px",
-                      borderRadius: 8,
-                      border: "1px solid #fbbf24",
-                      background: "#fef3c7",
-                      color: "#92400e",
-                      fontWeight: 600,
-                      fontSize: 13,
-                      cursor: driverWarningId === d.driver_id ? "not-allowed" : "pointer",
-                      opacity: driverWarningId === d.driver_id ? 0.6 : 1,
-                    }}
-                  >
-                    {driverWarningId === d.driver_id ? "Saving..." : "⚠️ Warn"}
-                  </button>
+                      <button
+                        type="button"
+                        disabled={driverWarningId === d.driver_id}
+                        onClick={() => handleDriverWarn(d.driver_id, d.email)}
+                        style={{
+                          padding: "7px 16px",
+                          borderRadius: 8,
+                          border: "1px solid #fbbf24",
+                          background: "#fef3c7",
+                          color: "#92400e",
+                          fontWeight: 600,
+                          fontSize: 13,
+                          cursor: driverWarningId === d.driver_id ? "not-allowed" : "pointer",
+                          opacity: driverWarningId === d.driver_id ? 0.6 : 1,
+                        }}
+                      >
+                        {driverWarningId === d.driver_id ? "Saving..." : "⚠️ Warn"}
+                      </button>
 
-                  <button
-                    type="button"
-                    disabled={driverFlaggingId === d.driver_id}
-                    onClick={() => handleDriverFlagToggle(d.driver_id, d.flagged)}
-                    style={{
-                      padding: "7px 16px",
-                      borderRadius: 8,
-                      border: !!d.flagged ? "1px solid #fca5a5" : "1px solid var(--border, #d1d5db)",
-                      background: !!d.flagged ? "#fee2e2" : "transparent",
-                      color: !!d.flagged ? "#b91c1c" : "var(--text, #374151)",
-                      fontWeight: 600,
-                      fontSize: 13,
-                      cursor: driverFlaggingId === d.driver_id ? "not-allowed" : "pointer",
-                      opacity: driverFlaggingId === d.driver_id ? 0.6 : 1,
-                    }}
-                  >
-                    {driverFlaggingId === d.driver_id ? "Saving..." : !!d.flagged ? "🚩 Unflag" : "🚩 Flag"}
-                  </button>
+                      <button
+                        type="button"
+                        disabled={driverFlaggingId === d.driver_id}
+                        onClick={() => handleDriverFlagToggle(d.driver_id, d.flagged)}
+                        style={{
+                          padding: "7px 16px",
+                          borderRadius: 8,
+                          border: !!d.flagged ? "1px solid #fca5a5" : "1px solid var(--border, #d1d5db)",
+                          background: !!d.flagged ? "#fee2e2" : "transparent",
+                          color: !!d.flagged ? "#b91c1c" : "var(--text, #374151)",
+                          fontWeight: 600,
+                          fontSize: 13,
+                          cursor: driverFlaggingId === d.driver_id ? "not-allowed" : "pointer",
+                          opacity: driverFlaggingId === d.driver_id ? 0.6 : 1,
+                        }}
+                      >
+                        {driverFlaggingId === d.driver_id ? "Saving..." : !!d.flagged ? "🚩 Unflag" : "🚩 Flag"}
+                      </button>
+                    </div>
+                  </div>
+
+                  {isNoteOpen && (
+                    <div
+                      style={{
+                        marginTop: 12,
+                        borderTop: "1px solid var(--border, #e5e7eb)",
+                        paddingTop: 12,
+                      }}
+                    >
+                      <label style={{ fontWeight: 600, fontSize: 13, display: "block", marginBottom: 6 }}>
+                        Admin Note
+                      </label>
+                      <textarea
+                        rows={3}
+                        value={driverNoteText}
+                        onChange={(e) => setDriverNoteText(e.target.value)}
+                        placeholder="Add an internal note..."
+                        style={{
+                          width: "100%",
+                          padding: "8px 10px",
+                          borderRadius: 8,
+                          border: "1px solid var(--border, #d1d5db)",
+                          fontSize: 14,
+                          resize: "vertical",
+                          background: "var(--card)",
+                          color: "var(--text)",
+                          boxSizing: "border-box",
+                        }}
+                      />
+                      <button
+                        type="button"
+                        disabled={savingDriverNote[d.driver_id]}
+                        onClick={() => handleSaveDriverNote(d.driver_id)}
+                        style={{
+                          marginTop: 8,
+                          padding: "6px 18px",
+                          borderRadius: 8,
+                          border: "none",
+                          background: "#4f46e5",
+                          color: "#fff",
+                          fontWeight: 700,
+                          cursor: savingDriverNote[d.driver_id] ? "not-allowed" : "pointer",
+                          opacity: savingDriverNote[d.driver_id] ? 0.6 : 1,
+                        }}
+                      >
+                        {d.driver_id != null && savingDriverNote[d.driver_id] ? "Saving..." : "Save Note"}
+                      </button>
+                    </div>
+                  )}
                 </div>
-              </div>
-            ))}
+              );
+            })}
         </div>
       )}
-
+  
       {/* ── Settings tab ── */}
       {activeTab === "settings" && (
         <div>

@@ -119,9 +119,10 @@ router.get("/drivers", async (req, res) => {
         s.name AS sponsor_name,
         d.dropped_reason,
         d.dropped_at,
-        d.flagged
+        d.flagged,
+        d.admin_note
       FROM users u
-      LEFT JOIN drivers d ON d.user_id = u.id
+      JOIN drivers d ON d.user_id = u.id
       LEFT JOIN sponsors s ON s.id = d.sponsor_id
       WHERE u.role = 'DRIVER'
       ORDER BY u.id DESC
@@ -160,7 +161,8 @@ router.get("/drivers/:driverId", async (req, res) => {
         s.name AS sponsor_name,
         d.dropped_reason,
         d.dropped_at,
-        d.flagged
+        d.flagged,
+        d.admin_note
       FROM users u
       JOIN users u ON u.id = d.user_id
       LEFT JOIN sponsors s ON s.id = d.sponsor_id
@@ -728,7 +730,8 @@ router.patch("/feedback/:id", async (req, res) => {
         name, 
         status, 
         accepting_drivers,
-        flagged
+        flagged,
+        admin_note
       FROM sponsors
       ORDER BY name ASC
       `
