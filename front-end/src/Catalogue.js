@@ -28,8 +28,26 @@ function bigArt(url)
 {
   return url ? url.replace("100x100bb", "200x200bb") : null;
 }
+
+function getItemId(item) {
+  return String(item.trackId || item.collectionId || item.id || "");
+}
+
+function toCartItem(item, fallbackKind = "Media") {
+  const id = getItemId(item);
+  return {
+    id,
+    name: item.trackName || item.collectionName || item.name || "Unknown",
+    artist: item.artistName || item.artist || "",
+    kind: item.kind || fallbackKind,
+    artwork: bigArt(item.artworkUrl100 || item.artwork),
+    cost: Number(item.cost ?? toPoints(item.trackPrice ?? item.price ?? 0)),
+    trackViewUrl: item.trackViewUrl || item.collectionViewUrl || null,
+  };
+}
  
 const LOG_KEY = "driver_purchase_log";
+const CART_KEY = "driver_cart_items";
 function usePurchaseLog(serverLog)
 {
   const [log, setLog] = useState(() =>
@@ -77,6 +95,11 @@ export default function Catalogue({ token, initialPoints = 100, onPointsChange }
   const [serverLog, setServerLog] = useState(null);
   const [log,       addEntry]     = usePurchaseLog(serverLog);
   const [showLog,   setShowLog]   = useState(false);
+  const [showCart,  setShowCart]  = useState(false);
+  const [cart,      setCart]      = useState(() => {
+    try { return JSON.parse(localStorage.getItem(CART_KEY)) || []; }
+    catch { return []; }
+  });
   const [hiddenIds, setHiddenIds] = useState(new Set());
  
   useEffect(() => { setPoints(initialPoints); }, [initialPoints]);
@@ -108,6 +131,10 @@ export default function Catalogue({ token, initialPoints = 100, onPointsChange }
       .then(d => { if (d?.hiddenIds) setHiddenIds(new Set(d.hiddenIds.map(String))); })
       .catch(() => {});
   }, [token]);
+
+  useEffect(() => {
+    localStorage.setItem(CART_KEY, JSON.stringify(cart));
+  }, [cart]);
  
   
   async function search(term, category) 
@@ -142,15 +169,42 @@ export default function Catalogue({ token, initialPoints = 100, onPointsChange }
     setCat(c);
     setItems([]);
     setShowLog(false);
+    setShowCart(false);
     search(input.trim() || "top hits", c);
   }
  
-  
-  async function handleBuy() 
-  {
-    const item = selectedItem;
-    const cost = toPoints(item.trackPrice ?? item.price ?? 0);
-    if (cost > points) { showToast("Not enough points!", "error"); setSelectedItem(null); return; }
+  function addToCart(item) {
+    const cartItem = toCartItem(item, cat.label);
+    if (!cartItem.id) {
+      showToast("Could not add this item to cart.", "error");
+      return;
+    }
+
+    setCart((prev) => {
+      if (prev.some((entry) => entry.id === cartItem.id)) {
+        showToast("Item is already in your cart.", "error");
+        return prev;
+      }
+      showToast("Added to cart.", "success");
+      return [cartItem, ...prev];
+    });
+    setSelectedItem(null);
+  }
+
+  function removeFromCart(itemId) {
+    setCart((prev) => prev.filter((item) => item.id !== itemId));
+  }
+
+  async function redeemItem(item, options = {}) {
+    const { closePreview = false, removeFromCartId = null } = options;
+    const normalized = toCartItem(item, cat.label);
+    const cost = normalized.cost;
+
+    if (cost > points) {
+      showToast("Not enough points!", "error");
+      if (closePreview) setSelectedItem(null);
+      return;
+    }
  
     setBuying(true);
     try 
@@ -165,7 +219,7 @@ export default function Catalogue({ token, initialPoints = 100, onPointsChange }
           {
             method: "POST",
             headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
-            body: JSON.stringify({ amount: cost, itemName: item.trackName || item.collectionName }),
+            body: JSON.stringify({ amount: cost, itemName: normalized.name }),
           });
           if (res.ok)
           {
@@ -185,13 +239,13 @@ export default function Catalogue({ token, initialPoints = 100, onPointsChange }
       const entry = {
         id:          `${Date.now()}`,
         date:        new Date().toISOString(),
-        name:        item.trackName || item.collectionName || "Unknown",
-        artist:      item.artistName || "",
-        kind:        item.kind || cat.label,
-        artwork:     bigArt(item.artworkUrl100),
+        name:        normalized.name,
+        artist:      normalized.artist,
+        kind:        normalized.kind,
+        artwork:     normalized.artwork,
         cost,
         pointsAfter: newPoints,
-        trackViewUrl: item.trackViewUrl || item.collectionViewUrl || null,
+        trackViewUrl: normalized.trackViewUrl,
       };
  
       if (token) 
@@ -205,9 +259,12 @@ export default function Catalogue({ token, initialPoints = 100, onPointsChange }
       }
  
       addEntry(entry);
+      if (removeFromCartId) {
+        removeFromCart(removeFromCartId);
+      }
  
       showToast(`Redeemed for ${cost} pts!`, "success");
-      setSelectedItem(null);
+      if (closePreview) setSelectedItem(null);
     } 
     catch 
     {
@@ -225,6 +282,11 @@ export default function Catalogue({ token, initialPoints = 100, onPointsChange }
   const confirmCost = useMemo(
     () => selectedItem ? toPoints(selectedItem.trackPrice ?? selectedItem.price ?? 0) : 0,
     [selectedItem]
+  );
+
+  const cartTotal = useMemo(
+    () => cart.reduce((sum, item) => sum + Number(item.cost || 0), 0),
+    [cart]
   );
  
   return (
@@ -284,9 +346,27 @@ export default function Catalogue({ token, initialPoints = 100, onPointsChange }
           ))}
           <button
             className={`cat-pill ${showLog ? "active" : ""}`}
-            onClick={() => setShowLog(v => !v)}
+            onClick={() => {
+              setShowLog((v) => {
+                const next = !v;
+                if (next) setShowCart(false);
+                return next;
+              });
+            }}
           >
             My Purchases {log.length > 0 && `(${log.length})`}
+          </button>
+          <button
+            className={`cat-pill ${showCart ? "active" : ""}`}
+            onClick={() => {
+              setShowCart((v) => {
+                const next = !v;
+                if (next) setShowLog(false);
+                return next;
+              });
+            }}
+          >
+            Cart {cart.length > 0 && `(${cart.length})`}
           </button>
         </div>
  
@@ -311,9 +391,62 @@ export default function Catalogue({ token, initialPoints = 100, onPointsChange }
             ))}
           </div>
         )}
+
+        {/* Cart */}
+        {showCart && (
+          <div>
+            <h3 style={{ color: "var(--text)", marginBottom: 12 }}>Cart</h3>
+            {cart.length === 0 ? (
+              <div className="cat-empty">Your cart is empty.</div>
+            ) : (
+              <>
+                <div style={{ marginBottom: 10, color: "var(--muted)", fontSize: 13 }}>
+                  Total Cart Cost: <strong style={{ color: "var(--text)" }}>{cartTotal.toLocaleString()} pts</strong>
+                </div>
+                {cart.map((item) => {
+                  const canAfford = points >= Number(item.cost || 0);
+                  return (
+                    <div key={item.id} className="cat-log-item">
+                      {item.artwork && <img src={item.artwork} alt={item.name} />}
+                      <div style={{ flex: 1 }}>
+                        <div style={{ fontWeight: 600, color: "var(--text)", fontSize: 14 }}>{item.name}</div>
+                        <div style={{ fontSize: 12, color: "var(--muted)" }}>{item.artist} · {item.kind}</div>
+                      </div>
+                      <div style={{ display: "flex", gap: 6 }}>
+                        <button
+                          type="button"
+                          onClick={() => removeFromCart(item.id)}
+                          style={{
+                            padding: "6px 10px",
+                            borderRadius: 6,
+                            border: "1px solid var(--border)",
+                            background: "transparent",
+                            color: "var(--text)",
+                            cursor: "pointer",
+                            fontSize: 12,
+                            fontWeight: 600,
+                          }}
+                        >
+                          Remove
+                        </button>
+                        <button
+                          className="cat-buy"
+                          disabled={!canAfford || buying}
+                          onClick={() => redeemItem(item, { removeFromCartId: item.id })}
+                        >
+                          {buying ? "..." : canAfford ? `Redeem ${Number(item.cost).toLocaleString()} pts` : "Need pts"}
+                        </button>
+                      </div>
+                    </div>
+                  );
+                })}
+              </>
+            )}
+          </div>
+        )}
  
         {/* Grid */}
-        {!showLog && (
+        {!showLog && !showCart && (
           <>
             {loading && <div className="cat-empty">Loading…</div>}
             {!loading && items.length === 0 && <div className="cat-empty">No results found.</div>}
@@ -340,7 +473,7 @@ export default function Catalogue({ token, initialPoints = 100, onPointsChange }
                           disabled={!canAfford}
                           onClick={() => setSelectedItem(item)}
                         >
-                          {canAfford ? "Redeem" : "Need pts"}
+                          {canAfford ? "Preview" : "Need pts"}
                         </button>
                       </div>
                     </div>
@@ -352,7 +485,7 @@ export default function Catalogue({ token, initialPoints = 100, onPointsChange }
         )}
       </div>
  
-      {/* Confirm modal */}
+      {/* Product preview modal */}
       {selectedItem && (
         <div className="cat-overlay" onClick={() => setSelectedItem(null)}>
           <div className="cat-modal" onClick={e => e.stopPropagation()}>
@@ -361,6 +494,10 @@ export default function Catalogue({ token, initialPoints = 100, onPointsChange }
             )}
             <h3>{selectedItem.trackName || selectedItem.collectionName}</h3>
             <p>{selectedItem.artistName}</p>
+            <div className="cat-modal-row">
+              <span>Type</span>
+              <strong>{selectedItem.kind || cat.label}</strong>
+            </div>
             <div className="cat-modal-row">
               <span>Cost</span>
               <strong style={{ color: "#e53935" }}>−{confirmCost.toLocaleString()} pts</strong>
@@ -372,9 +509,14 @@ export default function Catalogue({ token, initialPoints = 100, onPointsChange }
               </strong>
             </div>
             <div className="cat-modal-actions">
-              <button onClick={() => setSelectedItem(null)}>Cancel</button>
-              <button className="cat-btn" onClick={handleBuy} disabled={buying}>
-                {buying ? "Processing…" : "Confirm"}
+              <button onClick={() => setSelectedItem(null)}>Close</button>
+              <button onClick={() => addToCart(selectedItem)}>Add to Cart</button>
+              <button
+                className="cat-btn"
+                onClick={() => redeemItem(selectedItem, { closePreview: true })}
+                disabled={buying}
+              >
+                {buying ? "Processing…" : "Redeem Now"}
               </button>
             </div>
           </div>

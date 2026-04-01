@@ -36,9 +36,13 @@ export default function SponsorProfile({ token, onLogout, onChangeUsername }) {
   const [driverError, setDriverError] = useState("");
   const [driverSuccess, setDriverSuccess] = useState("");
   const [blockReason, setBlockReason] = useState({});       // { [driverId]: "reason text" }
-  const [activeTab, setActiveTab] = useState("drivers");     // "drivers" | "applications"
+  const [activeTab, setActiveTab] = useState("drivers");     // "drivers" | "applications" | "catalog" | "reports"
   const [ratings, setRatings] = useState({});               // { [driverId]: "thumbs_up" | "thumbs_down" | null }
   const [sortByRating, setSortByRating] = useState(false);  // when true, sort thumbs_up to top
+  const [reversePointsInput, setReversePointsInput] = useState({}); // { [driverId]: "25" }
+  const [reverseReasonInput, setReverseReasonInput] = useState({}); // { [driverId]: "reason" }
+  const [reversingDriverId, setReversingDriverId] = useState(null);
+  const [exportingReport, setExportingReport] = useState(false);
 
   // ─── Catalog hide/unhide state ──────────────────────────────────────────────
   const [hiddenIds,      setHiddenIds]      = useState(new Set());
@@ -194,15 +198,9 @@ export default function SponsorProfile({ token, onLogout, onChangeUsername }) {
     }
   }, [token]);
 
-  useEffect(() => {
-    if (activeTab === "drivers") fetchDrivers();
-    else if (activeTab === "applications") fetchApplications();
-    else if (activeTab === "catalog") fetchHiddenIds();
-  }, [activeTab, fetchDrivers, fetchApplications]);
-
   // ─── Catalog functions ─────────────────────────────────────────────────────
 
-  const fetchHiddenIds = async () => {
+  const fetchHiddenIds = useCallback(async () => {
     try {
       const res = await fetch(`${SPONSOR_API}/catalog/hidden`, {
         headers: { Authorization: `Bearer ${token}` },
@@ -217,7 +215,13 @@ export default function SponsorProfile({ token, onLogout, onChangeUsername }) {
     } catch (err) {
       setDriverError(err.message);
     }
-  };
+  }, [token]);
+
+  useEffect(() => {
+    if (activeTab === "drivers") fetchDrivers();
+    else if (activeTab === "applications") fetchApplications();
+    else if (activeTab === "catalog") fetchHiddenIds();
+  }, [activeTab, fetchDrivers, fetchApplications, fetchHiddenIds]);
 
   const fetchCatalog = async (term, category) => {
     setCatalogLoading(true);
@@ -335,6 +339,79 @@ export default function SponsorProfile({ token, onLogout, onChangeUsername }) {
       fetchDrivers();
     } catch (err) {
       setDriverError(err.message);
+    }
+  };
+
+  const handleReversePoints = async (driverId) => {
+    const rawPoints = reversePointsInput[driverId];
+    const points = Number.parseInt(String(rawPoints || "").trim(), 10);
+    if (!Number.isInteger(points) || points <= 0) {
+      setDriverError("Enter a positive whole number of points to reverse.");
+      return;
+    }
+
+    const reason = String(reverseReasonInput[driverId] || "").trim();
+
+    setReversingDriverId(driverId);
+    setDriverError("");
+    setDriverSuccess("");
+    try {
+      const res = await fetch(`${SPONSOR_API}/drivers/${driverId}/reverse-points`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+        body: JSON.stringify({
+          points,
+          reason: reason || undefined,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Failed to reverse points");
+
+      setDriverSuccess(`Reversed ${data.reversedPoints} points. New balance: ${data.newBalance} points.`);
+      setReversePointsInput((prev) => ({ ...prev, [driverId]: "" }));
+      setReverseReasonInput((prev) => ({ ...prev, [driverId]: "" }));
+      fetchDrivers();
+    } catch (err) {
+      setDriverError(err.message);
+    } finally {
+      setReversingDriverId(null);
+    }
+  };
+
+  const handleExportReportPdf = async () => {
+    setDriverError("");
+    setDriverSuccess("");
+    setExportingReport(true);
+    try {
+      const res = await fetch(`${SPONSOR_API}/reports/points.pdf`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+
+      if (!res.ok) {
+        let message = "Failed to export report";
+        try {
+          const data = await res.json();
+          message = data.error || message;
+        } catch {
+          // Ignore non-JSON responses.
+        }
+        throw new Error(message);
+      }
+
+      const blob = await res.blob();
+      const downloadUrl = window.URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = downloadUrl;
+      link.download = `sponsor-points-report-${new Date().toISOString().slice(0, 10)}.pdf`;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      window.URL.revokeObjectURL(downloadUrl);
+      setDriverSuccess("Report exported as PDF.");
+    } catch (err) {
+      setDriverError(err.message);
+    } finally {
+      setExportingReport(false);
     }
   };
 
@@ -495,7 +572,7 @@ export default function SponsorProfile({ token, onLogout, onChangeUsername }) {
 
         {/* Tab bar */}
         <div style={{ display: "flex", gap: 8, marginBottom: 20 }}>
-          {["drivers", "applications", "catalog"].map((tab) => (
+          {["drivers", "applications", "catalog", "reports"].map((tab) => (
             <button
               key={tab}
               type="button"
@@ -565,6 +642,7 @@ export default function SponsorProfile({ token, onLogout, onChangeUsername }) {
                     <tr style={{ borderBottom: "2px solid #e5e7eb" }}>
                       <th style={{ textAlign: "left", padding: "8px 12px" }}>Email</th>
                       <th style={{ textAlign: "left", padding: "8px 12px" }}>Status</th>
+                      <th style={{ textAlign: "left", padding: "8px 12px" }}>Points</th>
                       <th style={{ textAlign: "left", padding: "8px 12px" }}>Reason</th>
                       <th style={{ textAlign: "left", padding: "8px 12px" }}>Reliability</th>
                       <th style={{ textAlign: "left", padding: "8px 12px" }}>Actions</th>
@@ -575,6 +653,9 @@ export default function SponsorProfile({ token, onLogout, onChangeUsername }) {
                     <tr key={d.driverId} style={{ borderBottom: "1px solid #f3f4f6" }}>
                       <td style={{ padding: "10px 12px" }}>{d.flagged ? "🚩" : ""}  {d.email}</td>
                       <td style={{ padding: "10px 12px" }}><StatusBadge status={d.status} /></td>
+                      <td style={{ padding: "10px 12px", fontWeight: 600 }}>
+                        {d.currentPoints != null ? `${Number(d.currentPoints).toLocaleString()} pts` : "—"}
+                      </td>
                       <td style={{ padding: "10px 12px", color: "#6b7280", fontSize: 12 }}>
                         {d.blockReason || "—"}
                       </td>
@@ -615,7 +696,9 @@ export default function SponsorProfile({ token, onLogout, onChangeUsername }) {
                         </div>
                       </td>
                       <td style={{ padding: "10px 12px" }}>
-                        {d.status?.toLowerCase() !== "blocked" ? (
+                        {!d.driverId ? (
+                          <span style={{ color: "#9ca3af", fontSize: 12 }}>Pending application</span>
+                        ) : d.status?.toLowerCase() !== "blocked" ? (
                           <div style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" }}>
                             <input
                               type="text"
@@ -640,19 +723,95 @@ export default function SponsorProfile({ token, onLogout, onChangeUsername }) {
                             >
                               Block
                             </button>
+                            <input
+                              type="number"
+                              min="1"
+                              placeholder="Reverse pts"
+                              value={reversePointsInput[d.driverId] || ""}
+                              onChange={(e) =>
+                                setReversePointsInput((prev) => ({ ...prev, [d.driverId]: e.target.value }))
+                              }
+                              style={{
+                                padding: "5px 8px", borderRadius: 6,
+                                border: "1px solid #d1d5db", fontSize: 12, width: 110
+                              }}
+                            />
+                            <input
+                              type="text"
+                              placeholder="Reason (optional)"
+                              value={reverseReasonInput[d.driverId] || ""}
+                              onChange={(e) =>
+                                setReverseReasonInput((prev) => ({ ...prev, [d.driverId]: e.target.value }))
+                              }
+                              style={{
+                                padding: "5px 8px", borderRadius: 6,
+                                border: "1px solid #d1d5db", fontSize: 12, minWidth: 150
+                              }}
+                            />
+                            <button
+                              type="button"
+                              disabled={reversingDriverId === d.driverId}
+                              onClick={() => handleReversePoints(d.driverId)}
+                              style={{
+                                padding: "5px 12px",
+                                borderRadius: 6,
+                                border: "none",
+                                background: "#7c3aed",
+                                color: "#fff",
+                                fontWeight: 600,
+                                cursor: reversingDriverId === d.driverId ? "not-allowed" : "pointer",
+                                fontSize: 12,
+                                opacity: reversingDriverId === d.driverId ? 0.7 : 1,
+                              }}
+                            >
+                              {reversingDriverId === d.driverId ? "Reversing..." : "Reverse Points"}
+                            </button>
                           </div>
                         ) : (
-                          <button
-                            type="button"
-                            onClick={() => handleUnblock(d.driverId)}
-                            style={{
-                              padding: "5px 12px", borderRadius: 6, border: "none",
-                              background: "#10b981", color: "#fff", fontWeight: 600,
-                              cursor: "pointer", fontSize: 12
-                            }}
-                          >
-                            Unblock
-                          </button>
+                          <div style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" }}>
+                            <button
+                              type="button"
+                              onClick={() => handleUnblock(d.driverId)}
+                              style={{
+                                padding: "5px 12px", borderRadius: 6, border: "none",
+                                background: "#10b981", color: "#fff", fontWeight: 600,
+                                cursor: "pointer", fontSize: 12
+                              }}
+                            >
+                              Unblock
+                            </button>
+                            <input
+                              type="number"
+                              min="1"
+                              placeholder="Reverse pts"
+                              value={reversePointsInput[d.driverId] || ""}
+                              onChange={(e) =>
+                                setReversePointsInput((prev) => ({ ...prev, [d.driverId]: e.target.value }))
+                              }
+                              style={{
+                                padding: "5px 8px", borderRadius: 6,
+                                border: "1px solid #d1d5db", fontSize: 12, width: 110
+                              }}
+                            />
+                            <button
+                              type="button"
+                              disabled={reversingDriverId === d.driverId}
+                              onClick={() => handleReversePoints(d.driverId)}
+                              style={{
+                                padding: "5px 12px",
+                                borderRadius: 6,
+                                border: "none",
+                                background: "#7c3aed",
+                                color: "#fff",
+                                fontWeight: 600,
+                                cursor: reversingDriverId === d.driverId ? "not-allowed" : "pointer",
+                                fontSize: 12,
+                                opacity: reversingDriverId === d.driverId ? 0.7 : 1,
+                              }}
+                            >
+                              {reversingDriverId === d.driverId ? "Reversing..." : "Reverse Points"}
+                            </button>
+                          </div>
                         )}
                       </td>
                     </tr>
@@ -825,6 +984,41 @@ export default function SponsorProfile({ token, onLogout, onChangeUsername }) {
                 })}
               </div>
             )}
+          </div>
+        )}
+
+        {/* Reports tab */}
+        {!driverLoading && activeTab === "reports" && (
+          <div
+            style={{
+              border: "1px solid #e5e7eb",
+              borderRadius: 12,
+              padding: 18,
+              background: "var(--card, #fff)",
+              maxWidth: 700,
+            }}
+          >
+            <h3 style={{ margin: "0 0 6px", fontSize: 18 }}>Sponsor Reports</h3>
+            <p style={{ margin: "0 0 16px", color: "#6b7280", fontSize: 14 }}>
+              Export your sponsor driver points summary and recent point activity as a PDF file.
+            </p>
+            <button
+              type="button"
+              disabled={exportingReport}
+              onClick={handleExportReportPdf}
+              style={{
+                padding: "10px 16px",
+                borderRadius: 8,
+                border: "none",
+                background: "#111827",
+                color: "#fff",
+                fontWeight: 700,
+                cursor: exportingReport ? "not-allowed" : "pointer",
+                opacity: exportingReport ? 0.7 : 1,
+              }}
+            >
+              {exportingReport ? "Preparing PDF..." : "Export Report as PDF"}
+            </button>
           </div>
         )}
 
