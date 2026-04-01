@@ -1,6 +1,7 @@
 const express = require("express");
 const pool = require("../db");
 const requireActiveSession = require("../middleware/requireActiveSession");
+const PDFDocument = require("pdfkit");
 
 const router = express.Router();
 
@@ -16,6 +17,21 @@ function parsePositiveInt(value) {
 function parseNonNegativeInt(value) {
   const n = Number.parseInt(String(value), 10);
   return Number.isInteger(n) && n >= 0 ? n : null;
+}
+
+async function tableExists(tableName, conn = null) {
+  const client = conn || pool;
+  const [rows] = await client.query(
+    `
+    SELECT 1
+    FROM information_schema.TABLES
+    WHERE TABLE_SCHEMA = DATABASE()
+      AND TABLE_NAME = ?
+    LIMIT 1
+    `,
+    [tableName]
+  );
+  return !!rows[0];
 }
 
 function normalizeSearchTerm(value) {
@@ -359,11 +375,13 @@ router.get("/drivers", async (req, res) => {
         `
         SELECT
           NULL AS driverId,
+          NULL AS userId,
           SUBSTRING_INDEX(u.email, '@', 1) AS name,
           u.email,
           'pending' AS status,
           NULL AS joinedOn,
-          NULL AS startingPoints
+          NULL AS startingPoints,
+          NULL AS currentPoints
         FROM driver_applications da
         JOIN users u ON u.id = da.driver_user_id
         WHERE da.sponsor_id = ? AND da.status = 'PENDING'
@@ -381,11 +399,13 @@ router.get("/drivers", async (req, res) => {
         `
         SELECT
           d.id AS driverId,
+          d.user_id AS userId,
           SUBSTRING_INDEX(u.email, '@', 1) AS name,
           u.email,
           LOWER(d.status) AS status,
           d.joined_on AS joinedOn,
-          d.starting_points AS startingPoints
+          d.starting_points AS startingPoints,
+          u.points AS currentPoints
         FROM drivers d
         JOIN users u ON u.id = d.user_id
         WHERE d.sponsor_id = ? AND d.status = ?
@@ -402,11 +422,13 @@ router.get("/drivers", async (req, res) => {
       `
       SELECT
         d.id AS driverId,
+        d.user_id AS userId,
         SUBSTRING_INDEX(u.email, '@', 1) AS name,
         u.email,
         LOWER(d.status) AS status,
         d.joined_on AS joinedOn,
-        d.starting_points AS startingPoints
+        d.starting_points AS startingPoints,
+        u.points AS currentPoints
       FROM drivers d
       JOIN users u ON u.id = d.user_id
       WHERE d.sponsor_id = ?
@@ -420,11 +442,13 @@ router.get("/drivers", async (req, res) => {
       `
       SELECT
         NULL AS driverId,
+        NULL AS userId,
         SUBSTRING_INDEX(u.email, '@', 1) AS name,
         u.email,
         'pending' AS status,
         NULL AS joinedOn,
-        NULL AS startingPoints
+        NULL AS startingPoints,
+        NULL AS currentPoints
       FROM driver_applications da
       JOIN users u ON u.id = da.driver_user_id
       WHERE da.sponsor_id = ? AND da.status = 'PENDING'
@@ -656,11 +680,13 @@ router.patch("/drivers/:driverId/starting-points", async (req, res) => {
       `
       SELECT
         d.id AS driverId,
+        d.user_id AS userId,
         SUBSTRING_INDEX(u.email, '@', 1) AS name,
         u.email,
         LOWER(d.status) AS status,
         d.joined_on AS joinedOn,
-        d.starting_points AS startingPoints
+        d.starting_points AS startingPoints,
+        u.points AS currentPoints
       FROM drivers d
       JOIN users u ON u.id = d.user_id
       WHERE d.id = ? AND d.sponsor_id = ?
@@ -673,6 +699,232 @@ router.patch("/drivers/:driverId/starting-points", async (req, res) => {
   } catch (err) {
     console.error(err);
     return res.status(500).json({ ok: false, error: "failed to set starting points" });
+  }
+});
+
+/**
+ * POST /sponsor/drivers/:driverId/reverse-points
+ * Body: { points: number, reason?: string }
+ * Story 10781 — Sponsor reverses points that were awarded by mistake.
+ */
+router.post("/drivers/:driverId/reverse-points", async (req, res) => {
+  const sponsorId = getSponsorIdFromSession(req);
+  if (!sponsorId) return res.status(400).json({ ok: false, error: "sponsor account is not linked" });
+
+  const driverId = parsePositiveInt(req.params.driverId);
+  if (!driverId) return res.status(400).json({ ok: false, error: "invalid driverId" });
+
+  const points = parsePositiveInt(req.body?.points);
+  if (!points) {
+    return res.status(400).json({ ok: false, error: "points must be a positive integer" });
+  }
+
+  const reasonInput = req.body?.reason != null ? String(req.body.reason).trim() : "";
+  const reason =
+    (reasonInput || "Points reversed by sponsor due to mistaken award").slice(0, 255);
+
+  const conn = await pool.getConnection();
+  try {
+    await conn.beginTransaction();
+
+    const [driverRows] = await conn.query(
+      `
+      SELECT d.id, d.user_id, u.points AS currentPoints
+      FROM drivers d
+      JOIN users u ON u.id = d.user_id
+      WHERE d.id = ? AND d.sponsor_id = ?
+      LIMIT 1
+      FOR UPDATE
+      `,
+      [driverId, sponsorId]
+    );
+
+    const driver = driverRows[0];
+    if (!driver) {
+      await conn.rollback();
+      return res.status(404).json({ ok: false, error: "driver not found under your sponsor" });
+    }
+
+    const currentPoints = Number(driver.currentPoints || 0);
+    if (currentPoints < points) {
+      await conn.rollback();
+      return res.status(409).json({
+        ok: false,
+        error: "driver does not have enough points to reverse this amount",
+        currentPoints,
+      });
+    }
+
+    const newBalance = currentPoints - points;
+    await conn.query("UPDATE users SET points = ? WHERE id = ? LIMIT 1", [newBalance, driver.user_id]);
+
+    if (await tableExists("driver_points_history", conn)) {
+      await conn.query(
+        `
+        INSERT INTO driver_points_history (driver_user_id, points_change, reason, created_at)
+        VALUES (?, ?, ?, NOW())
+        `,
+        [driver.user_id, -points, `Sponsor reversal: ${reason}`]
+      );
+    }
+
+    await writeAudit({
+      category: "POINTS_REVERSED",
+      actorUserId: req.user.id,
+      targetUserId: driver.user_id,
+      sponsorId,
+      success: 1,
+      details: `reversed ${points} points for driverId=${driverId}; reason=${reason}`,
+      conn,
+    });
+
+    await conn.commit();
+    return res.json({
+      ok: true,
+      driverId,
+      reversedPoints: points,
+      newBalance,
+      reason,
+    });
+  } catch (err) {
+    await conn.rollback();
+    console.error(err);
+    return res.status(500).json({ ok: false, error: "failed to reverse points" });
+  } finally {
+    conn.release();
+  }
+});
+
+/**
+ * GET /sponsor/reports/points.pdf
+ * Story 10791 — Sponsor can export points report as a PDF.
+ */
+router.get("/reports/points.pdf", async (req, res) => {
+  const sponsorId = getSponsorIdFromSession(req);
+  if (!sponsorId) return res.status(400).json({ ok: false, error: "sponsor account is not linked" });
+
+  try {
+    const [[sponsor]] = await pool.query(
+      "SELECT id, name FROM sponsors WHERE id = ? LIMIT 1",
+      [sponsorId]
+    );
+    if (!sponsor) return res.status(404).json({ ok: false, error: "sponsor not found" });
+
+    const hasHistory = await tableExists("driver_points_history");
+    const [driverRows] = hasHistory
+      ? await pool.query(
+          `
+          SELECT
+            d.id AS driverId,
+            u.email,
+            LOWER(d.status) AS driverStatus,
+            u.points AS currentPoints,
+            COALESCE(SUM(CASE WHEN h.points_change > 0 THEN h.points_change ELSE 0 END), 0) AS totalAwarded,
+            COALESCE(SUM(CASE WHEN h.points_change < 0 THEN ABS(h.points_change) ELSE 0 END), 0) AS totalReversed,
+            COALESCE(SUM(h.points_change), 0) AS netChange
+          FROM drivers d
+          JOIN users u ON u.id = d.user_id
+          LEFT JOIN driver_points_history h ON h.driver_user_id = d.user_id
+          WHERE d.sponsor_id = ?
+          GROUP BY d.id, u.email, d.status, u.points
+          ORDER BY u.email ASC
+          `,
+          [sponsorId]
+        )
+      : await pool.query(
+          `
+          SELECT
+            d.id AS driverId,
+            u.email,
+            LOWER(d.status) AS driverStatus,
+            u.points AS currentPoints,
+            0 AS totalAwarded,
+            0 AS totalReversed,
+            0 AS netChange
+          FROM drivers d
+          JOIN users u ON u.id = d.user_id
+          WHERE d.sponsor_id = ?
+          ORDER BY u.email ASC
+          `,
+          [sponsorId]
+        );
+
+    const [historyRows] = hasHistory
+      ? await pool.query(
+          `
+          SELECT
+            h.created_at AS occurredAt,
+            u.email,
+            h.points_change AS pointsChange,
+            h.reason
+          FROM driver_points_history h
+          JOIN users u ON u.id = h.driver_user_id
+          JOIN drivers d ON d.user_id = h.driver_user_id
+          WHERE d.sponsor_id = ?
+          ORDER BY h.created_at DESC
+          LIMIT 120
+          `,
+          [sponsorId]
+        )
+      : [[]];
+
+    const now = new Date();
+    const dateLabel = now.toISOString().slice(0, 10);
+    const filename = `sponsor-points-report-${dateLabel}.pdf`;
+
+    res.setHeader("Content-Type", "application/pdf");
+    res.setHeader("Content-Disposition", `attachment; filename="${filename}"`);
+
+    const doc = new PDFDocument({ size: "LETTER", margin: 40 });
+    doc.pipe(res);
+
+    doc.fontSize(18).text("Sponsor Points Report");
+    doc.moveDown(0.3);
+    doc.fontSize(11).text(`Sponsor: ${sponsor.name}`);
+    doc.text(`Generated: ${now.toLocaleString()}`);
+    doc.moveDown(1);
+
+    const totalDrivers = driverRows.length;
+    const awarded = driverRows.reduce((sum, row) => sum + Number(row.totalAwarded || 0), 0);
+    const reversed = driverRows.reduce((sum, row) => sum + Number(row.totalReversed || 0), 0);
+    const currentTotal = driverRows.reduce((sum, row) => sum + Number(row.currentPoints || 0), 0);
+
+    doc.fontSize(12).text(`Total Drivers: ${totalDrivers}`);
+    doc.text(`Total Awarded: ${awarded} pts`);
+    doc.text(`Total Reversed: ${reversed} pts`);
+    doc.text(`Current Points Across Drivers: ${currentTotal} pts`);
+    doc.moveDown(1);
+
+    doc.fontSize(13).text("Driver Summary");
+    doc.moveDown(0.4);
+    driverRows.forEach((row) => {
+      const line =
+        `${row.email} | status=${row.driverStatus} | ` +
+        `current=${row.currentPoints} | awarded=${row.totalAwarded} | reversed=${row.totalReversed}`;
+      doc.fontSize(10).text(line, { width: 530 });
+    });
+
+    doc.moveDown(1);
+    doc.fontSize(13).text("Recent Point Activity");
+    doc.moveDown(0.4);
+    if (!historyRows.length) {
+      doc.fontSize(10).text("No point history rows found.");
+    } else {
+      historyRows.forEach((row) => {
+        const occurred = row.occurredAt ? new Date(row.occurredAt).toLocaleString() : "Unknown date";
+        const sign = Number(row.pointsChange || 0) >= 0 ? "+" : "";
+        const line = `${occurred} | ${row.email} | ${sign}${row.pointsChange} pts | ${row.reason || "No reason"}`;
+        doc.fontSize(9).text(line, { width: 530 });
+      });
+    }
+
+    doc.end();
+  } catch (err) {
+    console.error(err);
+    if (!res.headersSent) {
+      return res.status(500).json({ ok: false, error: "failed to export report pdf" });
+    }
+    return null;
   }
 });
 
