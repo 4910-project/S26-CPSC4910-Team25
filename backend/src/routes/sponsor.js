@@ -385,7 +385,8 @@ router.get("/drivers", async (req, res) => {
           u.email,
           LOWER(d.status) AS status,
           d.joined_on AS joinedOn,
-          d.starting_points AS startingPoints
+          d.starting_points AS startingPoints,
+          d.flagged
         FROM drivers d
         JOIN users u ON u.id = d.user_id
         WHERE d.sponsor_id = ? AND d.status = ?
@@ -406,7 +407,8 @@ router.get("/drivers", async (req, res) => {
         u.email,
         LOWER(d.status) AS status,
         d.joined_on AS joinedOn,
-        d.starting_points AS startingPoints
+        d.starting_points AS startingPoints,
+        d.flagged
       FROM drivers d
       JOIN users u ON u.id = d.user_id
       WHERE d.sponsor_id = ?

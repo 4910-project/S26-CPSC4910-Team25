@@ -573,7 +573,7 @@ export default function SponsorProfile({ token, onLogout, onChangeUsername }) {
                   <tbody>
                     {sortedDrivers.map((d) => (
                     <tr key={d.driverId} style={{ borderBottom: "1px solid #f3f4f6" }}>
-                      <td style={{ padding: "10px 12px" }}>{d.email}</td>
+                      <td style={{ padding: "10px 12px" }}>{d.flagged ? "🚩" : ""}  {d.email}</td>
                       <td style={{ padding: "10px 12px" }}><StatusBadge status={d.status} /></td>
                       <td style={{ padding: "10px 12px", color: "#6b7280", fontSize: 12 }}>
                         {d.blockReason || "—"}
