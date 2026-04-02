@@ -1143,7 +1143,7 @@ export default function AdminDashboard({ token, onLogout }) {
               <div>
                 <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
                   <span style={{ fontWeight: 700, fontSize: 15 }}>
-                    🔔 Driver Notifications
+                    🔔 Notifications
                   </span>
                   {!notificationsEnabled && (
                     <span
@@ -1162,7 +1162,7 @@ export default function AdminDashboard({ token, onLogout }) {
                 </div>
                 <div style={{ fontSize: 13, color: "var(--muted)", marginTop: 4 }}>
                   {notificationsEnabled
-                    ? "Drivers can currently see rejection and dropped status alerts on their dashboard."
+                    ? "Drivers can currently see rejection and dropped status alerts on their dashboard. Sponsors can see drivers who have been flagged/warned"
                     : "All driver notification banners are suppressed. Re-enable once the incident is resolved."}
                 </div>
               </div>

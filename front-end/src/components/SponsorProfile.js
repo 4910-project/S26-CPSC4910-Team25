@@ -53,7 +53,14 @@ export default function SponsorProfile({ token, onLogout, onChangeUsername }) {
   const [catalogCat,     setCatalogCat]     = useState(CAT_CATEGORIES[0]);
   const [catalogLoading, setCatalogLoading] = useState(false);
 
-  // ─── Existing profile fetch (unchanged) ────────────────────────────────────
+  // Notifications --------------------------
+  const [notificationsEnabled, setNotificationsEnabled] = useState(true);
+  const [dismissedIds, setDismissedIds] = useState([]);
+  const [droppedDismissed, setDroppedDismissed] = useState(false);
+  const [flagDismissedIds, setFlagDismissedIds] = useState([]);
+  
+
+  // ─── Existing profile fetch ────────────────────────────────────
   const fetchProfile = useCallback(async () => {
     try {
       setLoading(true);
@@ -89,6 +96,22 @@ export default function SponsorProfile({ token, onLogout, onChangeUsername }) {
   useEffect(() => {
     fetchProfile();
   }, [fetchProfile]);
+
+  // Notifications Fetch
+  useEffect(() => {
+      if (!token) return;
+      (async () => {
+        try {
+          const res = await fetch(`${SPONSOR_API}/settings/notifications`, {
+            headers: {Authorization: `Bearer ${token}`},
+          });
+          const data = await res.json();
+          if (res.ok) setNotificationsEnabled(data.notifications_enabled);
+        } catch(err) {
+          console.error(err);
+        }
+      }) ();
+    }, [token]);
 
   const handleChange = (e) => {
     setProfile({ ...profile, [e.target.name]: e.target.value });
@@ -134,7 +157,7 @@ export default function SponsorProfile({ token, onLogout, onChangeUsername }) {
     setSuccess("");
   };
 
-  // ─── NEW: Driver management functions ──────────────────────────────────────
+  // ─── Driver management functions ──────────────────────────────────────
 
   const fetchDrivers = useCallback(async () => {
     setDriverLoading(true);
@@ -147,6 +170,7 @@ export default function SponsorProfile({ token, onLogout, onChangeUsername }) {
       if (!res.ok) throw new Error(data.error || "Failed to fetch drivers");
       const driverList = data.drivers || [];
       setDrivers(driverList);
+      
 
       // Fetch existing ratings for all drivers in parallel
       const ratingEntries = await Promise.all(
@@ -198,6 +222,7 @@ export default function SponsorProfile({ token, onLogout, onChangeUsername }) {
     }
   }, [token]);
 
+
   // ─── Catalog functions ─────────────────────────────────────────────────────
 
   const fetchHiddenIds = useCallback(async () => {
@@ -216,6 +241,10 @@ export default function SponsorProfile({ token, onLogout, onChangeUsername }) {
       setDriverError(err.message);
     }
   }, [token]);
+
+  useEffect(() => {
+    fetchDrivers();
+  }, [fetchDrivers]);
 
   useEffect(() => {
     if (activeTab === "drivers") fetchDrivers();
@@ -450,6 +479,7 @@ export default function SponsorProfile({ token, onLogout, onChangeUsername }) {
     }
   };
 
+
   // ─── Status badge helper ────────────────────────────────────────────────────
   const StatusBadge = ({ status }) => {
     const colors = {
@@ -475,10 +505,48 @@ export default function SponsorProfile({ token, onLogout, onChangeUsername }) {
 
   if (loading) {
     return <div className="sponsor-profile-container"><div className="loading">Loading profile...</div></div>;
-  }
-
+  }                
+                
   return (
     <div className="sponsor-profile-container">
+      {/* -- Notification Banners */}
+      {notificationsEnabled && drivers
+        .filter(d => d.flagged === 1 && !flagDismissedIds.includes(d.driverId))
+        .map(d => (
+          <div key={d.driverId} style={{
+            background: "#fef2f2",
+            border: "1px solid #fca5a5",
+            borderRadius: 10,
+            padding: "12px 16px",
+            marginBottom: 12,
+            display: "flex",
+            justifyContent: "space-between",
+            alignItems: "center",
+          }}>
+            <div>
+              <div style={{ fontWeight: 700, color: "#991b1b", fontSize: 14}}>
+                🚩 Driver Flagged - {d.email}
+              </div>  
+              {d.adminNote && (
+                <div style={{ color: "#b91c1c", fontSize: 13, marginTop: 4}}>
+                  Note: {d.adminNote}
+                </div>
+              )}
+            </div>
+            <button
+              type="button"
+              onClick={() => setFlagDismissedIds(prev => [...prev, d.driverId])}
+              style={{
+                background: "none", border: "none",
+                fontSize: 18, cursor: "pointer",
+                color: "#991b1b", lineHeight: 1, padding: "0 4px",
+              }}
+            >
+              ×
+            </button>
+          </div>
+        ))
+      }
       {/* ── Page header ── */}
       <div className="profile-header">
         <h1>Sponsor Profile</h1>
@@ -495,7 +563,7 @@ export default function SponsorProfile({ token, onLogout, onChangeUsername }) {
       {error && <div className="error-message">{error}</div>}
       {success && <div className="success-message">{success}</div>}
 
-      {/* ── Existing profile form (100% unchanged) ── */}
+      {/* ── Existing profile form ── */}
       <form onSubmit={handleSubmit} className="profile-form">
         <div className="form-section">
           <h2>Company Information</h2>
@@ -566,7 +634,7 @@ export default function SponsorProfile({ token, onLogout, onChangeUsername }) {
         )}
       </form>
 
-      {/* ── NEW: Driver Management Section ── */}
+      {/* ── Driver Management Section ── */}
       <div className="form-section" style={{ marginTop: 40 }}>
         <h2>Driver Management</h2>
 

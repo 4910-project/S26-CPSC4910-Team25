@@ -430,7 +430,8 @@ router.get("/drivers", async (req, res) => {
         d.joined_on AS joinedOn,
         d.starting_points AS startingPoints,
         d.flagged,
-        u.points AS currentPoints
+        u.points AS currentPoints,
+        d.admin_note AS adminNote
       FROM drivers d
       JOIN users u ON u.id = d.user_id
       WHERE d.sponsor_id = ?
