@@ -1163,7 +1163,7 @@ export default function AdminDashboard({ token, onLogout }) {
                 <div style={{ fontSize: 13, color: "var(--muted)", marginTop: 4 }}>
                   {notificationsEnabled
                     ? "Drivers can currently see rejection and dropped status alerts on their dashboard. Sponsors can see drivers who have been flagged/warned"
-                    : "All driver notification banners are suppressed. Re-enable once the incident is resolved."}
+                    : "All driver and sponsor notification banners are suppressed. Re-enable once the incident is resolved."}
                 </div>
               </div>
 

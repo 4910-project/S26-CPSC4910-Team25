@@ -1142,4 +1142,17 @@ router.post("/catalog/unhide", async (req, res) => {
   }
 });
 
+//GET /api/settings/notifications
+router.get("/settings/notifications", async(req, res) => {
+  const [rows] = await pool.query(
+    `
+    SELECT setting_value
+    FROM system_settings
+    WHERE setting_key = 'notifications_enabled'
+    LIMIT 1
+    `
+  );
+  return res.json({ ok: true, notifications_enabled: rows[0]?.setting_value !== "false" });
+});
+
 module.exports = router;
