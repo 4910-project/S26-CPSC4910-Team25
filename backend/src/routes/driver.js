@@ -1,8 +1,32 @@
 const express = require("express");
+const path = require("path");
+const fs = require("fs");
+const multer = require("multer");
 const pool = require("../db");
 const auth = require("../middleware/auth"); // JWT middleware
 
 const router = express.Router();
+
+// ── Multer setup for profile photos ──────────────────────────────────────────
+const uploadsDir = path.join(__dirname, "../../uploads");
+if (!fs.existsSync(uploadsDir)) fs.mkdirSync(uploadsDir, { recursive: true });
+
+const photoStorage = multer.diskStorage({
+  destination: (req, file, cb) => cb(null, uploadsDir),
+  filename: (req, file, cb) => {
+    const ext = path.extname(file.originalname).toLowerCase();
+    cb(null, `driver-${req.user.id}-${Date.now()}${ext}`);
+  },
+});
+
+const photoUpload = multer({
+  storage: photoStorage,
+  limits: { fileSize: 5 * 1024 * 1024 }, // 5MB
+  fileFilter: (req, file, cb) => {
+    if (file.mimetype.startsWith("image/")) cb(null, true);
+    else cb(new Error("Only image files are allowed"));
+  },
+});
 
 function parsePositiveInt(value) {
   const n = Number.parseInt(String(value), 10);
@@ -485,6 +509,220 @@ router.get("/driver/catalog/hidden", async (req, res) => {
   } catch (err) {
     console.error(err);
     return res.status(500).json({ ok: false, error: "failed to fetch hidden products" });
+  }
+});
+
+/**
+ * GET /api/driver/cart
+ * Returns all cart items for the authenticated driver.
+ */
+router.get("/driver/cart", async (req, res) => {
+  const userId = parsePositiveInt(req.user?.id);
+  if (!userId) return res.status(401).json({ ok: false, error: "invalid session" });
+
+  try {
+    const [rows] = await pool.query(
+      `SELECT id,
+              product_id       AS itunes_track_id,
+              product_name,
+              artwork_url      AS product_image_url,
+              points_cost      AS price_in_points,
+              artist_name      AS artist,
+              media_type       AS kind,
+              added_at
+       FROM driver_cart WHERE driver_user_id = ? ORDER BY added_at DESC`,
+      [userId]
+    );
+    return res.json({ ok: true, cart: rows });
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({ ok: false, error: "Failed to fetch cart" });
+  }
+});
+
+/**
+ * POST /api/driver/cart
+ * Body: { itunes_track_id, product_name, product_image_url, price_in_points, artist, kind }
+ * Adds an item; silently no-ops on duplicate (returns existing row id).
+ */
+router.post("/driver/cart", async (req, res) => {
+  const userId = parsePositiveInt(req.user?.id);
+  if (!userId) return res.status(401).json({ ok: false, error: "invalid session" });
+
+  const { itunes_track_id, product_name, product_image_url, price_in_points, artist, kind } = req.body || {};
+  if (!itunes_track_id || !product_name) {
+    return res.status(400).json({ ok: false, error: "itunes_track_id and product_name are required" });
+  }
+
+  try {
+    await pool.query(
+      `INSERT INTO driver_cart (driver_user_id, product_id, product_name, artwork_url, points_cost, artist_name, media_type)
+       VALUES (?, ?, ?, ?, ?, ?, ?)
+       ON DUPLICATE KEY UPDATE id = id`,
+      [userId, String(itunes_track_id), String(product_name), product_image_url || null,
+       Number(price_in_points) || 0, artist || null, kind || null]
+    );
+    const [rows] = await pool.query(
+      "SELECT id FROM driver_cart WHERE driver_user_id = ? AND product_id = ? LIMIT 1",
+      [userId, String(itunes_track_id)]
+    );
+    return res.json({ ok: true, id: rows[0]?.id });
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({ ok: false, error: "Failed to add to cart" });
+  }
+});
+
+/**
+ * DELETE /api/driver/cart/:itemId
+ * Removes a cart item by its row id (must belong to the authenticated driver).
+ */
+router.delete("/driver/cart/:itemId", async (req, res) => {
+  const userId = parsePositiveInt(req.user?.id);
+  if (!userId) return res.status(401).json({ ok: false, error: "invalid session" });
+
+  const itemId = parsePositiveInt(req.params.itemId);
+  if (!itemId) return res.status(400).json({ ok: false, error: "invalid itemId" });
+
+  try {
+    await pool.query(
+      "DELETE FROM driver_cart WHERE id = ? AND driver_user_id = ?",
+      [itemId, userId]
+    );
+    return res.json({ ok: true });
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({ ok: false, error: "Failed to remove from cart" });
+  }
+});
+
+/**
+ * GET /api/driver/wishlist
+ * Returns all wishlist items for the authenticated driver.
+ */
+router.get("/driver/wishlist", async (req, res) => {
+  const userId = parsePositiveInt(req.user?.id);
+  if (!userId) return res.status(401).json({ ok: false, error: "invalid session" });
+
+  try {
+    const [rows] = await pool.query(
+      `SELECT id, itunes_track_id, product_name, product_image_url, price_in_points, added_at
+       FROM driver_wishlist WHERE driver_id = ? ORDER BY added_at DESC`,
+      [userId]
+    );
+    return res.json({ ok: true, wishlist: rows });
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({ ok: false, error: "Failed to fetch wishlist" });
+  }
+});
+
+/**
+ * POST /api/driver/wishlist
+ * Body: { itunes_track_id, product_name, product_image_url, price_in_points }
+ * Adds an item; silently no-ops if already wishlisted (returns existing row id).
+ */
+router.post("/driver/wishlist", async (req, res) => {
+  const userId = parsePositiveInt(req.user?.id);
+  if (!userId) return res.status(401).json({ ok: false, error: "invalid session" });
+
+  const { itunes_track_id, product_name, product_image_url, price_in_points } = req.body || {};
+  if (!itunes_track_id || !product_name) {
+    return res.status(400).json({ ok: false, error: "itunes_track_id and product_name are required" });
+  }
+
+  try {
+    await pool.query(
+      `INSERT INTO driver_wishlist (driver_id, itunes_track_id, product_name, product_image_url, price_in_points)
+       VALUES (?, ?, ?, ?, ?)
+       ON DUPLICATE KEY UPDATE id = id`,
+      [userId, String(itunes_track_id), String(product_name), product_image_url || null, Number(price_in_points) || 0]
+    );
+    const [rows] = await pool.query(
+      "SELECT id FROM driver_wishlist WHERE driver_id = ? AND itunes_track_id = ? LIMIT 1",
+      [userId, String(itunes_track_id)]
+    );
+    return res.json({ ok: true, id: rows[0]?.id });
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({ ok: false, error: "Failed to add to wishlist" });
+  }
+});
+
+/**
+ * DELETE /api/driver/wishlist/:itemId
+ * Removes a wishlist item by its row id (must belong to the authenticated driver).
+ */
+router.delete("/driver/wishlist/:itemId", async (req, res) => {
+  const userId = parsePositiveInt(req.user?.id);
+  if (!userId) return res.status(401).json({ ok: false, error: "invalid session" });
+
+  const itemId = parsePositiveInt(req.params.itemId);
+  if (!itemId) return res.status(400).json({ ok: false, error: "invalid itemId" });
+
+  try {
+    await pool.query(
+      "DELETE FROM driver_wishlist WHERE id = ? AND driver_id = ?",
+      [itemId, userId]
+    );
+    return res.json({ ok: true });
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({ ok: false, error: "Failed to remove from wishlist" });
+  }
+});
+
+/**
+ * GET /api/driver/photo
+ * Returns the current profile photo URL for the authenticated driver.
+ */
+router.get("/driver/photo", async (req, res) => {
+  const userId = parsePositiveInt(req.user?.id);
+  if (!userId) return res.status(401).json({ ok: false, error: "invalid session" });
+
+  try {
+    const [rows] = await pool.query(
+      "SELECT profile_photo_url FROM users WHERE id = ? LIMIT 1",
+      [userId]
+    );
+    if (!rows.length) return res.status(404).json({ ok: false, error: "User not found" });
+    return res.json({ ok: true, photoUrl: rows[0].profile_photo_url || null });
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({ ok: false, error: "Failed to fetch photo" });
+  }
+});
+
+/**
+ * POST /api/driver/photo
+ * Uploads a new profile photo for the authenticated driver.
+ * Expects multipart/form-data with field name "photo".
+ */
+router.post("/driver/photo", (req, res, next) => {
+  photoUpload.single("photo")(req, res, (err) => {
+    if (err) {
+      const msg = err.code === "LIMIT_FILE_SIZE"
+        ? "File size must be under 5MB"
+        : err.message || "Upload failed";
+      return res.status(400).json({ ok: false, error: msg });
+    }
+    next();
+  });
+}, async (req, res) => {
+  const userId = parsePositiveInt(req.user?.id);
+  if (!userId) return res.status(401).json({ ok: false, error: "invalid session" });
+  if (!req.file) return res.status(400).json({ ok: false, error: "No file uploaded" });
+
+  const photoUrl = `/uploads/${req.file.filename}`;
+  try {
+    await pool.query(
+      "UPDATE users SET profile_photo_url = ? WHERE id = ? LIMIT 1",
+      [photoUrl, userId]
+    );
+    return res.json({ ok: true, photoUrl });
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({ ok: false, error: "Failed to save photo" });
   }
 });
 

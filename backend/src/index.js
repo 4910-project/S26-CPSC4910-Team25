@@ -13,6 +13,7 @@ if (!process.env.JWT_SECRET) {
 
 const express = require("express");
 const cors = require("cors");
+const path = require("path");
 const pool = require("./db");
 
 const { runArchiveSponsorsJob } = require("./jobs/archiveSponsorsJob");
@@ -40,6 +41,9 @@ app.use(
 );
 
 app.use(express.json());
+
+// Serve uploaded profile photos
+app.use("/uploads", express.static(path.join(__dirname, "../uploads")));
 
 
 app.use((req, res, next) => {
@@ -98,11 +102,63 @@ app.get("/health", async (req, res) => {
 });
 
 
+// Helper: add a column only if it doesn't already exist (MySQL 5.7 compatible)
+async function addColumnIfMissing(table, column, definition) {
+  const [rows] = await pool.query(
+    `SELECT 1 FROM information_schema.COLUMNS
+     WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ? AND COLUMN_NAME = ?
+     LIMIT 1`,
+    [table, column]
+  );
+  if (!rows.length) {
+    await pool.query(`ALTER TABLE \`${table}\` ADD COLUMN \`${column}\` ${definition}`);
+  }
+}
+
 (async () => {
   try {
     const conn = await pool.getConnection();
     console.log("Connected to MySQL database");
     conn.release();
+
+    await addColumnIfMissing("users",    "profile_photo_url", "VARCHAR(500) NULL DEFAULT NULL");
+    await addColumnIfMissing("sponsors", "org_photo_url",     "VARCHAR(500) NULL DEFAULT NULL");
+
+    // Ensure driver cart table exists
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS driver_cart (
+        id                INT NOT NULL AUTO_INCREMENT,
+        driver_id         INT NOT NULL,
+        itunes_track_id   VARCHAR(50) NOT NULL,
+        product_name      VARCHAR(500) NOT NULL,
+        product_image_url VARCHAR(1000) NULL,
+        price_in_points   INT NOT NULL DEFAULT 0,
+        artist            VARCHAR(500) NULL,
+        kind              VARCHAR(100) NULL,
+        added_at          DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        PRIMARY KEY (id),
+        UNIQUE KEY uq_cart_driver_track (driver_id, itunes_track_id),
+        CONSTRAINT fk_cart_driver
+          FOREIGN KEY (driver_id) REFERENCES users(id) ON DELETE CASCADE
+      )
+    `);
+
+    // Ensure driver wishlist table exists
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS driver_wishlist (
+        id               INT NOT NULL AUTO_INCREMENT,
+        driver_id        INT NOT NULL,
+        itunes_track_id  VARCHAR(50) NOT NULL,
+        product_name     VARCHAR(500) NOT NULL,
+        product_image_url VARCHAR(1000) NULL,
+        price_in_points  INT NOT NULL DEFAULT 0,
+        added_at         DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        PRIMARY KEY (id),
+        UNIQUE KEY uq_driver_track (driver_id, itunes_track_id),
+        CONSTRAINT fk_wishlist_driver
+          FOREIGN KEY (driver_id) REFERENCES users(id) ON DELETE CASCADE
+      )
+    `);
   } catch (err) {
     console.error("connection failed:", err.message);
     process.exit(1);

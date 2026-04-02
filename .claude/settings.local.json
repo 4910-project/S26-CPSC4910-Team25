@@ -1,0 +1,15 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(xargs grep:*)",
+      "Bash(find /c/Users/newby/OneDrive/Documents/GitHub/S26-CPSC4910-Team25 -type f -name \"*.sql\" ! -path \"*/node_modules/*\" -exec grep -l \"users\" {} \\\\;)",
+      "Bash(grep -r \"CREATE TABLE.*users\\\\|ALTER TABLE.*users\" /c/Users/newby/OneDrive/Documents/GitHub/S26-CPSC4910-Team25 --include=\"*.sql\" --include=\"*.js\" ! -path \"*/node_modules/*\")",
+      "Bash(grep -r \"ALTER TABLE users.*points\\\\|ADD COLUMN.*points\" /c/Users/newby/OneDrive/Documents/GitHub/S26-CPSC4910-Team25 --include=\"*.js\" --include=\"*.sql\" ! -path \"*/node_modules/*\")",
+      "Bash(find /c/Users/newby/OneDrive/Documents/GitHub/S26-CPSC4910-Team25 -type f -name \"*.js\" ! -path \"*/node_modules/*\" -exec grep -l \"ALTER TABLE users.*ADD.*points\\\\|points.*INTEGER\" {} \\\\;)",
+      "Bash(grep -r \"cart\\\\|Cart\" /c/Users/newby/OneDrive/Documents/GitHub/S26-CPSC4910-Team25/backend --include=\"*.js\" ! -path \"*/node_modules/*\")",
+      "Bash(find /c/Users/newby/OneDrive/Documents/GitHub/S26-CPSC4910-Team25/backend/src/routes -name \"*.js\" -exec grep -l \"cart\\\\|Cart\" {} \\\\;)",
+      "Bash(node -e \"const pool = require\\('./src/db'\\); pool.query\\('SHOW TABLES'\\).then\\(\\([r]\\)=>r.forEach\\(t=>console.log\\(Object.values\\(t\\)[0]\\)\\)\\).then\\(\\(\\)=>process.exit\\(0\\)\\).catch\\(e=>{console.error\\(e.message\\);process.exit\\(1\\)}\\);\")",
+      "Bash(node -e ':*)"
+    ]
+  }
+}
