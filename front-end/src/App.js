@@ -212,7 +212,7 @@ export default function App() {
       {/* Catalogue — all roles */}
       <Route path="/catalogue" element={
         <AuthLayout userRole={userRole} onLogout={handleLogout} dark={dark} onToggleDark={toggleDark}>
-          <Catalogue token={token} initialPoints={1000} />
+          <Catalogue token={token} userRole={userRole} initialPoints={1000} />
         </AuthLayout>
       } />
 

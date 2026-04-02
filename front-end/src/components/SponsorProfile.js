@@ -1,7 +1,8 @@
 import React, { useState, useEffect, useCallback } from "react";
 import "./SponsorProfile.css";
 
-const SPONSOR_API  = "http://localhost:8001/sponsor";
+const SPONSOR_API   = "http://localhost:8001/sponsor";
+const BACKEND_BASE  = "http://localhost:8001";
 const ITUNES_API   = "https://itunes.apple.com/search";
 const CAT_CATEGORIES = [
   { label: "Music",  media: "music",    entity: "song"      },
@@ -12,6 +13,11 @@ const CAT_CATEGORIES = [
 ];
 
 export default function SponsorProfile({ token, onLogout, onChangeUsername }) {
+  // ─── Org photo state ────────────────────────────────────────────────────────
+  const [orgPhotoUrl,       setOrgPhotoUrl]       = useState(null);
+  const [orgPhotoUploading, setOrgPhotoUploading] = useState(false);
+  const [orgPhotoError,     setOrgPhotoError]     = useState("");
+
   // ─── Existing profile state (unchanged) ────────────────────────────────────
   const [profile, setProfile] = useState({
     company_name: "",
@@ -80,6 +86,7 @@ export default function SponsorProfile({ token, onLogout, onChangeUsername }) {
           zip_code: "",
           point_value: "0.01"
         });
+        setOrgPhotoUrl(data.orgPhotoUrl || null);
         setIsEditing(false);
       } else if (res.status === 404) {
         setIsEditing(true);
@@ -155,6 +162,34 @@ export default function SponsorProfile({ token, onLogout, onChangeUsername }) {
     setIsEditing(false);
     setError("");
     setSuccess("");
+  };
+
+  const handleOrgPhotoChange = async (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    if (file.size > 5 * 1024 * 1024) {
+      setOrgPhotoError("File size must be under 5MB");
+      return;
+    }
+    setOrgPhotoError("");
+    setOrgPhotoUploading(true);
+    try {
+      const formData = new FormData();
+      formData.append("photo", file);
+      const res = await fetch(`${SPONSOR_API}/org/photo`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${token}` },
+        body: formData,
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Upload failed");
+      setOrgPhotoUrl(data.orgPhotoUrl);
+    } catch (err) {
+      setOrgPhotoError(err.message);
+    } finally {
+      setOrgPhotoUploading(false);
+      e.target.value = "";
+    }
   };
 
   // ─── Driver management functions ──────────────────────────────────────
@@ -549,7 +584,36 @@ export default function SponsorProfile({ token, onLogout, onChangeUsername }) {
       }
       {/* ── Page header ── */}
       <div className="profile-header">
-        <h1>Sponsor Profile</h1>
+        <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
+          {/* Org logo */}
+          <div style={{ flexShrink: 0 }}>
+            {orgPhotoUrl ? (
+              <img
+                src={`${BACKEND_BASE}${orgPhotoUrl}`}
+                alt="Org logo"
+                style={{ width: 64, height: 64, borderRadius: 10, objectFit: "cover", border: "2px solid #e0e0e0" }}
+              />
+            ) : (
+              <div style={{ width: 64, height: 64, borderRadius: 10, background: "#e5e7eb", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 30, userSelect: "none" }}>
+                🏢
+              </div>
+            )}
+          </div>
+          <div>
+            <h1 style={{ margin: 0 }}>Sponsor Profile</h1>
+            <label style={{ cursor: orgPhotoUploading ? "not-allowed" : "pointer", fontSize: 13, color: "#4f46e5", fontWeight: 600, display: "block", marginTop: 2 }}>
+              {orgPhotoUploading ? "Uploading…" : "Change logo"}
+              <input
+                type="file"
+                accept="image/*"
+                style={{ display: "none" }}
+                onChange={handleOrgPhotoChange}
+                disabled={orgPhotoUploading}
+              />
+            </label>
+            {orgPhotoError && <div style={{ color: "#b91c1c", fontSize: 12, marginTop: 2 }}>{orgPhotoError}</div>}
+          </div>
+        </div>
         <div className="header-actions">
           {!isEditing && (
             <button onClick={() => setIsEditing(true)} className="btn-edit">Edit Profile</button>

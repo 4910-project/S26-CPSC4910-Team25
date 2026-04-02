@@ -321,3 +321,16 @@
   padding: 60px 0;
   color: var(--muted);
 }
+
+/* Wishlist heart button on product cards */
+.cat-wishlist-btn {
+  background: none;
+  border: none;
+  cursor: pointer;
+  font-size: 18px;
+  line-height: 1;
+  padding: 2px 4px;
+  transition: transform 0.1s;
+}
+.cat-wishlist-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+.cat-wishlist-btn:not(:disabled):hover { transform: scale(1.25); }

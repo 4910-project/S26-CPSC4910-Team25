@@ -3,6 +3,7 @@ import SponsorshipApply from "./SponsorshipApply";
 import FeedbackForm from "./feedbackForm";
 
 const API_BASE = "http://localhost:8001/api";
+const BACKEND_BASE = "http://localhost:8001";
 
 // ── Star rating component ─────────────────────────────────────────────────
 function StarRating({ value, onChange, readOnly = false }) {
@@ -60,10 +61,124 @@ export default function DriverProfile({ token, onLogout, onChangePassword, onCha
   const [applications, setApplications] = useState([null]); // applications state
   const [driverStatus, setDriverStatus] = useState(null);
 
-  // Notifications 
+  // Profile photo
+  const [photoUrl, setPhotoUrl] = useState(null);
+  const [photoUploading, setPhotoUploading] = useState(false);
+  const [photoError, setPhotoError] = useState("");
+
+  // Notifications
   const [notificationsEnabled, setNotificationsEnabled] = useState(true);
   const [dismissedIds, setDismissedIds] = useState([]);
   const [droppedDismissed, setDroppedDismissed] = useState(false);
+
+  // Wishlist tab state
+  const [wishlistItems,   setWishlistItems]   = useState([]);
+  const [wishlistLoading, setWishlistLoading] = useState(false);
+  const [wishlistError,   setWishlistError]   = useState("");
+
+  // Cart tab state
+  const [cartItems,   setCartItems]   = useState([]);
+  const [cartLoading, setCartLoading] = useState(false);
+  const [cartError,   setCartError]   = useState("");
+
+  // ── Profile photo fetch ───────────────────────────────────────────────────
+  useEffect(() => {
+    if (!token) return;
+    (async () => {
+      try {
+        const res = await fetch(`${API_BASE}/driver/photo`, {
+          headers: { Authorization: `Bearer ${token}` },
+        });
+        const data = await res.json();
+        if (res.ok) setPhotoUrl(data.photoUrl || null);
+      } catch (e) {
+        // silently ignore — default avatar will show
+      }
+    })();
+  }, [token]);
+
+  const handlePhotoChange = async (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    if (file.size > 5 * 1024 * 1024) {
+      setPhotoError("File size must be under 5MB");
+      return;
+    }
+    setPhotoError("");
+    setPhotoUploading(true);
+    try {
+      const formData = new FormData();
+      formData.append("photo", file);
+      const res = await fetch(`${API_BASE}/driver/photo`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${token}` },
+        body: formData,
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Upload failed");
+      setPhotoUrl(data.photoUrl);
+    } catch (err) {
+      setPhotoError(err.message);
+    } finally {
+      setPhotoUploading(false);
+      // Reset the input so the same file can be re-selected after an error
+      e.target.value = "";
+    }
+  };
+
+  // ── Wishlist fetch (fires when tab becomes active) ────────────────────────
+  useEffect(() => {
+    if (activeTab !== "wishlist" || !token) return;
+    setWishlistLoading(true);
+    setWishlistError("");
+    fetch(`${API_BASE}/driver/wishlist`, { headers: { Authorization: `Bearer ${token}` } })
+      .then(r => r.json())
+      .then(d => {
+        if (d.ok) setWishlistItems(d.wishlist || []);
+        else setWishlistError(d.error || "Failed to load wishlist");
+      })
+      .catch(() => setWishlistError("Failed to load wishlist"))
+      .finally(() => setWishlistLoading(false));
+  }, [activeTab, token]);
+
+  const handleWishlistRemove = async (itemId) => {
+    try {
+      await fetch(`${API_BASE}/driver/wishlist/${itemId}`, {
+        method: "DELETE",
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      setWishlistItems(prev => prev.filter(w => w.id !== itemId));
+    } catch {
+      setWishlistError("Failed to remove item");
+    }
+  };
+
+  // ── Cart fetch (fires when tab becomes active) ───────────────────────────
+  useEffect(() => {
+    if (activeTab !== "cart" || !token) return;
+    setCartLoading(true);
+    setCartError("");
+    fetch(`${API_BASE}/driver/cart`, { headers: { Authorization: `Bearer ${token}` } })
+      .then(r => r.json())
+      .then(d => {
+        if (d.ok) setCartItems(d.cart || []);
+        else setCartError(d.error || "Failed to load cart");
+      })
+      .catch(() => setCartError("Failed to load cart"))
+      .finally(() => setCartLoading(false));
+  }, [activeTab, token]);
+
+  const handleCartRemove = async (itemId) => {
+    try {
+      await fetch(`${API_BASE}/driver/cart/${itemId}`, {
+        method: "DELETE",
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      setCartItems(prev => prev.filter(c => c.id !== itemId));
+    } catch {
+      setCartError("Failed to remove item");
+    }
+  };
 
   // ── Points fetch ──────────────────────────────────────────────────────────
   useEffect(() => {
@@ -262,7 +377,36 @@ export default function DriverProfile({ token, onLogout, onChangePassword, onCha
     <div style={{ maxWidth: 900, margin: "30px auto", padding: 20 }}>
       {/* Header */}
       <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "center" }}>
-        <h1 style={{ margin: 0 }}>Driver Dashboard</h1>
+        <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
+          {/* Profile photo */}
+          <div style={{ flexShrink: 0 }}>
+            {photoUrl ? (
+              <img
+                src={`${BACKEND_BASE}${photoUrl}`}
+                alt="Profile"
+                style={{ width: 64, height: 64, borderRadius: "50%", objectFit: "cover", border: "2px solid var(--border, #d1d5db)" }}
+              />
+            ) : (
+              <div style={{ width: 64, height: 64, borderRadius: "50%", background: "var(--border, #e5e7eb)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 30, userSelect: "none" }}>
+                👤
+              </div>
+            )}
+          </div>
+          <div>
+            <h1 style={{ margin: 0 }}>Driver Dashboard</h1>
+            <label style={{ cursor: photoUploading ? "not-allowed" : "pointer", fontSize: 13, color: "#4f46e5", fontWeight: 600, display: "block", marginTop: 2 }}>
+              {photoUploading ? "Uploading…" : "Change photo"}
+              <input
+                type="file"
+                accept="image/*"
+                style={{ display: "none" }}
+                onChange={handlePhotoChange}
+                disabled={photoUploading}
+              />
+            </label>
+            {photoError && <div style={{ color: "#b91c1c", fontSize: 12, marginTop: 2 }}>{photoError}</div>}
+          </div>
+        </div>
         <div style={{ display: "flex", gap: 10 }}>
           <button style={btnSecondary} onClick={onChangeUsername} type="button">Change Username</button>
           <button style={btnSecondary} onClick={onChangePassword} type="button">Change Password</button>
@@ -271,7 +415,7 @@ export default function DriverProfile({ token, onLogout, onChangePassword, onCha
 
       {/* Tabs */}
       <div style={{ display: "flex", gap: 8, marginTop: 24, marginBottom: 24 }}>
-        {["dashboard", "sponsors", "feedback"].map((tab) => (
+        {["dashboard", "sponsors", "wishlist", "cart", "feedback"].map((tab) => (
           <button
             key={tab}
             type="button"
@@ -287,7 +431,7 @@ export default function DriverProfile({ token, onLogout, onChangePassword, onCha
               textTransform: "capitalize",
             }}
           >
-            {tab === "dashboard" ? "Dashboard" : tab === "sponsors" ? "Sponsor Reviews" : "Help & Feedback"}
+            {tab === "dashboard" ? "Dashboard" : tab === "sponsors" ? "Sponsor Reviews" : tab === "wishlist" ? "My Wishlist" : tab === "cart" ? "Cart" : "Help & Feedback"}
           </button>
         ))}
       </div>
@@ -608,6 +752,164 @@ export default function DriverProfile({ token, onLogout, onChangePassword, onCha
               </div>
             );
           })}
+        </div>
+      )}
+
+      {/* ── Cart tab ── */}
+      {activeTab === "cart" && (() => {
+        const cartTotal = cartItems.reduce((sum, item) => sum + Number(item.price_in_points || 0), 0);
+        const canAffordAll = points !== null && points >= cartTotal;
+        return (
+          <div>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: 4 }}>
+              <h2 style={{ margin: 0 }}>Cart</h2>
+              {points !== null && (
+                <span style={{ fontSize: 14, color: "var(--muted)" }}>
+                  Balance: <strong style={{ color: "var(--text)" }}>{Number(points).toLocaleString()} pts</strong>
+                </span>
+              )}
+            </div>
+            <p style={{ color: "var(--muted)", fontSize: 14, marginTop: 4, marginBottom: 20 }}>
+              Items you've added from the catalogue.
+            </p>
+
+            {cartError && (
+              <div style={{ padding: "10px 14px", borderRadius: 8, background: "#fef2f2", color: "#991b1b", marginBottom: 12 }}>
+                {cartError}
+              </div>
+            )}
+
+            {cartLoading && <p style={{ color: "var(--muted)" }}>Loading…</p>}
+
+            {!cartLoading && cartItems.length === 0 && !cartError && (
+              <p style={{ color: "var(--muted)" }}>Your cart is empty. Browse the catalogue to add items.</p>
+            )}
+
+            {!cartLoading && cartItems.length > 0 && (
+              <>
+                {cartItems.map(item => (
+                  <div key={item.id} style={{ ...card, marginBottom: 12, display: "flex", alignItems: "center", gap: 14 }}>
+                    {item.product_image_url && (
+                      <img
+                        src={item.product_image_url}
+                        alt={item.product_name}
+                        style={{ width: 56, height: 56, borderRadius: 8, objectFit: "contain", background: "#f3f4f6", flexShrink: 0 }}
+                      />
+                    )}
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div style={{ fontWeight: 700, fontSize: 15, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                        {item.product_name}
+                      </div>
+                      {item.artist && (
+                        <div style={{ color: "var(--muted)", fontSize: 12, marginTop: 1 }}>{item.artist}</div>
+                      )}
+                      <div style={{ color: "#e53935", fontWeight: 600, fontSize: 13, marginTop: 2 }}>
+                        {Number(item.price_in_points).toLocaleString()} pts
+                      </div>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => handleCartRemove(item.id)}
+                      style={{
+                        background: "none",
+                        border: "1px solid var(--border, #d1d5db)",
+                        borderRadius: 8,
+                        padding: "6px 12px",
+                        cursor: "pointer",
+                        color: "var(--text)",
+                        fontWeight: 600,
+                        fontSize: 13,
+                        flexShrink: 0,
+                      }}
+                    >
+                      Remove
+                    </button>
+                  </div>
+                ))}
+
+                <div style={{ ...card, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                  <div>
+                    <div style={{ fontSize: 13, color: "var(--muted)" }}>Total</div>
+                    <div style={{ fontSize: 22, fontWeight: 800, color: "#e53935" }}>
+                      {cartTotal.toLocaleString()} pts
+                    </div>
+                  </div>
+                  {points !== null && (
+                    <div style={{ textAlign: "right" }}>
+                      <div style={{ fontSize: 13, color: "var(--muted)" }}>Your balance</div>
+                      <div style={{ fontSize: 22, fontWeight: 800, color: canAffordAll ? "#059669" : "#dc2626" }}>
+                        {Number(points).toLocaleString()} pts
+                      </div>
+                      {!canAffordAll && (
+                        <div style={{ fontSize: 12, color: "#dc2626", marginTop: 2 }}>
+                          Need {(cartTotal - points).toLocaleString()} more pts
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
+              </>
+            )}
+          </div>
+        );
+      })()}
+
+      {/* ── Wishlist tab ── */}
+      {activeTab === "wishlist" && (
+        <div>
+          <h2 style={{ marginBottom: 4 }}>My Wishlist</h2>
+          <p style={{ color: "var(--muted)", fontSize: 14, marginTop: 0, marginBottom: 20 }}>
+            Items you've saved from the catalogue.
+          </p>
+
+          {wishlistError && (
+            <div style={{ padding: "10px 14px", borderRadius: 8, background: "#fef2f2", color: "#991b1b", marginBottom: 12 }}>
+              {wishlistError}
+            </div>
+          )}
+
+          {wishlistLoading && <p style={{ color: "var(--muted)" }}>Loading…</p>}
+
+          {!wishlistLoading && wishlistItems.length === 0 && !wishlistError && (
+            <p style={{ color: "var(--muted)" }}>No items saved yet. Hit ♡ on any catalogue item to save it here.</p>
+          )}
+
+          {!wishlistLoading && wishlistItems.map(item => (
+            <div key={item.id} style={{ ...card, marginBottom: 12, display: "flex", alignItems: "center", gap: 14 }}>
+              {item.product_image_url && (
+                <img
+                  src={item.product_image_url}
+                  alt={item.product_name}
+                  style={{ width: 56, height: 56, borderRadius: 8, objectFit: "contain", background: "#f3f4f6", flexShrink: 0 }}
+                />
+              )}
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ fontWeight: 700, fontSize: 15, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                  {item.product_name}
+                </div>
+                <div style={{ color: "#e53935", fontWeight: 600, fontSize: 13, marginTop: 2 }}>
+                  {Number(item.price_in_points).toLocaleString()} pts
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => handleWishlistRemove(item.id)}
+                style={{
+                  background: "none",
+                  border: "1px solid var(--border, #d1d5db)",
+                  borderRadius: 8,
+                  padding: "6px 12px",
+                  cursor: "pointer",
+                  color: "var(--text)",
+                  fontWeight: 600,
+                  fontSize: 13,
+                  flexShrink: 0,
+                }}
+              >
+                Remove
+              </button>
+            </div>
+          ))}
         </div>
       )}
 

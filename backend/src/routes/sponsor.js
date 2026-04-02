@@ -1,9 +1,33 @@
 const express = require("express");
+const path = require("path");
+const fs = require("fs");
+const multer = require("multer");
 const pool = require("../db");
 const requireActiveSession = require("../middleware/requireActiveSession");
 const PDFDocument = require("pdfkit");
 
 const router = express.Router();
+
+// ── Multer setup for org photos (same uploads dir as driver photos) ──────────
+const uploadsDir = path.join(__dirname, "../../uploads");
+if (!fs.existsSync(uploadsDir)) fs.mkdirSync(uploadsDir, { recursive: true });
+
+const orgPhotoStorage = multer.diskStorage({
+  destination: (req, file, cb) => cb(null, uploadsDir),
+  filename: (req, file, cb) => {
+    const ext = path.extname(file.originalname).toLowerCase();
+    cb(null, `sponsor-${req.user.id}-${Date.now()}${ext}`);
+  },
+});
+
+const orgPhotoUpload = multer({
+  storage: orgPhotoStorage,
+  limits: { fileSize: 5 * 1024 * 1024 }, // 5MB
+  fileFilter: (req, file, cb) => {
+    if (file.mimetype.startsWith("image/")) cb(null, true);
+    else cb(new Error("Only image files are allowed"));
+  },
+});
 
 const APP_STATUSES = new Set(["PENDING", "APPROVED", "REJECTED"]);
 const DRIVER_FILTERS = new Set(["ACTIVE", "DROPPED", "PENDING"]);
@@ -82,7 +106,8 @@ router.get("/org", async (req, res) => {
         address,
         contact_name AS contactName,
         contact_email AS contactEmail,
-        contact_phone AS contactPhone
+        contact_phone AS contactPhone,
+        org_photo_url AS orgPhotoUrl
       FROM sponsors
       WHERE id = ?
       LIMIT 1
@@ -153,6 +178,42 @@ router.patch("/org", async (req, res) => {
   } catch (err) {
     console.error(err);
     return res.status(500).json({ ok: false, error: "failed to update sponsor profile" });
+  }
+});
+
+/**
+ * POST /sponsor/org/photo
+ * Upload or replace the org logo/photo for the authenticated sponsor.
+ * Expects multipart/form-data with field name "photo".
+ *
+ * TODO: This photo can later be surfaced in the driver-facing catalogue header
+ *       to show the driver's active sponsor branding alongside the catalogue title.
+ */
+router.post("/org/photo", (req, res, next) => {
+  orgPhotoUpload.single("photo")(req, res, (err) => {
+    if (err) {
+      const msg = err.code === "LIMIT_FILE_SIZE"
+        ? "File size must be under 5MB"
+        : err.message || "Upload failed";
+      return res.status(400).json({ ok: false, error: msg });
+    }
+    next();
+  });
+}, async (req, res) => {
+  const sponsorId = getSponsorIdFromSession(req);
+  if (!sponsorId) return res.status(400).json({ ok: false, error: "sponsor account is not linked" });
+  if (!req.file) return res.status(400).json({ ok: false, error: "No file uploaded" });
+
+  const orgPhotoUrl = `/uploads/${req.file.filename}`;
+  try {
+    await pool.query(
+      "UPDATE sponsors SET org_photo_url = ? WHERE id = ? LIMIT 1",
+      [orgPhotoUrl, sponsorId]
+    );
+    return res.json({ ok: true, orgPhotoUrl });
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({ ok: false, error: "Failed to save photo" });
   }
 });
 

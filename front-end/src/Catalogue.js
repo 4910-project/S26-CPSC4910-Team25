@@ -81,7 +81,7 @@ function usePurchaseLog(serverLog)
   return [log, addEntry];
 }
  
-export default function Catalogue({ token, initialPoints = 100, onPointsChange }) 
+export default function Catalogue({ token, userRole, initialPoints = 100, onPointsChange })
 {
   const navigate = useNavigate();
   const [points,    setPoints]    = useState(initialPoints);
@@ -101,6 +101,32 @@ export default function Catalogue({ token, initialPoints = 100, onPointsChange }
     catch { return []; }
   });
   const [hiddenIds, setHiddenIds] = useState(new Set());
+
+  // wishlistMap: { [itunesTrackId]: dbRowId }
+  const [wishlistMap,     setWishlistMap]     = useState({});
+  const [wishlistPending, setWishlistPending] = useState(new Set());
+
+  // Seed cart from backend on mount (backend is source of truth for persistence)
+  useEffect(() => {
+    if (!token) return;
+    fetch(`${DRIVER_API}/driver/cart`, { headers: { Authorization: `Bearer ${token}` } })
+      .then(r => r.ok ? r.json() : null)
+      .then(d => {
+        if (!d?.cart) return;
+        const serverCart = d.cart.map(row => ({
+          id:       String(row.itunes_track_id),
+          name:     row.product_name,
+          artist:   row.artist   || "",
+          kind:     row.kind     || "Media",
+          artwork:  row.product_image_url || null,
+          cost:     row.price_in_points,
+          dbCartId: row.id,
+        }));
+        setCart(serverCart);
+        localStorage.setItem(CART_KEY, JSON.stringify(serverCart));
+      })
+      .catch(() => {}); // keep localStorage cart on failure
+  }, [token]);
  
   useEffect(() => { setPoints(initialPoints); }, [initialPoints]);
  
@@ -122,6 +148,57 @@ export default function Catalogue({ token, initialPoints = 100, onPointsChange }
       .catch(err => console.warn("Could not load purchase history:", err));
   }, [token]);
  
+  // Fetch existing wishlist for drivers
+  useEffect(() =>
+  {
+    if (!token || userRole !== "DRIVER") return;
+    fetch(`${DRIVER_API}/driver/wishlist`, { headers: { Authorization: `Bearer ${token}` } })
+      .then(r => r.ok ? r.json() : null)
+      .then(d => {
+        if (!d?.wishlist) return;
+        const map = {};
+        d.wishlist.forEach(w => { map[String(w.itunes_track_id)] = w.id; });
+        setWishlistMap(map);
+      })
+      .catch(() => {});
+  }, [token, userRole]);
+
+  async function toggleWishlist(item)
+  {
+    const trackId = getItemId(item);
+    if (!trackId || wishlistPending.has(trackId)) return;
+
+    setWishlistPending(prev => new Set([...prev, trackId]));
+    try {
+      if (wishlistMap[trackId] != null) {
+        // Remove
+        await fetch(`${DRIVER_API}/driver/wishlist/${wishlistMap[trackId]}`, {
+          method: "DELETE",
+          headers: { Authorization: `Bearer ${token}` },
+        });
+        setWishlistMap(prev => { const n = { ...prev }; delete n[trackId]; return n; });
+      } else {
+        // Add
+        const res = await fetch(`${DRIVER_API}/driver/wishlist`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+          body: JSON.stringify({
+            itunes_track_id:   trackId,
+            product_name:      item.trackName || item.collectionName || "Unknown",
+            product_image_url: bigArt(item.artworkUrl100) || null,
+            price_in_points:   toPoints(item.trackPrice ?? item.price ?? 0),
+          }),
+        });
+        const d = await res.json();
+        if (d.ok) setWishlistMap(prev => ({ ...prev, [trackId]: d.id }));
+      }
+    } catch (err) {
+      console.error("Wishlist toggle failed:", err);
+    } finally {
+      setWishlistPending(prev => { const n = new Set(prev); n.delete(trackId); return n; });
+    }
+  }
+
   // Fetch hidden product IDs from this driver's sponsor
   useEffect(() =>
   {
@@ -189,9 +266,42 @@ export default function Catalogue({ token, initialPoints = 100, onPointsChange }
       return [cartItem, ...prev];
     });
     setSelectedItem(null);
+
+    // Persist to backend (best-effort; store returned DB id back into cart item)
+    if (token) {
+      fetch(`${DRIVER_API}/driver/cart`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+        body: JSON.stringify({
+          itunes_track_id:   cartItem.id,
+          product_name:      cartItem.name,
+          product_image_url: cartItem.artwork || null,
+          price_in_points:   cartItem.cost,
+          artist:            cartItem.artist  || null,
+          kind:              cartItem.kind    || null,
+        }),
+      })
+        .then(r => r.ok ? r.json() : null)
+        .then(d => {
+          if (d?.ok && d.id) {
+            setCart(prev => prev.map(c => c.id === cartItem.id ? { ...c, dbCartId: d.id } : c));
+          }
+        })
+        .catch(() => {});
+    }
   }
 
   function removeFromCart(itemId) {
+    // Persist removal to backend (best-effort)
+    if (token) {
+      const target = cart.find(c => c.id === itemId);
+      if (target?.dbCartId) {
+        fetch(`${DRIVER_API}/driver/cart/${target.dbCartId}`, {
+          method: "DELETE",
+          headers: { Authorization: `Bearer ${token}` },
+        }).catch(() => {});
+      }
+    }
     setCart((prev) => prev.filter((item) => item.id !== itemId));
   }
 
@@ -452,11 +562,14 @@ export default function Catalogue({ token, initialPoints = 100, onPointsChange }
             {!loading && items.length === 0 && <div className="cat-empty">No results found.</div>}
             <div className="cat-grid">
               {items.filter(item => !hiddenIds.has(String(item.trackId || item.collectionId))).map(item => {
-                const cost      = toPoints(item.trackPrice ?? item.price ?? 0);
-                const canAfford = points >= cost;
-                const name      = item.trackName || item.collectionName || "Unknown";
-                const img       = bigArt(item.artworkUrl100);
-                const isFree    = !parseFloat(item.trackPrice ?? item.price ?? 0);
+                const cost        = toPoints(item.trackPrice ?? item.price ?? 0);
+                const canAfford   = points >= cost;
+                const name        = item.trackName || item.collectionName || "Unknown";
+                const img         = bigArt(item.artworkUrl100);
+                const isFree      = !parseFloat(item.trackPrice ?? item.price ?? 0);
+                const trackId     = getItemId(item);
+                const isWishlisted = wishlistMap[trackId] != null;
+                const isPending    = wishlistPending.has(trackId);
                 return (
                   <div key={item.trackId || item.collectionId} className="cat-card" style={{ opacity: canAfford ? 1 : 0.5 }}>
                     {img && <img src={img} alt={name} />}
@@ -468,6 +581,18 @@ export default function Catalogue({ token, initialPoints = 100, onPointsChange }
                       )}
                       <div className="cat-card-footer">
                         <span className="cat-card-pts">{cost.toLocaleString()} pts</span>
+                        {userRole === "DRIVER" && (
+                          <button
+                            type="button"
+                            className="cat-wishlist-btn"
+                            title={isWishlisted ? "Remove from wishlist" : "Add to wishlist"}
+                            disabled={isPending}
+                            onClick={(e) => { e.stopPropagation(); toggleWishlist(item); }}
+                            style={{ color: isWishlisted ? "#e53935" : "var(--muted)" }}
+                          >
+                            {isWishlisted ? "♥" : "♡"}
+                          </button>
+                        )}
                         <button
                           className="cat-buy"
                           disabled={!canAfford}
