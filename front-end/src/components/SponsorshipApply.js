@@ -22,13 +22,14 @@ function ApplyModal({ sponsor, token, onClose}) {
                 },
                 body: JSON.stringify({
                     sponsor_id: sponsor.sponsorId,
+                    statement: form.statement,
                 }),
             });
 
             const data = await res.json();
             if (!res.ok) throw new Error(data.error || "failed to submit application");
             setSubmitted(true);
-            setTimeout(onClose, 2200);
+            setTimeout(() => onClose(data), 2200);
         } catch (err) {
             setError(err.message);
         } finally {
@@ -185,12 +186,31 @@ function ApplyModal({ sponsor, token, onClose}) {
         );
     }
 
+
 export default function SponsorshipApply({ token }) {
     const [sponsors, setSponsors] = useState([]);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState("");
     const [activeSponsor, setActiveSponsor] = useState(null);
-    const [applied, setApplied] = useState([]);
+    const [applied, setApplied] = useState({});
+
+    const handleWithdraw = async (appId, sponsorId) => {
+    try {
+        const res = await fetch(`http://localhost:8001/api/apps/${appId}/cancel`, {
+            headers: { Authorization: `Bearer ${token}` },
+            method: "PATCH"
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error (data.error || "Failed to withdraw application");
+        setApplied(prev => {
+            const updated = {...prev};
+            delete updated[sponsorId];
+            return updated;
+        });
+    } catch (err) {
+        console.error(err);
+    }
+    };
 
     const fetchSponsors = useCallback(async () => {
         setLoading(true);
@@ -215,28 +235,31 @@ export default function SponsorshipApply({ token }) {
         fetchSponsors();
     }, [fetchSponsors]);
 
-    useEffect(() => {
-        if (!token) return;
-        (async () => {
-            try {
-                const res = await fetch("http://localhost:8001/api/driver/applications", {
-                    headers: {Authorization: `Bearer ${token}`},
-                });
-                const appsData = await res.json();
-                console.log("raw applications:", appsData.applications)
-                if (res.ok) {
-                    const pendingIds = (appsData.applications || [])
-                        .filter(a => a.status === "PENDING" || a.status === "pending")
-                        .map(a => Number(a.sponsor_id));
-                    console.log("pendingIds:", pendingIds);
-                    console.log("sponsor sponsorIs:", sponsors.map(s => Number(s.sponsorId)));
-                    setApplied(pendingIds);
-                }
-            } catch (err) {
-                console.error(err);
+    const fetchApplied = useCallback(async () => {
+        try {
+            const res = await fetch(`http://localhost:8001/api/driver/applications`, {
+                headers: { Authorization: `Bearer ${token}` },
+            });
+            const appsData = await res.json();
+
+            if (res.ok) {
+                const appliedMap = {};
+                (appsData.applications || [])
+                    .filter(a => a.status === "PENDING" || a.status === "pending")
+                    .forEach(a => {
+                        appliedMap[Number(a.sponsor_id)] = a.applicationId;
+                    });
+                setApplied(appliedMap);
             }
-        }) ();
-    }, [token, sponsors]);
+        } catch (err) {
+            console.error(err);
+        }
+    }, [token]);
+    
+    useEffect(() => {
+        fetchApplied();
+    }, [fetchApplied]);
+
 
     if (loading) return <p style={{ color: "var(--text-muted, #6b7280)" }}>Loading sponsors...</p>;
     if (error) return <div className="error-message">{error}</div>;
@@ -246,7 +269,9 @@ export default function SponsorshipApply({ token }) {
         <>
             <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
                 {sponsors.map((sponsor) => {
-                    const isApplied = applied.includes(Number(sponsor.sponsorId));
+                    const appId = applied[Number(sponsor.sponsorId)];
+                    const isApplied = !!appId;
+    
                     return (
                         <div
                             key={sponsor.sponsorId}
@@ -274,53 +299,65 @@ export default function SponsorshipApply({ token }) {
 
                             <div style={{ display: "flex", alignItems: "center", gap: 12, flexShrink: 0 }}>
                                 {sponsor.point_value && (
-                            <span style={{
-                                fontSize: 12, fontWeight: 600,
-                                color: "#4f46e5",
-                                background: "#ede9fe",
-                                borderRadius: 20, padding: "3px 12px",
-                            }}>
-                                ${parseFloat(sponsor.point_value).toFixed(2)} / pt
-                            </span>
-                            )}
-                            <button
-                            onClick={() => !isApplied && setActiveSponsor(sponsor)}
-                            disabled={isApplied}
-                            style={{
-                                padding: "8px 18px", borderRadius: 8,
-                                border: "none",
-                                background: isApplied ? "var(--bg, #f3f4f6)" : "#4f46e5",
-                                color: isApplied ? "var(--text-muted, #9ca3af)" : "#fff",
-                                fontWeight: 600, fontSize: 13,
-                                cursor: isApplied ? "default" : "pointer",
-                                transition: "opacity 0.15s",
-                            }}
-                            onMouseEnter={e => { if (!isApplied) e.currentTarget.style.opacity = "0.85"; }}
-                            onMouseLeave={e => { e.currentTarget.style.opacity = "1"; }}
-                            >
-                            {isApplied ? "✓ Applied" : "Apply Now"}
-                            </button>
-                        </div>
+                                <span style={{
+                                    fontSize: 12, fontWeight: 600,
+                                    color: "#4f46e5",
+                                    background: "#ede9fe",
+                                    borderRadius: 20, padding: "3px 12px",
+                                }}>
+                                    ${parseFloat(sponsor.point_value).toFixed(2)} / pt
+                                </span>
+                                )}
+                                <button
+                                    onClick={() => !isApplied && setActiveSponsor(sponsor)}
+                                    disabled={isApplied}
+                                    style={{
+                                        padding: "8px 18px", borderRadius: 8,
+                                        border: "none",
+                                        background: isApplied ? "var(--bg, #f3f4f6)" : "#4f46e5",
+                                        color: isApplied ? "var(--text-muted, #9ca3af)" : "#fff",
+                                        fontWeight: 600, fontSize: 13,
+                                        cursor: isApplied ? "default" : "pointer",
+                                        transition: "opacity 0.15s",
+                                    }}
+                                    onMouseEnter={e => { if (!isApplied) e.currentTarget.style.opacity = "0.85"; }}
+                                    onMouseLeave={e => { e.currentTarget.style.opacity = "1"; }}
+                                >
+                                    {isApplied ? "✓ Applied" : "Apply Now"}
+                                </button>
+                            
+                                {isApplied && (
+                                    <button
+                                        onClick={() => handleWithdraw(appId, Number(sponsor.sponsorId))}
+                                        style={{
+                                            padding: "8px 18px", borderRadius: 8,
+                                            border: "none",
+                                            background: "#ef4444",
+                                            color: "#fff",
+                                            fontWeight: 600, fontSize: 13,
+                                            cursor: "pointer"
+                                        }}
+                                    >
+                                        Withdraw Application
+                                    </button>
+                                )}
+                            </div>
                         </div>
                     );
-                    })}
-                </div>
+                })}
+            </div>
+                    
 
-                {activeSponsor && (
-                    <ApplyModal
-                        sponsor={activeSponsor}
-                        token={token}
-                        onClose={() => {
-                            setApplied((prev) => [...prev, Number(activeSponsor.sponsor_id)]);
-                            setActiveSponsor(null);
-                        }}
-                    />
-                )}
-            </>
-        );
-    }
-
-
-                        
-
-                            
+            {activeSponsor && (
+                <ApplyModal
+                    sponsor={activeSponsor}
+                    token={token}
+                    onClose={async () => {
+                        setActiveSponsor(null);
+                        await fetchApplied();      
+                    }}
+                />
+            )}
+        </>
+    );
+}
