@@ -72,6 +72,8 @@ function usePurchaseLog(serverLog)
   {
     setLog(prev =>
     {
+      const alreadyOwned = prev.some(e => e.name === entry.name && e.artist === entry.artist);
+      if (alreadyOwned) return prev;
       const updated = [entry, ...prev];
       localStorage.setItem(LOG_KEY, JSON.stringify(updated));
       return updated;
@@ -199,6 +201,12 @@ export default function Catalogue({ token, initialPoints = 100, onPointsChange }
     const { closePreview = false, removeFromCartId = null } = options;
     const normalized = toCartItem(item, cat.label);
     const cost = normalized.cost;
+
+    if (log.some(e => e.name === normalized.name && e.artist === normalized.artist)) {
+      showToast("You already own this item.", "error");
+      if (closePreview) setSelectedItem(null);
+      return;
+    }
 
     if (cost > points) {
       showToast("Not enough points!", "error");
