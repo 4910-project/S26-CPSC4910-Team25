@@ -1,6 +1,6 @@
 import React, { useState } from "react";
 
-const API_BASE = "http://localhost:8001/api";
+//const API_BASE = "http://localhost:8001/api";
 
 const CATEGORIES = [
   "Bug Report",
@@ -12,7 +12,7 @@ const CATEGORIES = [
   "Other",
 ];
 
-export default function FeedbackForm({ token }) {
+export default function FeedbackForm({ token, apiBase }) {
   const [category, setCategory] = useState("");
   const [message, setMessage] = useState("");
   const [status, setStatus] = useState({ type: "", text: "" });
@@ -34,7 +34,7 @@ export default function FeedbackForm({ token }) {
 
     setLoading(true);
     try {
-      const res = await fetch(`${API_BASE}/driver/feedback`, {
+      const res = await fetch(`${apiBase}/feedback`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",

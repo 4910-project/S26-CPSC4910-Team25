@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useCallback } from "react";
 import "./SponsorProfile.css";
+import FeedbackForm from "./feedbackForm";
 
 const SPONSOR_API   = "http://localhost:8001/sponsor";
 const BACKEND_BASE  = "http://localhost:8001";
@@ -45,6 +46,7 @@ export default function SponsorProfile({ token, onLogout, onChangeUsername }) {
   const [activeTab, setActiveTab] = useState("drivers");     // "drivers" | "applications" | "catalog" | "reports"
   const [ratings, setRatings] = useState({});               // { [driverId]: "thumbs_up" | "thumbs_down" | null }
   const [sortByRating, setSortByRating] = useState(false);  // when true, sort thumbs_up to top
+  const [sortByPoints, setSortByPoints] = useState(false); // when true, sort in descending order
   const [reversePointsInput, setReversePointsInput] = useState({}); // { [driverId]: "25" }
   const [reverseReasonInput, setReverseReasonInput] = useState({}); // { [driverId]: "reason" }
   const [reversingDriverId, setReversingDriverId] = useState(null);
@@ -704,7 +706,7 @@ export default function SponsorProfile({ token, onLogout, onChangeUsername }) {
 
         {/* Tab bar */}
         <div style={{ display: "flex", gap: 8, marginBottom: 20 }}>
-          {["drivers", "applications", "catalog", "reports"].map((tab) => (
+          {["drivers", "applications", "catalog", "reports", "help & feedback"].map((tab) => (
             <button
               key={tab}
               type="button"
@@ -739,9 +741,17 @@ export default function SponsorProfile({ token, onLogout, onChangeUsername }) {
                 ratings[d.driverId] === "thumbs_up" ? 1 :
                 ratings[d.driverId] === "thumbs_down" ? -1 : 0;
 
-              const sortedDrivers = sortByRating
-                ? [...drivers].sort((a, b) => ratingScore(b) - ratingScore(a))
-                : drivers;
+                const sortedDrivers = (() => {
+                  let list = [...drivers];
+                  if (sortByRating) {
+                    list.sort((a,b) => ratingScore(b) - ratingScore(a));
+                  }
+                  if (sortByPoints) {
+                    list.sort((a, b) => Number(b.currentPoints || 0) - Number(a.currentPoints || 0));
+                  }
+                  return list;
+                }) ();
+  
 
               return (
               <div>
@@ -766,6 +776,29 @@ export default function SponsorProfile({ token, onLogout, onChangeUsername }) {
                     }}
                   >
                     👍 {sortByRating ? "Sorted by reliability" : "Sort by reliability"}
+                  </button>
+                </div>
+
+                <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: 10 }}>
+                  <button
+                    type="button"
+                    onClick={() => setSortByPoints((s) => !s)}
+                    style={{
+                      display: "flex",
+                      alignItems: "center",
+                      gap: 6,
+                      padding: "6px 14px",
+                      borderRadius: 8,
+                      border: sortByPoints ? "2px solid #16a34a" : "1px solid var(--border, #d1d5db)",
+                      background: sortByPoints ? "#dcfce7" : "var(--card, #fff)",
+                      color: sortByPoints ? "#15803d" : "inherit",
+                      fontWeight: 600,
+                      fontSize: 13,
+                      cursor: "pointer",
+                      transition: "all 0.15s",
+                    }}
+                  >
+                    {sortByPoints ? "Sorted by points descending" : "Sort by points"}
                   </button>
                 </div>
 
@@ -1153,8 +1186,13 @@ export default function SponsorProfile({ token, onLogout, onChangeUsername }) {
             </button>
           </div>
         )}
+        {/* ── Feedback tab ── */}
+        {activeTab === "help & feedback" && (
+          <FeedbackForm token={token} apiBase={SPONSOR_API} />
+        )}
 
       </div>
     </div>
   );
 }
+

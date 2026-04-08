@@ -915,7 +915,7 @@ export default function DriverProfile({ token, onLogout, onChangePassword, onCha
 
       {/* ── Feedback tab ── */}
       {activeTab === "feedback" && (
-        <FeedbackForm token={token} />
+        <FeedbackForm token={token} apiBase={`${API_BASE}/driver`} />
       )}
     </div>
   );
