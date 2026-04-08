@@ -143,6 +143,12 @@ async function addColumnIfMissing(table, column, definition) {
       )
     `);
 
+    await addColumnIfMissing("driver_cart", "is_available", "TINYINT(1) NOT NULL DEFAULT 1");
+    await addColumnIfMissing("driver_cart", "availability_message", "VARCHAR(255) NULL DEFAULT NULL");
+    await addColumnIfMissing("driver_cart", "availability_checked_at", "DATETIME NULL DEFAULT NULL");
+    await addColumnIfMissing("driver_cart", "availability_changed_at", "DATETIME NULL DEFAULT NULL");
+    await addColumnIfMissing("driver_cart", "availability_notified_at", "DATETIME NULL DEFAULT NULL");
+
     // Ensure driver wishlist table exists
     await pool.query(`
       CREATE TABLE IF NOT EXISTS driver_wishlist (
@@ -157,6 +163,56 @@ async function addColumnIfMissing(table, column, definition) {
         UNIQUE KEY uq_driver_track (driver_id, itunes_track_id),
         CONSTRAINT fk_wishlist_driver
           FOREIGN KEY (driver_id) REFERENCES users(id) ON DELETE CASCADE
+      )
+    `);
+
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS driver_friendships (
+        driver_user_id INT NOT NULL,
+        friend_user_id INT NOT NULL,
+        created_at     DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        PRIMARY KEY (driver_user_id, friend_user_id),
+        CONSTRAINT chk_driver_friendships_distinct
+          CHECK (driver_user_id <> friend_user_id),
+        CONSTRAINT fk_driver_friendships_driver
+          FOREIGN KEY (driver_user_id) REFERENCES users(id) ON DELETE CASCADE,
+        CONSTRAINT fk_driver_friendships_friend
+          FOREIGN KEY (friend_user_id) REFERENCES users(id) ON DELETE CASCADE
+      )
+    `);
+
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS sponsor_posts (
+        id               INT NOT NULL AUTO_INCREMENT,
+        sponsor_id       INT NOT NULL,
+        author_user_id   INT NOT NULL,
+        title            VARCHAR(150) NOT NULL,
+        body             TEXT NOT NULL,
+        created_at       DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        updated_at       DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+        PRIMARY KEY (id),
+        KEY idx_sponsor_posts_sponsor_created (sponsor_id, created_at),
+        CONSTRAINT fk_sponsor_posts_sponsor
+          FOREIGN KEY (sponsor_id) REFERENCES sponsors(id) ON DELETE CASCADE,
+        CONSTRAINT fk_sponsor_posts_author
+          FOREIGN KEY (author_user_id) REFERENCES users(id) ON DELETE CASCADE
+      )
+    `);
+
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS sponsor_post_comments (
+        id              INT NOT NULL AUTO_INCREMENT,
+        post_id         INT NOT NULL,
+        driver_user_id  INT NOT NULL,
+        comment_text    VARCHAR(500) NOT NULL,
+        created_at      DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        updated_at      DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+        PRIMARY KEY (id),
+        KEY idx_sponsor_post_comments_post_created (post_id, created_at),
+        CONSTRAINT fk_sponsor_post_comments_post
+          FOREIGN KEY (post_id) REFERENCES sponsor_posts(id) ON DELETE CASCADE,
+        CONSTRAINT fk_sponsor_post_comments_driver
+          FOREIGN KEY (driver_user_id) REFERENCES users(id) ON DELETE CASCADE
       )
     `);
   } catch (err) {

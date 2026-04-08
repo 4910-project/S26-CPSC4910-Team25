@@ -1,6 +1,7 @@
-import React, { useState, useEffect, useMemo } from "react";
+import React, { useState, useEffect, useMemo, useCallback } from "react";
 import "./Catalogue.css";
 import { useNavigate } from "react-router-dom";
+import { summarizeCartAvailability, isCartItemAvailable } from "./utils/cartAvailability";
  
 const API_BASE       = "http://localhost:8002/api/catalogue";
 const DRIVER_API     = "http://localhost:8001/api";
@@ -102,11 +103,44 @@ export default function Catalogue({ token, userRole, initialPoints = 100, onPoin
     try { return JSON.parse(localStorage.getItem(CART_KEY)) || []; }
     catch { return []; }
   });
+  const [cartNotices, setCartNotices] = useState([]);
+  const [cartWarning, setCartWarning] = useState("");
   const [hiddenIds, setHiddenIds] = useState(new Set());
 
   // wishlistMap: { [itunesTrackId]: dbRowId }
   const [wishlistMap,     setWishlistMap]     = useState({});
   const [wishlistPending, setWishlistPending] = useState(new Set());
+
+  const showToast = useCallback((msg, type = "success") => {
+    setToast({ msg, type });
+    setTimeout(() => setToast(null), 2800);
+  }, []);
+
+  const hydrateCartFromServer = useCallback((payload, options = {}) => {
+    const { showAvailabilityToast = false } = options;
+    if (!payload?.cart) return;
+
+    const serverCart = payload.cart.map(row => ({
+      id:       String(row.itunes_track_id),
+      name:     row.product_name,
+      artist:   row.artist   || "",
+      kind:     row.kind     || "Media",
+      artwork:  row.product_image_url || null,
+      cost:     row.price_in_points,
+      dbCartId: row.id,
+      is_available: row.is_available,
+      availability_message: row.availability_message,
+    }));
+
+    setCart(serverCart);
+    setCartNotices(payload.notifications || []);
+    setCartWarning(payload.warning || "");
+    localStorage.setItem(CART_KEY, JSON.stringify(serverCart));
+
+    if (showAvailabilityToast && Array.isArray(payload.notifications) && payload.notifications.length > 0) {
+      showToast(`${payload.notifications.length} cart item(s) are now unavailable.`, "error");
+    }
+  }, [showToast]);
 
   // Seed cart from backend on mount (backend is source of truth for persistence)
   useEffect(() => {
@@ -114,21 +148,24 @@ export default function Catalogue({ token, userRole, initialPoints = 100, onPoin
     fetch(`${DRIVER_API}/driver/cart`, { headers: { Authorization: `Bearer ${token}` } })
       .then(r => r.ok ? r.json() : null)
       .then(d => {
-        if (!d?.cart) return;
-        const serverCart = d.cart.map(row => ({
-          id:       String(row.itunes_track_id),
-          name:     row.product_name,
-          artist:   row.artist   || "",
-          kind:     row.kind     || "Media",
-          artwork:  row.product_image_url || null,
-          cost:     row.price_in_points,
-          dbCartId: row.id,
-        }));
-        setCart(serverCart);
-        localStorage.setItem(CART_KEY, JSON.stringify(serverCart));
+        hydrateCartFromServer(d);
       })
       .catch(() => {}); // keep localStorage cart on failure
-  }, [token]);
+  }, [token, hydrateCartFromServer]);
+
+  useEffect(() => {
+    if (!token || !showCart) return;
+    fetch(`${DRIVER_API}/driver/cart/recheck-availability`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${token}` },
+    })
+      .then(r => r.ok ? r.json() : null)
+      .then(d => {
+        if (!d?.cart) return;
+        hydrateCartFromServer(d, { showAvailabilityToast: true });
+      })
+      .catch(() => {});
+  }, [token, showCart, hydrateCartFromServer]);
  
   useEffect(() => { setPoints(initialPoints); }, [initialPoints]);
  
@@ -259,6 +296,9 @@ export default function Catalogue({ token, userRole, initialPoints = 100, onPoin
       return;
     }
 
+    cartItem.is_available = 1;
+    cartItem.availability_message = null;
+
     setCart((prev) => {
       if (prev.some((entry) => entry.id === cartItem.id)) {
         showToast("Item is already in your cart.", "error");
@@ -305,12 +345,34 @@ export default function Catalogue({ token, userRole, initialPoints = 100, onPoin
       }
     }
     setCart((prev) => prev.filter((item) => item.id !== itemId));
+    setCartNotices((prev) => prev.filter((notice) => String(notice.itemId) !== String(itemId)));
   }
 
   async function redeemItem(item, options = {}) {
     const { closePreview = false, removeFromCartId = null } = options;
     const normalized = toCartItem(item, cat.label);
     const cost = normalized.cost;
+
+    if (removeFromCartId && token) {
+      try {
+        const res = await fetch(`${DRIVER_API}/driver/cart/recheck-availability`, {
+          method: "POST",
+          headers: { Authorization: `Bearer ${token}` },
+        });
+        const data = await res.json();
+        if (res.ok && data?.cart) {
+          hydrateCartFromServer(data, { showAvailabilityToast: true });
+          const latestItem = (data.cart || []).find((row) => String(row.id) === String(item.dbCartId));
+          if (latestItem && !isCartItemAvailable(latestItem)) {
+            showToast(latestItem.availability_message || "Item unavailable.", "error");
+            if (closePreview) setSelectedItem(null);
+            return;
+          }
+        }
+      } catch (err) {
+        console.warn("Could not refresh cart availability before redeeming:", err);
+      }
+    }
 
     if (log.some(e => e.name === normalized.name && e.artist === normalized.artist)) {
       showToast("You already own this item.", "error");
@@ -391,19 +453,13 @@ export default function Catalogue({ token, userRole, initialPoints = 100, onPoin
     setBuying(false);
   }
  
-  function showToast(msg, type = "success") 
-  {
-    setToast({ msg, type });
-    setTimeout(() => setToast(null), 2800);
-  }
- 
   const confirmCost = useMemo(
     () => selectedItem ? toPoints(selectedItem.trackPrice ?? selectedItem.price ?? 0) : 0,
     [selectedItem]
   );
 
   const cartTotal = useMemo(
-    () => cart.reduce((sum, item) => sum + Number(item.cost || 0), 0),
+    () => summarizeCartAvailability(cart).availableTotal,
     [cart]
   );
  
@@ -514,21 +570,72 @@ export default function Catalogue({ token, userRole, initialPoints = 100, onPoin
         {showCart && (
           <div>
             <h3 style={{ color: "var(--text)", marginBottom: 12 }}>Cart</h3>
+            {cartNotices.length > 0 && (
+              <div
+                style={{
+                  marginBottom: 12,
+                  padding: "10px 12px",
+                  borderRadius: 10,
+                  background: "#fff7ed",
+                  color: "#9a3412",
+                  fontSize: 13,
+                }}
+              >
+                {cartNotices.map((notice) => (
+                  <div key={notice.itemId} style={{ marginBottom: 4 }}>
+                    {notice.productName}: {notice.message}
+                  </div>
+                ))}
+              </div>
+            )}
+            {cartWarning && (
+              <div
+                style={{
+                  marginBottom: 12,
+                  padding: "10px 12px",
+                  borderRadius: 10,
+                  background: "#eff6ff",
+                  color: "#1d4ed8",
+                  fontSize: 13,
+                }}
+              >
+                {cartWarning}
+              </div>
+            )}
             {cart.length === 0 ? (
               <div className="cat-empty">Your cart is empty.</div>
             ) : (
               <>
+                {summarizeCartAvailability(cart).unavailableItems.length > 0 && (
+                  <div style={{ marginBottom: 10, color: "#9a3412", fontSize: 13 }}>
+                    Unavailable items stay in your cart so you can review or remove them, but they can no longer be purchased.
+                  </div>
+                )}
                 <div style={{ marginBottom: 10, color: "var(--muted)", fontSize: 13 }}>
                   Total Cart Cost: <strong style={{ color: "var(--text)" }}>{cartTotal.toLocaleString()} pts</strong>
                 </div>
                 {cart.map((item) => {
-                  const canAfford = points >= Number(item.cost || 0);
+                  const available = isCartItemAvailable(item);
+                  const canAfford = available && points >= Number(item.cost || 0);
                   return (
-                    <div key={item.id} className="cat-log-item">
+                    <div
+                      key={item.id}
+                      className="cat-log-item"
+                      style={{
+                        border: available ? undefined : "1px solid #fdba74",
+                        background: available ? undefined : "#fff7ed",
+                        borderRadius: 12,
+                      }}
+                    >
                       {item.artwork && <img src={item.artwork} alt={item.name} />}
                       <div style={{ flex: 1 }}>
                         <div style={{ fontWeight: 600, color: "var(--text)", fontSize: 14 }}>{item.name}</div>
                         <div style={{ fontSize: 12, color: "var(--muted)" }}>{item.artist} · {item.kind}</div>
+                        {!available && (
+                          <div style={{ fontSize: 12, color: "#9a3412", marginTop: 4 }}>
+                            {item.availability_message || "Item unavailable. It can no longer be purchased."}
+                          </div>
+                        )}
                       </div>
                       <div style={{ display: "flex", gap: 6 }}>
                         <button
@@ -552,7 +659,7 @@ export default function Catalogue({ token, userRole, initialPoints = 100, onPoin
                           disabled={!canAfford || buying}
                           onClick={() => redeemItem(item, { removeFromCartId: item.id })}
                         >
-                          {buying ? "..." : canAfford ? `Redeem ${Number(item.cost).toLocaleString()} pts` : "Need pts"}
+                          {buying ? "..." : available ? (canAfford ? `Redeem ${Number(item.cost).toLocaleString()} pts` : "Need pts") : "Unavailable"}
                         </button>
                       </div>
                     </div>
