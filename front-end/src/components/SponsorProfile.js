@@ -46,7 +46,7 @@ export default function SponsorProfile({ token, onLogout, onChangeUsername }) {
   const [activeTab, setActiveTab] = useState("drivers");     // "drivers" | "applications" | "catalog" | "reports"
   const [ratings, setRatings] = useState({});               // { [driverId]: "thumbs_up" | "thumbs_down" | null }
   const [sortByRating, setSortByRating] = useState(false);  // when true, sort thumbs_up to top
-  const [sortByPoints, setSortByPoints] = useState(false); // when true, sort in descending order
+  const [sortByPoints, setSortByPoints] = useState(null); // null, desc, asc, null
   const [reversePointsInput, setReversePointsInput] = useState({}); // { [driverId]: "25" }
   const [reverseReasonInput, setReverseReasonInput] = useState({}); // { [driverId]: "reason" }
   const [reversingDriverId, setReversingDriverId] = useState(null);
@@ -746,8 +746,10 @@ export default function SponsorProfile({ token, onLogout, onChangeUsername }) {
                   if (sortByRating) {
                     list.sort((a,b) => ratingScore(b) - ratingScore(a));
                   }
-                  if (sortByPoints) {
+                  if (sortByPoints === "Descending") {
                     list.sort((a, b) => Number(b.currentPoints || 0) - Number(a.currentPoints || 0));
+                  } else if (sortByPoints === "Ascending") {
+                    list.sort((a, b) => Number(a.currentPoints || 0) - Number(b.currentPoints || 0));
                   }
                   return list;
                 }) ();
@@ -782,7 +784,7 @@ export default function SponsorProfile({ token, onLogout, onChangeUsername }) {
                 <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: 10 }}>
                   <button
                     type="button"
-                    onClick={() => setSortByPoints((s) => !s)}
+                    onClick={() => setSortByPoints(s => s === null ? "Descending" : s === "Descending" ? "Ascending" : null)}
                     style={{
                       display: "flex",
                       alignItems: "center",
@@ -798,7 +800,9 @@ export default function SponsorProfile({ token, onLogout, onChangeUsername }) {
                       transition: "all 0.15s",
                     }}
                   >
-                    {sortByPoints ? "Sorted by points descending" : "Sort by points"}
+                    {sortByPoints === "Descending" ? "Points: High to Low"
+                      : sortByPoints === "Ascending" ? "Points: Low to High"
+                      : "Sort by Points"}
                   </button>
                 </div>
 
