@@ -309,4 +309,148 @@ router.get("/point-history.csv", async (req, res) => {
   res.send(csv);
 });
 
+// ─────────────────────────────────────────────────────────────
+// Driver orders / purchases
+// Assumes tables:
+//   orders(id, driver_id, catalog_item_id, quantity, total_points, status, created_at)
+//   catalog_items(id, name, stock)
+//   users(id, points)
+// Change table/column names if your schema differs.
+// ─────────────────────────────────────────────────────────────
+router.get("/orders", async (req, res) => {
+  try {
+    const [rows] = await pool.query(
+      `
+      SELECT
+        o.id,
+        o.quantity,
+        o.total_points,
+        o.status,
+        o.created_at,
+        c.name AS item_name
+      FROM orders o
+      LEFT JOIN catalog_items c ON c.id = o.catalog_item_id
+      WHERE o.driver_id = ?
+      ORDER BY o.created_at DESC, o.id DESC
+      `,
+      [req.user.id]
+    );
+
+    return res.json({ ok: true, orders: rows });
+  } catch (err) {
+    console.error("Failed to load driver orders:", err);
+    return res.status(500).json({ ok: false, error: "failed to load orders" });
+  }
+});
+
+router.patch("/orders/:orderId/cancel", async (req, res) => {
+  const orderId = parsePositiveInt(req.params.orderId);
+  if (!orderId) {
+    return res.status(400).json({ ok: false, error: "invalid order id" });
+  }
+
+  const conn = await pool.getConnection();
+  try {
+    await conn.beginTransaction();
+
+    const [orderRows] = await conn.query(
+      `
+      SELECT
+        o.id,
+        o.driver_id,
+        o.catalog_item_id,
+        o.quantity,
+        o.total_points,
+        o.status,
+        c.name AS item_name
+      FROM orders o
+      LEFT JOIN catalog_items c ON c.id = o.catalog_item_id
+      WHERE o.id = ?
+      LIMIT 1
+      `,
+      [orderId]
+    );
+
+    const order = orderRows[0];
+    if (!order) {
+      await conn.rollback();
+      return res.status(404).json({ ok: false, error: "order not found" });
+    }
+
+    if (Number(order.driver_id) !== Number(req.user.id)) {
+      await conn.rollback();
+      return res.status(403).json({ ok: false, error: "not your order" });
+    }
+
+    const cancellableStatuses = ["PLACED", "PENDING"];
+    if (!cancellableStatuses.includes(String(order.status || "").toUpperCase())) {
+      await conn.rollback();
+      return res.status(400).json({
+        ok: false,
+        error: "this purchase can no longer be canceled",
+      });
+    }
+
+    await conn.query(
+      `
+      UPDATE orders
+      SET status = 'CANCELLED'
+      WHERE id = ?
+      LIMIT 1
+      `,
+      [orderId]
+    );
+
+    await conn.query(
+      `
+      UPDATE users
+      SET points = COALESCE(points, 0) + ?
+      WHERE id = ?
+      LIMIT 1
+      `,
+      [Number(order.total_points || 0), req.user.id]
+    );
+
+    if (order.catalog_item_id) {
+      await conn.query(
+        `
+        UPDATE catalog_items
+        SET stock = COALESCE(stock, 0) + ?
+        WHERE id = ?
+        LIMIT 1
+        `,
+        [Number(order.quantity || 0), order.catalog_item_id]
+      );
+    }
+
+    if (await tableExists("point_transactions")) {
+      await conn.query(
+        `
+        INSERT INTO point_transactions (user_id, amount, reason, created_at)
+        VALUES (?, ?, ?, NOW())
+        `,
+        [
+          req.user.id,
+          Number(order.total_points || 0),
+          `Refund for cancelled purchase${order.item_name ? `: ${order.item_name}` : ""}`,
+        ]
+      );
+    }
+
+    await conn.commit();
+
+    return res.json({
+      ok: true,
+      message: "purchase cancelled successfully",
+      refunded_points: Number(order.total_points || 0),
+    });
+  } catch (err) {
+    await conn.rollback();
+    console.error("Failed to cancel purchase:", err);
+    return res.status(500).json({ ok: false, error: "failed to cancel purchase" });
+  } finally {
+    conn.release();
+  }
+});
+
 module.exports = router;

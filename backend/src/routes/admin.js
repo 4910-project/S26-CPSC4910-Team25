@@ -943,4 +943,239 @@ router.patch("/settings/notifications", async (req, res) => {
   return res.json({ok: true, notifications_enabled});
 })
 
+// GET /admin/catalog
+// Returns all catalog items for admin management
+router.get("/catalog", async (req, res) => {
+  try {
+    const [rows] = await pool.query(`
+      SELECT
+        id,
+        name,
+        description,
+        points_cost,
+        stock,
+        image_url,
+        is_active
+      FROM catalog_items
+      ORDER BY id DESC
+    `);
+
+    return res.json({ ok: true, items: rows });
+  } catch (err) {
+    console.error("GET /admin/catalog error:", err);
+    return res.status(500).json({ ok: false, error: "failed to fetch catalog items" });
+  }
+});
+
+// POST /admin/catalog
+// Create a new catalog item
+router.post("/catalog", async (req, res) => {
+  const {
+    name,
+    description,
+    points_cost,
+    stock,
+    image_url,
+    is_active = true,
+  } = req.body || {};
+
+  if (!name || points_cost === undefined || stock === undefined) {
+    return res.status(400).json({
+      ok: false,
+      error: "name, points_cost, and stock are required",
+    });
+  }
+
+  const pointsCostNum = Number(points_cost);
+  const stockNum = Number(stock);
+
+  if (!Number.isFinite(pointsCostNum) || pointsCostNum < 0) {
+    return res.status(400).json({ ok: false, error: "points_cost must be a non-negative number" });
+  }
+
+  if (!Number.isInteger(stockNum) || stockNum < 0) {
+    return res.status(400).json({ ok: false, error: "stock must be a non-negative integer" });
+  }
+
+  try {
+    const [result] = await pool.query(
+      `
+      INSERT INTO catalog_items
+        (name, description, points_cost, stock, image_url, is_active)
+      VALUES (?, ?, ?, ?, ?, ?)
+      `,
+      [
+        String(name).trim(),
+        String(description || "").trim(),
+        pointsCostNum,
+        stockNum,
+        String(image_url || "").trim(),
+        is_active ? 1 : 0,
+      ]
+    );
+
+    await writeAudit({
+      category: "CATALOG_CREATE",
+      actorUserId: req.user.id,
+      success: 1,
+      details: `created catalog item id=${result.insertId}; name=${String(name).trim()}`,
+    });
+
+    return res.status(201).json({
+      ok: true,
+      itemId: result.insertId,
+      message: "catalog item created successfully",
+    });
+  } catch (err) {
+    console.error("POST /admin/catalog error:", err);
+
+    await writeAudit({
+      category: "CATALOG_CREATE",
+      actorUserId: req.user.id,
+      success: 0,
+      details: `failed: ${err.message}`,
+    });
+
+    return res.status(500).json({ ok: false, error: "failed to create catalog item" });
+  }
+});
+
+// PUT /admin/catalog/:id
+// Update an existing catalog item
+router.put("/catalog/:id", async (req, res) => {
+  const itemId = parsePositiveInt(req.params.id);
+  if (!itemId) {
+    return res.status(400).json({ ok: false, error: "invalid catalog item id" });
+  }
+
+  const {
+    name,
+    description,
+    points_cost,
+    stock,
+    image_url,
+    is_active,
+  } = req.body || {};
+
+  if (!name || points_cost === undefined || stock === undefined || typeof is_active !== "boolean") {
+    return res.status(400).json({
+      ok: false,
+      error: "name, points_cost, stock, and is_active are required",
+    });
+  }
+
+  const pointsCostNum = Number(points_cost);
+  const stockNum = Number(stock);
+
+  if (!Number.isFinite(pointsCostNum) || pointsCostNum < 0) {
+    return res.status(400).json({ ok: false, error: "points_cost must be a non-negative number" });
+  }
+
+  if (!Number.isInteger(stockNum) || stockNum < 0) {
+    return res.status(400).json({ ok: false, error: "stock must be a non-negative integer" });
+  }
+
+  try {
+    const [existingRows] = await pool.query(
+      `SELECT id FROM catalog_items WHERE id = ? LIMIT 1`,
+      [itemId]
+    );
+
+    if (!existingRows[0]) {
+      return res.status(404).json({ ok: false, error: "catalog item not found" });
+    }
+
+    await pool.query(
+      `
+      UPDATE catalog_items
+      SET
+        name = ?,
+        description = ?,
+        points_cost = ?,
+        stock = ?,
+        image_url = ?,
+        is_active = ?
+      WHERE id = ?
+      `,
+      [
+        String(name).trim(),
+        String(description || "").trim(),
+        pointsCostNum,
+        stockNum,
+        String(image_url || "").trim(),
+        is_active ? 1 : 0,
+        itemId,
+      ]
+    );
+
+    await writeAudit({
+      category: "CATALOG_UPDATE",
+      actorUserId: req.user.id,
+      success: 1,
+      details: `updated catalog item id=${itemId}; name=${String(name).trim()}`,
+    });
+
+    return res.json({
+      ok: true,
+      message: "catalog item updated successfully",
+    });
+  } catch (err) {
+    console.error("PUT /admin/catalog/:id error:", err);
+
+    await writeAudit({
+      category: "CATALOG_UPDATE",
+      actorUserId: req.user.id,
+      success: 0,
+      details: `failed itemId=${itemId}: ${err.message}`,
+    });
+
+    return res.status(500).json({ ok: false, error: "failed to update catalog item" });
+  }
+});
+
+// PATCH /admin/catalog/:id/status
+// Toggle active/hidden without deleting
+router.patch("/catalog/:id/status", async (req, res) => {
+  const itemId = parsePositiveInt(req.params.id);
+  if (!itemId) {
+    return res.status(400).json({ ok: false, error: "invalid catalog item id" });
+  }
+
+  const { is_active } = req.body || {};
+  if (typeof is_active !== "boolean") {
+    return res.status(400).json({ ok: false, error: "is_active must be true or false" });
+  }
+
+  try {
+    const [result] = await pool.query(
+      `UPDATE catalog_items SET is_active = ? WHERE id = ? LIMIT 1`,
+      [is_active ? 1 : 0, itemId]
+    );
+
+    if (!result.affectedRows) {
+      return res.status(404).json({ ok: false, error: "catalog item not found" });
+    }
+
+    await writeAudit({
+      category: "CATALOG_STATUS_TOGGLE",
+      actorUserId: req.user.id,
+      success: 1,
+      details: `set catalog item id=${itemId} is_active=${is_active}`,
+    });
+
+    return res.json({ ok: true, is_active });
+  } catch (err) {
+    console.error("PATCH /admin/catalog/:id/status error:", err);
+
+    await writeAudit({
+      category: "CATALOG_STATUS_TOGGLE",
+      actorUserId: req.user.id,
+      success: 0,
+      details: `failed itemId=${itemId}: ${err.message}`,
+    });
+
+    return res.status(500).json({ ok: false, error: "failed to update catalog item status" });
+  }
+});
+
 module.exports = router;

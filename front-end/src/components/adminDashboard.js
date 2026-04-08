@@ -13,6 +13,7 @@ const CATEGORIES = [
   "Other",
 ];
 
+
 const STATUS_COLORS = {
   open: { bg: "#dbeafe", color: "#1e40af" },
   reviewed: { bg: "#fef3c7", color: "#92400e" },
@@ -76,6 +77,23 @@ export default function AdminDashboard({ token, onLogout }) {
   const [settingsLoading, setSettingsLoading] = useState(false);
   const [settingsError, setSettingsError] = useState("");
   const [settingsToggling, setSettingsToggling] = useState(false);
+
+    // Catalog state
+  const [catalogItems, setCatalogItems] = useState([]);
+  const [catalogLoading, setCatalogLoading] = useState(false);
+  const [catalogError, setCatalogError] = useState("");
+  const [catalogSaving, setCatalogSaving] = useState(false);
+  const [catalogMessage, setCatalogMessage] = useState("");
+
+  const [catalogForm, setCatalogForm] = useState({
+    id: null,
+    name: "",
+    description: "",
+    points_cost: "",
+    stock: "",
+    image_url: "",
+    is_active: true,
+  });
 
   const fetchFeedback = useCallback(async () => {
     setLoading(true);
@@ -349,6 +367,128 @@ export default function AdminDashboard({ token, onLogout }) {
     }
   };
 
+    const fetchCatalogItems = useCallback(async () => {
+    setCatalogLoading(true);
+    setCatalogError("");
+    setCatalogMessage("");
+
+    try {
+      const res = await fetch(`${ADMIN_API}/catalog`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Failed to fetch catalog items");
+
+      setCatalogItems(data.items || []);
+    } catch (err) {
+      setCatalogError(err?.message || "Unknown error");
+    } finally {
+      setCatalogLoading(false);
+    }
+  }, [token]);
+
+  useEffect(() => {
+    if (activeTab === "catalog") fetchCatalogItems();
+  }, [activeTab, fetchCatalogItems]);
+
+  const handleEditCatalogItem = (item) => {
+    setCatalogMessage("");
+    setCatalogError("");
+    setCatalogForm({
+      id: item.id,
+      name: item.name || "",
+      description: item.description || "",
+      points_cost: item.points_cost ?? "",
+      stock: item.stock ?? "",
+      image_url: item.image_url || "",
+      is_active: !!item.is_active,
+    });
+  };
+
+  const resetCatalogForm = () => {
+    setCatalogForm({
+      id: null,
+      name: "",
+      description: "",
+      points_cost: "",
+      stock: "",
+      image_url: "",
+      is_active: true,
+    });
+  };
+
+  const handleCatalogSave = async () => {
+    setCatalogSaving(true);
+    setCatalogError("");
+    setCatalogMessage("");
+
+    try {
+      const method = catalogForm.id ? "PUT" : "POST";
+      const url = catalogForm.id
+        ? `${ADMIN_API}/catalog/${catalogForm.id}`
+        : `${ADMIN_API}/catalog`;
+
+      const res = await fetch(url, {
+        method,
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({
+          name: catalogForm.name,
+          description: catalogForm.description,
+          points_cost: Number(catalogForm.points_cost),
+          stock: Number(catalogForm.stock),
+          image_url: catalogForm.image_url,
+          is_active: !!catalogForm.is_active,
+        }),
+      });
+
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Failed to save catalog item");
+
+      setCatalogMessage(
+        catalogForm.id
+          ? "Catalog item updated successfully."
+          : "Catalog item created successfully."
+      );
+
+      resetCatalogForm();
+      await fetchCatalogItems();
+    } catch (err) {
+      setCatalogError(err?.message || "Unknown error");
+    } finally {
+      setCatalogSaving(false);
+    }
+  };
+
+  const handleCatalogStatusToggle = async (item) => {
+    setCatalogError("");
+    setCatalogMessage("");
+
+    try {
+      const res = await fetch(`${ADMIN_API}/catalog/${item.id}/status`, {
+        method: "PATCH",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({ is_active: !item.is_active }),
+      });
+
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Failed to update status");
+
+      setCatalogMessage(
+        `Catalog item ${!item.is_active ? "activated" : "hidden"} successfully.`
+      );
+      await fetchCatalogItems();
+    } catch (err) {
+      setCatalogError(err?.message || "Unknown error");
+    }
+  };
+
   const totalPages = Math.ceil(total / limit);
 
   return (
@@ -356,7 +496,7 @@ export default function AdminDashboard({ token, onLogout }) {
       <h1 style={{ margin: 0, marginBottom: 4 }}>Admin Dashboard</h1>
 
       <div style={{ display: "flex", gap: 8, marginTop: 16, marginBottom: 24 }}>
-        {["feedback", "sponsors", "drivers", "settings"].map((tab) => (
+        {["feedback", "sponsors", "drivers", "catalog", "settings"].map((tab) => (
           <button
             key={tab}
             type="button"
@@ -378,6 +518,8 @@ export default function AdminDashboard({ token, onLogout }) {
               ? "Sponsor Management"
               : tab === "drivers"
               ? "Driver Management"
+              : tab === "catalog"
+              ? "Catalog Management"
               : "Settings"}
           </button>
         ))}
@@ -899,6 +1041,238 @@ export default function AdminDashboard({ token, onLogout }) {
         </div>
       )}
 
+            {/* ── Catalog tab ── */}
+      {activeTab === "catalog" && (
+        <div>
+          <h2 style={{ marginTop: 0, marginBottom: 4 }}>Catalog Management</h2>
+          <p style={{ color: "var(--muted)", fontSize: 14, marginTop: 0, marginBottom: 24 }}>
+            Add, edit, and hide catalog items available to drivers.
+          </p>
+
+          {(catalogError || catalogMessage) && (
+            <div
+              style={{
+                padding: "10px 14px",
+                borderRadius: 8,
+                background: catalogError ? "#fef2f2" : "#ecfdf5",
+                color: catalogError ? "#991b1b" : "#065f46",
+                marginBottom: 16,
+              }}
+            >
+              {catalogError || catalogMessage}
+            </div>
+          )}
+
+          <div
+            style={{
+              border: "1px solid var(--border, #e5e7eb)",
+              borderRadius: 12,
+              padding: 20,
+              background: "var(--card)",
+              marginBottom: 20,
+            }}
+          >
+            <h3 style={{ marginTop: 0 }}>
+              {catalogForm.id ? "Edit Catalog Item" : "Add Catalog Item"}
+            </h3>
+
+            <div style={{ display: "grid", gap: 12 }}>
+              <input
+                type="text"
+                placeholder="Item name"
+                value={catalogForm.name}
+                onChange={(e) =>
+                  setCatalogForm((prev) => ({ ...prev, name: e.target.value }))
+                }
+                style={inputStyle}
+              />
+
+              <textarea
+                placeholder="Description"
+                rows={3}
+                value={catalogForm.description}
+                onChange={(e) =>
+                  setCatalogForm((prev) => ({ ...prev, description: e.target.value }))
+                }
+                style={{ ...inputStyle, resize: "vertical" }}
+              />
+
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+                <input
+                  type="number"
+                  min="0"
+                  placeholder="Points cost"
+                  value={catalogForm.points_cost}
+                  onChange={(e) =>
+                    setCatalogForm((prev) => ({ ...prev, points_cost: e.target.value }))
+                  }
+                  style={inputStyle}
+                />
+
+                <input
+                  type="number"
+                  min="0"
+                  placeholder="Stock"
+                  value={catalogForm.stock}
+                  onChange={(e) =>
+                    setCatalogForm((prev) => ({ ...prev, stock: e.target.value }))
+                  }
+                  style={inputStyle}
+                />
+              </div>
+
+              <input
+                type="text"
+                placeholder="Image URL"
+                value={catalogForm.image_url}
+                onChange={(e) =>
+                  setCatalogForm((prev) => ({ ...prev, image_url: e.target.value }))
+                }
+                style={inputStyle}
+              />
+
+              <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 14 }}>
+                <input
+                  type="checkbox"
+                  checked={catalogForm.is_active}
+                  onChange={(e) =>
+                    setCatalogForm((prev) => ({ ...prev, is_active: e.target.checked }))
+                  }
+                />
+                Item is active
+              </label>
+
+              <div style={{ display: "flex", gap: 10 }}>
+                <button
+                  type="button"
+                  onClick={handleCatalogSave}
+                  disabled={catalogSaving}
+                  style={{
+                    padding: "9px 18px",
+                    borderRadius: 8,
+                    border: "none",
+                    background: "#4f46e5",
+                    color: "#fff",
+                    fontWeight: 600,
+                    cursor: catalogSaving ? "not-allowed" : "pointer",
+                    opacity: catalogSaving ? 0.6 : 1,
+                  }}
+                >
+                  {catalogSaving
+                    ? "Saving..."
+                    : catalogForm.id
+                    ? "Update Item"
+                    : "Add Item"}
+                </button>
+
+                <button
+                  type="button"
+                  onClick={resetCatalogForm}
+                  disabled={catalogSaving}
+                  style={pageBtn}
+                >
+                  Clear
+                </button>
+              </div>
+            </div>
+          </div>
+
+          {catalogLoading && <p style={{ color: "var(--muted)" }}>Loading catalog items...</p>}
+
+          {!catalogLoading && catalogItems.length === 0 && (
+            <p style={{ color: "var(--muted)" }}>No catalog items found.</p>
+          )}
+
+          {!catalogLoading && catalogItems.length > 0 && (
+            <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+              {catalogItems.map((item) => (
+                <div
+                  key={item.id}
+                  style={{
+                    border: `1px solid ${item.is_active ? "var(--border, #e5e7eb)" : "#fca5a5"}`,
+                    borderRadius: 12,
+                    padding: 16,
+                    background: item.is_active ? "var(--card)" : "#fff7f7",
+                    display: "flex",
+                    justifyContent: "space-between",
+                    alignItems: "center",
+                    gap: 16,
+                  }}
+                >
+                  <div style={{ flex: 1 }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+                      <span style={{ fontWeight: 700, fontSize: 15 }}>{item.name}</span>
+                      <span
+                        style={{
+                          padding: "2px 8px",
+                          borderRadius: 10,
+                          fontSize: 11,
+                          fontWeight: 700,
+                          background: item.is_active ? "#d1fae5" : "#fee2e2",
+                          color: item.is_active ? "#065f46" : "#b91c1c",
+                        }}
+                      >
+                        {item.is_active ? "Active" : "Hidden"}
+                      </span>
+                    </div>
+
+                    <div style={{ fontSize: 13, color: "var(--muted)", marginTop: 4 }}>
+                      {item.description || "No description provided."}
+                    </div>
+
+                    <div style={{ fontSize: 12, color: "var(--muted)", marginTop: 6 }}>
+                      Points: {item.points_cost} · Stock: {item.stock}
+                    </div>
+
+                    {item.image_url && (
+                      <div style={{ fontSize: 12, color: "var(--muted)", marginTop: 4 }}>
+                        Image: {item.image_url}
+                      </div>
+                    )}
+                  </div>
+
+                  <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                    <button
+                      type="button"
+                      onClick={() => handleEditCatalogItem(item)}
+                      style={{
+                        padding: "7px 16px",
+                        borderRadius: 8,
+                        border: "1px solid var(--border, #d1d5db)",
+                        background: "transparent",
+                        color: "var(--text, #374151)",
+                        fontWeight: 600,
+                        fontSize: 13,
+                        cursor: "pointer",
+                      }}
+                    >
+                      Edit
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => handleCatalogStatusToggle(item)}
+                      style={{
+                        padding: "7px 16px",
+                        borderRadius: 8,
+                        border: "none",
+                        background: item.is_active ? "#ef4444" : "#10b981",
+                        color: "#fff",
+                        fontWeight: 600,
+                        fontSize: 13,
+                        cursor: "pointer",
+                      }}
+                    >
+                      {item.is_active ? "Hide" : "Activate"}
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+
       {/* ── Settings tab ── */}
       {activeTab === "settings" && (
         <div>
@@ -1013,4 +1387,15 @@ const pageBtn = {
   fontWeight: 600,
   fontSize: 13,
   cursor: "pointer",
+};
+
+const inputStyle = {
+  padding: "9px 12px",
+  borderRadius: 8,
+  border: "1px solid var(--border, #d1d5db)",
+  fontSize: 14,
+  background: "var(--card)",
+  color: "var(--text)",
+  width: "100%",
+  boxSizing: "border-box",
 };

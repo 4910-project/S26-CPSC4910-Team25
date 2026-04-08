@@ -87,6 +87,12 @@ export default function DriverProfile({
   const [dismissedIds, setDismissedIds] = useState([]);
   const [droppedDismissed, setDroppedDismissed] = useState(false);
 
+  // Purchases state
+  const [orders, setOrders] = useState([]);
+  const [ordersLoading, setOrdersLoading] = useState(false);
+  const [ordersError, setOrdersError] = useState("");
+  const [cancelingOrderId, setCancelingOrderId] = useState(null);
+
   // ── Points fetch ──────────────────────────────────────────────────────────
   useEffect(() => {
     if (!token) return;
@@ -235,6 +241,72 @@ export default function DriverProfile({
       }
     })();
   }, [token]);
+
+  // ── Orders fetch ─────────────────────────────────────────────
+  useEffect(() => {
+    if (!token) return;
+
+    (async () => {
+      setOrdersLoading(true);
+      setOrdersError("");
+
+      try {
+        const res = await fetch(`${API_BASE}/driver/orders`, {
+          headers: { Authorization: `Bearer ${token}` },
+        });
+
+        const data = await res.json();
+
+        if (!res.ok) {
+          throw new Error(data.error || "Failed to load purchases");
+        }
+
+        setOrders(data.orders || []);
+      } catch (err) {
+        console.error(err);
+        setOrdersError(err.message || "Failed to load purchases");
+      } finally {
+        setOrdersLoading(false);
+      }
+    })();
+  }, [token]);
+
+  const handleCancelOrder = async (orderId) => {
+  const confirmed = window.confirm("Cancel this purchase?");
+  if (!confirmed) return;
+
+  setCancelingOrderId(orderId);
+  setOrdersError("");
+
+  try {
+    const res = await fetch(`${API_BASE}/driver/orders/${orderId}/cancel`, {
+      method: "PATCH",
+      headers: {
+        Authorization: `Bearer ${token}`,
+      },
+    });
+
+    const data = await res.json();
+
+    if (!res.ok) {
+      throw new Error(data.error || "Failed to cancel purchase");
+    }
+
+    // update UI
+    setOrders((prev) =>
+      prev.map((o) =>
+        o.id === orderId ? { ...o, status: "CANCELLED" } : o
+      )
+    );
+
+    alert("Purchase canceled and points refunded.");
+  } catch (err) {
+    console.error(err);
+    setOrdersError(err.message || "Failed to cancel purchase");
+  } finally {
+    setCancelingOrderId(null);
+  }
+};
 
   // ── Drop sponsor ──────────────────────────────────────────────────────────
   async function dropSponsor() {
@@ -772,6 +844,81 @@ export default function DriverProfile({
           </div>
         </>
       )}
+
+      <div style={{ ...card, marginTop: 14 }}>
+  <div style={{ color: "var(--muted)", fontSize: 12, marginBottom: 12 }}>
+    My Purchases
+  </div>
+
+  {ordersLoading ? (
+    <div style={{ color: "var(--muted)" }}>Loading purchases...</div>
+  ) : ordersError ? (
+    <div style={{ color: "#b91c1c" }}>{ordersError}</div>
+  ) : orders.length === 0 ? (
+    <div style={{ color: "var(--muted)" }}>No purchases yet.</div>
+  ) : (
+    <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+      {orders.map((order) => {
+        const canCancel = ["PLACED", "PENDING"].includes(order.status);
+
+        return (
+          <div
+            key={order.id}
+            style={{
+              border: "1px solid var(--border, #e5e7eb)",
+              borderRadius: 10,
+              padding: 12,
+              display: "flex",
+              justifyContent: "space-between",
+              alignItems: "center",
+              gap: 12,
+            }}
+          >
+            <div>
+              <div style={{ fontWeight: 700 }}>
+                {order.item_name || "Item"}
+              </div>
+
+              <div style={{ fontSize: 13, color: "var(--muted)" }}>
+                Qty: {order.quantity} · Points: {order.total_points}
+              </div>
+
+              <div style={{ fontSize: 13, color: "var(--muted)" }}>
+                Status: {order.status}
+              </div>
+            </div>
+
+            {canCancel && (
+              <button
+                type="button"
+                onClick={() => handleCancelOrder(order.id)}
+                disabled={cancelingOrderId === order.id}
+                style={{
+                  padding: "7px 14px",
+                  borderRadius: 8,
+                  border: "none",
+                  background: "#ef4444",
+                  color: "#fff",
+                  fontWeight: 600,
+                  cursor:
+                    cancelingOrderId === order.id
+                      ? "not-allowed"
+                      : "pointer",
+                  opacity:
+                    cancelingOrderId === order.id ? 0.6 : 1,
+                }}
+              >
+                {cancelingOrderId === order.id
+                  ? "Canceling..."
+                  : "Cancel Purchase"}
+              </button>
+            )}
+          </div>
+        );
+      })}
+    </div>
+  )}
+</div>
 
       {activeTab === "sponsors" && (
         <div>
