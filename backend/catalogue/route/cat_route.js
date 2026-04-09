@@ -2,12 +2,12 @@ const express = require("express");
 const router  = express.Router();
 const db      = require("../db");
 const auth    = require("../middleware/auth");
-
+ 
 //I had to to set a base limit for points and min item cost here..
 //if it causes issues this could be refactored probably
 const POINTS_PER_USD  = parseInt(process.env.POINTS_PER_USD  || "100");
 const MIN_ITEM_COST   = parseInt(process.env.MIN_ITEM_COST_PTS || "50");
-
+ 
 // //For converting between points and prices
 function usdToPoints(price) 
 {
@@ -15,34 +15,54 @@ function usdToPoints(price)
   if (!p || p <= 0) return MIN_ITEM_COST;
   return Math.round(p * POINTS_PER_USD);
 }
-
+ 
+// helper: get or create a driver_points row
+// seeds from drivers.starting_points if the row is brand new
+async function getOrCreateBalance(conn, userId)
+{
+  const [rows] = await conn.query(
+    "SELECT points FROM driver_points WHERE user_id = ? FOR UPDATE",
+    [userId]
+  );
+ 
+  if (rows.length > 0) return rows[0].points;
+ 
+  // first time - seed from drivers.starting_points if this user is a driver
+  const [driverRows] = await conn.query(
+    "SELECT starting_points FROM drivers WHERE user_id = ? AND status = 'ACTIVE' LIMIT 1",
+    [userId]
+  );
+ 
+  const seed = driverRows[0]?.starting_points ?? 0;
+ 
+  await conn.query(
+    "INSERT INTO driver_points (user_id, points) VALUES (?, ?)",
+    [userId, seed]
+  );
+ 
+  return seed;
+}
 
 router.get("/points", auth, async (req, res) => {
+  const conn = await db.getConnection();
   try 
   {
-    const [rows] = await db.query(
-      "SELECT points FROM driver_points WHERE user_id = ?",
-      [req.user.id]
-    );
-
-    if (rows.length === 0) 
-    {
-      await db.query(
-        "INSERT INTO driver_points (user_id, points) VALUES (?, ?)",
-        [req.user.id, 1000]
-      );
-      return res.json({ points: 1000 });
-    }
-
-    res.json({ points: rows[0].points });
+    await conn.beginTransaction();
+    const points = await getOrCreateBalance(conn, req.user.id);
+    await conn.commit();
+    res.json({ points });
   } 
   catch (err) 
   {
+    await conn.rollback();
     console.error("GET /points error:", err);
-    res.status(500).json({ error: "Failed to get pointss" });
+    res.status(500).json({ error: "Failed to get points" });
+  }
+  finally
+  {
+    conn.release();
   }
 });
-
 
 router.post("/points/deduct", auth, async (req, res) => 
 {
@@ -57,33 +77,17 @@ router.post("/points/deduct", auth, async (req, res) =>
   try 
   {
     await conn.beginTransaction();
-    const [rows] = await conn.query(
-      "SELECT points FROM driver_points WHERE user_id = ? FOR UPDATE",
-      [req.user.id]
-    );
 
-    let currentPoints = 1000;
-    if (rows.length === 0) 
-    {
-      
-      await conn.query(
-        "INSERT INTO driver_points (user_id, points) VALUES (?, ?)",
-        [req.user.id, 1000]
-      );
-    } 
-    else 
-    {
-      currentPoints = rows[0].points;
-    }
-
+    const currentPoints = await getOrCreateBalance(conn, req.user.id);
+ 
     if (currentPoints < amount) 
     {
       await conn.rollback();
-      return res.status(400).json({ error: "Insufficient ponits", currentPoints });
+      return res.status(400).json({ error: "Insufficient points", currentPoints });
     }
 
     const remaining = currentPoints - amount;
-
+ 
     await conn.query(
       "UPDATE driver_points SET points = ? WHERE user_id = ?",
       [remaining, req.user.id]
@@ -117,44 +121,30 @@ router.post("/points/add", auth, async (req, res) =>
   {
     return res.status(400).json({ error: "userId and a positive amount are required" });
   }
-
+ 
   const conn = await db.getConnection();
   try 
   {
     await conn.beginTransaction();
-
-    const [rows] = await conn.query(
-      "SELECT points FROM driver_points WHERE user_id = ? FOR UPDATE",
-      [userId]
+ 
+    await getOrCreateBalance(conn, userId);
+ 
+    await conn.query(
+      "UPDATE driver_points SET points = points + ? WHERE user_id = ?",
+      [amount, userId]
     );
-
-    if (rows.length === 0) 
-    {
-      await conn.query(
-        "INSERT INTO driver_points (user_id, points) VALUES (?, ?)",
-        [userId, amount]
-      );
-    } 
-    else 
-    {
-      await conn.query(
-        "UPDATE driver_points SET points = points + ? WHERE user_id = ?",
-        [amount, userId]
-      );
-    }
-
-    
+ 
     await conn.query(
       `INSERT INTO point_transactions (user_id, amount, type, reason, awarded_by)
        VALUES (?, ?, 'AWARD', ?, ?)`,
       [userId, amount, reason || null, req.user.id]
     );
-
+ 
     const [[updated]] = await conn.query(
       "SELECT points FROM driver_points WHERE user_id = ?",
       [userId]
     );
-
+ 
     await conn.commit();
     res.json({ success: true, newBalance: updated.points });
   } 
@@ -169,8 +159,68 @@ router.post("/points/add", auth, async (req, res) =>
     conn.release();
   }
 });
+ 
+// Sponsors can update a driver's starting_points
+// this does NOT change their current balance, only the seed for new accounts
+router.post("/points/set-starting", auth, async (req, res) =>
+{
+  if (!["SPONSOR", "ADMIN"].includes(req.user.role))
+  {
+    return res.status(403).json({ error: "Not authorized" });
+  }
+ 
+  const { driverUserId, startingPoints } = req.body;
+  if (!driverUserId || startingPoints == null || startingPoints < 0)
+  {
+    return res.status(400).json({ error: "driverUserId and startingPoints >= 0 are required" });
+  }
+ 
+  try
+  {
+    const [result] = await db.query(
+      "UPDATE drivers SET starting_points = ? WHERE user_id = ?",
+      [startingPoints, driverUserId]
+    );
+ 
+    if (result.affectedRows === 0)
+    {
+      return res.status(404).json({ error: "Driver not found" });
+    }
+ 
+    res.json({ success: true, startingPoints });
+  }
+  catch (err)
+  {
+    console.error("POST /points/set-starting error:", err);
+    res.status(500).json({ error: "Failed to update starting points" });
+  }
+});
 
-
+// Admin or sponsor can view a specific driver's balance
+router.get("/points/balance/:driverUserId", auth, async (req, res) =>
+{
+  if (!["SPONSOR", "ADMIN"].includes(req.user.role))
+  {
+    return res.status(403).json({ error: "Not authorized" });
+  }
+ 
+  try
+  {
+    const [rows] = await db.query(
+      "SELECT points FROM driver_points WHERE user_id = ?",
+      [req.params.driverUserId]
+    );
+ 
+    res.json({ points: rows[0]?.points ?? 0 });
+  }
+  catch (err)
+  {
+    console.error("GET /points/balance/:id error:", err);
+    res.status(500).json({ error: "Failed to fetch balance" });
+  }
+});
+ 
+ 
 router.get("/purchases", auth, async (req, res) => 
 {
   try 
@@ -193,7 +243,6 @@ router.get("/purchases", auth, async (req, res) =>
     res.status(500).json({ error: "Failed to fetch purchases" });
   }
 });
-
 
 router.post("/purchases", auth, async (req, res) => 
 {

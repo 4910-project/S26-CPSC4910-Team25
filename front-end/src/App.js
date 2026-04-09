@@ -89,17 +89,16 @@ export default function App() {
     localStorage.setItem("theme", dark ? "dark" : "light");
   }, [dark]);
  
-  //This code is such a mess but I am getting rid of hardcoded points
-  useEffect(() => 
-    {
-      if (!token || !mfaComplete) return;
-      fetch(`${POINTS_API}/balance`, {
+  // ── Fetch real point balance once logged in and MFA done ──
+  useEffect(() => {
+    if (!token || !mfaComplete) return;
+    fetch(`${POINTS_API}/balance`, {
       headers: { Authorization: `Bearer ${token}` },
     })
       .then(r => r.ok ? r.json() : null)
       .then(d => { if (d?.points != null) setUserPoints(d.points); })
       .catch(() => {});
-    }, [token, mfaComplete]);
+  }, [token, mfaComplete]);
  
   const toggleDark = () => setDark((d) => !d);
  
@@ -244,4 +243,4 @@ export default function App() {
  
     </Routes>
   );
-} 
+}
