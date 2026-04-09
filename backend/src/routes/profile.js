@@ -86,7 +86,19 @@ router.post("/change-password", async (req, res) => {
       [newHash, userId]
     );
 
-    return res.json({ ok: true, message: "Password updated successfully" });
+    const notification = {
+      type: "success",
+      message:
+        req.user?.role === "DRIVER"
+          ? "Notification sent: your password change was successful."
+          : "Notification sent: your password change was successful.",
+    };
+
+    return res.json({
+      ok: true,
+      message: "Password updated successfully.",
+      notification,
+    });
   } catch (err) {
     console.error("change-password error:", err);
     return res.status(500).json({ ok: false, message: "Server error" });

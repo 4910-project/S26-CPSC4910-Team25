@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useCallback } from "react";
 import "./SponsorProfile.css";
 import FeedbackForm from "./feedbackForm";
+import SponsorPostsManager from "./SponsorPostsManager";
 
 const SPONSOR_API   = "http://localhost:8001/sponsor";
 const BACKEND_BASE  = "http://localhost:8001";
@@ -51,10 +52,14 @@ export default function SponsorProfile({ token, onLogout, onChangeUsername }) {
   const [reverseReasonInput, setReverseReasonInput] = useState({}); // { [driverId]: "reason" }
   const [reversingDriverId, setReversingDriverId] = useState(null);
   const [exportingReport, setExportingReport] = useState(false);
+<<<<<<< HEAD
   const [probationReasonInput, setProbationReasonInput] = useState({});
   const [dropReasonInput, setDropReasonInput] = useState({});
   const [probatingDriverId, setProbatingDriverId] = useState(null);
   const [droppingDriverId, setDroppingDriverId] = useState(null);
+=======
+  const [exportingReportCsv, setExportingReportCsv] = useState(false);
+>>>>>>> d31fc3eb87b5b145a036d581b7b9b987184b3c94
 
   // ─── Catalog hide/unhide state ──────────────────────────────────────────────
   const [hiddenIds,      setHiddenIds]      = useState(new Set());
@@ -548,6 +553,43 @@ export default function SponsorProfile({ token, onLogout, onChangeUsername }) {
     }
   };
 
+  const handleExportReportCsv = async () => {
+    setDriverError("");
+    setDriverSuccess("");
+    setExportingReportCsv(true);
+    try {
+      const res = await fetch(`${SPONSOR_API}/reports/points.csv`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+
+      if (!res.ok) {
+        let message = "Failed to export report";
+        try {
+          const data = await res.json();
+          message = data.error || message;
+        } catch {
+          // Ignore non-JSON responses.
+        }
+        throw new Error(message);
+      }
+
+      const blob = await res.blob();
+      const downloadUrl = window.URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = downloadUrl;
+      link.download = `sponsor-points-report-${new Date().toISOString().slice(0, 10)}.csv`;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      window.URL.revokeObjectURL(downloadUrl);
+      setDriverSuccess("Report exported as CSV.");
+    } catch (err) {
+      setDriverError(err.message);
+    } finally {
+      setExportingReportCsv(false);
+    }
+  };
+
   const handleApplicationAction = async (appId, action) => {
     setDriverError("");
     setDriverSuccess("");
@@ -774,7 +816,7 @@ export default function SponsorProfile({ token, onLogout, onChangeUsername }) {
 
         {/* Tab bar */}
         <div style={{ display: "flex", gap: 8, marginBottom: 20 }}>
-          {["drivers", "applications", "catalog", "reports", "help & feedback"].map((tab) => (
+          {["drivers", "applications", "catalog", "posts", "reports", "help & feedback"].map((tab) => (
             <button
               key={tab}
               type="button"
@@ -1381,6 +1423,10 @@ export default function SponsorProfile({ token, onLogout, onChangeUsername }) {
           </div>
         )}
 
+        {!driverLoading && activeTab === "posts" && (
+          <SponsorPostsManager token={token} />
+        )}
+
         {/* Reports tab */}
         {!driverLoading && activeTab === "reports" && (
           <div
@@ -1394,25 +1440,44 @@ export default function SponsorProfile({ token, onLogout, onChangeUsername }) {
           >
             <h3 style={{ margin: "0 0 6px", fontSize: 18 }}>Sponsor Reports</h3>
             <p style={{ margin: "0 0 16px", color: "#6b7280", fontSize: 14 }}>
-              Export your sponsor driver points summary and recent point activity as a PDF file.
+              Export your sponsor driver points summary and recent point activity as either a CSV or PDF file.
             </p>
-            <button
-              type="button"
-              disabled={exportingReport}
-              onClick={handleExportReportPdf}
-              style={{
-                padding: "10px 16px",
-                borderRadius: 8,
-                border: "none",
-                background: "#111827",
-                color: "#fff",
-                fontWeight: 700,
-                cursor: exportingReport ? "not-allowed" : "pointer",
-                opacity: exportingReport ? 0.7 : 1,
-              }}
-            >
-              {exportingReport ? "Preparing PDF..." : "Export Report as PDF"}
-            </button>
+            <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+              <button
+                type="button"
+                disabled={exportingReportCsv}
+                onClick={handleExportReportCsv}
+                style={{
+                  padding: "10px 16px",
+                  borderRadius: 8,
+                  border: "1px solid #d1d5db",
+                  background: "var(--card, #fff)",
+                  color: "var(--text, #111827)",
+                  fontWeight: 700,
+                  cursor: exportingReportCsv ? "not-allowed" : "pointer",
+                  opacity: exportingReportCsv ? 0.7 : 1,
+                }}
+              >
+                {exportingReportCsv ? "Preparing CSV..." : "Export Report as CSV"}
+              </button>
+              <button
+                type="button"
+                disabled={exportingReport}
+                onClick={handleExportReportPdf}
+                style={{
+                  padding: "10px 16px",
+                  borderRadius: 8,
+                  border: "none",
+                  background: "#111827",
+                  color: "#fff",
+                  fontWeight: 700,
+                  cursor: exportingReport ? "not-allowed" : "pointer",
+                  opacity: exportingReport ? 0.7 : 1,
+                }}
+              >
+                {exportingReport ? "Preparing PDF..." : "Export Report as PDF"}
+              </button>
+            </div>
           </div>
         )}
         {/* ── Feedback tab ── */}
@@ -1424,4 +1489,3 @@ export default function SponsorProfile({ token, onLogout, onChangeUsername }) {
     </div>
   );
 }
-

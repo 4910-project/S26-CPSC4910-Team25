@@ -4,8 +4,12 @@ const fs = require("fs");
 const multer = require("multer");
 const pool = require("../db");
 const auth = require("../middleware/auth"); // JWT middleware
+const { lookupCatalogItems } = require("../lib/itunesLookup");
 
 const router = express.Router();
+const COMMENT_TEXT_MAX = 500;
+
+let cachedDriverCartSchema = null;
 
 // ── Multer setup for profile photos ──────────────────────────────────────────
 const uploadsDir = path.join(__dirname, "../../uploads");
@@ -57,6 +61,165 @@ function escapeCsvCell(value) {
   const raw = String(value ?? "");
   if (/[",\n]/.test(raw)) return `"${raw.replace(/"/g, '""')}"`;
   return raw;
+}
+
+function normalizeFriendPair(userA, userB) {
+  const first = Math.min(userA, userB);
+  const second = Math.max(userA, userB);
+  return [first, second];
+}
+
+function isCartItemAvailable(item) {
+  return Number(item?.is_available ?? 1) !== 0;
+}
+
+async function getDriverCartSchema() {
+  if (cachedDriverCartSchema) return cachedDriverCartSchema;
+
+  const [rows] = await pool.query(
+    `
+    SELECT COLUMN_NAME
+    FROM information_schema.COLUMNS
+    WHERE TABLE_SCHEMA = DATABASE()
+      AND TABLE_NAME = 'driver_cart'
+    `
+  );
+
+  const columns = new Set(rows.map((row) => row.COLUMN_NAME));
+  const prefersNewNames = columns.has("driver_user_id");
+
+  cachedDriverCartSchema = prefersNewNames
+    ? {
+        driverColumn: "driver_user_id",
+        itemIdColumn: "product_id",
+        imageColumn: "artwork_url",
+        priceColumn: "points_cost",
+        artistColumn: "artist_name",
+        kindColumn: "media_type",
+      }
+    : {
+        driverColumn: "driver_id",
+        itemIdColumn: "itunes_track_id",
+        imageColumn: "product_image_url",
+        priceColumn: "price_in_points",
+        artistColumn: "artist",
+        kindColumn: "kind",
+      };
+
+  return cachedDriverCartSchema;
+}
+
+async function loadStoredCartRows(driverUserId) {
+  const schema = await getDriverCartSchema();
+  const [rows] = await pool.query(
+    `
+    SELECT
+      id,
+      ${schema.itemIdColumn} AS itunes_track_id,
+      product_name,
+      ${schema.imageColumn} AS product_image_url,
+      ${schema.priceColumn} AS price_in_points,
+      ${schema.artistColumn} AS artist,
+      ${schema.kindColumn} AS kind,
+      added_at,
+      is_available,
+      availability_message,
+      availability_checked_at,
+      availability_changed_at,
+      availability_notified_at
+    FROM driver_cart
+    WHERE ${schema.driverColumn} = ?
+    ORDER BY added_at DESC
+    `,
+    [driverUserId]
+  );
+
+  return rows;
+}
+
+async function refreshDriverCartAvailability(driverUserId) {
+  const schema = await getDriverCartSchema();
+  const rows = await loadStoredCartRows(driverUserId);
+  if (!rows.length) return { cart: [], notifications: [], warning: "" };
+
+  let lookupResults;
+  try {
+    lookupResults = await lookupCatalogItems(rows.map((row) => row.itunes_track_id));
+  } catch (err) {
+    console.warn("driver cart availability refresh failed:", err.message);
+    return {
+      cart: rows,
+      notifications: [],
+      warning: "Could not refresh cart availability right now.",
+    };
+  }
+
+  const checkedAt = new Date();
+  const notifications = [];
+
+  await Promise.all(
+    rows.map(async (row) => {
+      const itemId = String(row.itunes_track_id || "");
+      const previousMessage = row.availability_message;
+      const previousChangedAt = row.availability_changed_at;
+      const previousNotifiedAt = row.availability_notified_at;
+      const nextAvailable = lookupResults.has(itemId);
+      const previousAvailable = isCartItemAvailable(row);
+      const nextMessage = nextAvailable
+        ? null
+        : 'Item unavailable: this catalog item can no longer be purchased.';
+      const shouldNotify = !nextAvailable && (previousAvailable || !row.availability_notified_at);
+
+      row.is_available = nextAvailable ? 1 : 0;
+      row.availability_message = nextMessage;
+      row.availability_checked_at = checkedAt.toISOString();
+
+      if (shouldNotify) {
+        row.availability_notified_at = checkedAt.toISOString();
+        notifications.push({
+          itemId,
+          productName: row.product_name,
+          message: nextMessage,
+        });
+      } else if (nextAvailable) {
+        row.availability_notified_at = null;
+      }
+
+      const changed = previousAvailable !== nextAvailable;
+      if (!changed && previousMessage === nextMessage && row.availability_checked_at) {
+        await pool.query(
+          `UPDATE driver_cart
+           SET availability_checked_at = ?
+           WHERE id = ? AND ${schema.driverColumn} = ?`,
+          [checkedAt, row.id, driverUserId]
+        );
+        return;
+      }
+
+      await pool.query(
+        `
+        UPDATE driver_cart
+        SET is_available = ?,
+            availability_message = ?,
+            availability_checked_at = ?,
+            availability_changed_at = ?,
+            availability_notified_at = ?
+        WHERE id = ? AND ${schema.driverColumn} = ?
+        `,
+        [
+          nextAvailable ? 1 : 0,
+          nextMessage,
+          checkedAt,
+          changed ? checkedAt : previousChangedAt || null,
+          nextAvailable ? null : row.availability_notified_at || previousNotifiedAt || null,
+          row.id,
+          driverUserId,
+        ]
+      );
+    })
+  );
+
+  return { cart: rows, notifications, warning: "" };
 }
 
 async function loadPointHistory(driverUserId) {
@@ -482,7 +645,289 @@ router.get("/settings/notifications", async(req, res) => {
   return res.json({ ok: true, notifications_enabled: rows[0]?.setting_value !== "false" });
 });
 
+/**
+ * GET /api/driver/friends
+ * Returns the current driver's friends plus other active drivers they can add.
+ */
+router.get("/driver/friends", async (req, res) => {
+  const driverUserId = parsePositiveInt(req.user?.id);
+  if (!driverUserId) return res.status(401).json({ ok: false, error: "invalid session" });
 
+  try {
+    const [friendRows] = await pool.query(
+      `
+      SELECT
+        CASE
+          WHEN df.driver_user_id = ? THEN df.friend_user_id
+          ELSE df.driver_user_id
+        END AS friendUserId,
+        SUBSTRING_INDEX(u.email, '@', 1) AS username,
+        u.email,
+        s.name AS sponsorName,
+        d.status AS driverStatus,
+        df.created_at AS friendedAt
+      FROM driver_friendships df
+      JOIN users u
+        ON u.id = CASE
+          WHEN df.driver_user_id = ? THEN df.friend_user_id
+          ELSE df.driver_user_id
+        END
+      JOIN drivers d ON d.user_id = u.id AND d.status = 'ACTIVE'
+      LEFT JOIN sponsors s ON s.id = d.sponsor_id
+      WHERE df.driver_user_id = ? OR df.friend_user_id = ?
+      ORDER BY username ASC
+      `,
+      [driverUserId, driverUserId, driverUserId, driverUserId]
+    );
+
+    const [availableRows] = await pool.query(
+      `
+      SELECT
+        u.id AS driverUserId,
+        SUBSTRING_INDEX(u.email, '@', 1) AS username,
+        u.email,
+        s.name AS sponsorName
+      FROM users u
+      JOIN drivers d ON d.user_id = u.id AND d.status = 'ACTIVE'
+      LEFT JOIN sponsors s ON s.id = d.sponsor_id
+      WHERE UPPER(u.role) = 'DRIVER'
+        AND u.id <> ?
+        AND NOT EXISTS (
+          SELECT 1
+          FROM driver_friendships df
+          WHERE df.driver_user_id = LEAST(?, u.id)
+            AND df.friend_user_id = GREATEST(?, u.id)
+        )
+      ORDER BY username ASC
+      LIMIT 50
+      `,
+      [driverUserId, driverUserId, driverUserId]
+    );
+
+    return res.json({ ok: true, friends: friendRows, availableDrivers: availableRows });
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({ ok: false, error: "failed to fetch friends" });
+  }
+});
+
+/**
+ * POST /api/driver/friends/:friendUserId
+ * Adds another active driver to this driver's friends list.
+ */
+router.post("/driver/friends/:friendUserId", async (req, res) => {
+  const driverUserId = parsePositiveInt(req.user?.id);
+  const friendUserId = parsePositiveInt(req.params.friendUserId);
+  if (!driverUserId) return res.status(401).json({ ok: false, error: "invalid session" });
+  if (!friendUserId) return res.status(400).json({ ok: false, error: "invalid friendUserId" });
+  if (driverUserId === friendUserId) {
+    return res.status(400).json({ ok: false, error: "you cannot add yourself" });
+  }
+
+  try {
+    const [candidateRows] = await pool.query(
+      `
+      SELECT u.id
+      FROM users u
+      JOIN drivers d ON d.user_id = u.id AND d.status = 'ACTIVE'
+      WHERE u.id = ? AND UPPER(u.role) = 'DRIVER'
+      LIMIT 1
+      `,
+      [friendUserId]
+    );
+
+    if (!candidateRows[0]) {
+      return res.status(404).json({ ok: false, error: "driver not found" });
+    }
+
+    const [firstId, secondId] = normalizeFriendPair(driverUserId, friendUserId);
+    await pool.query(
+      `
+      INSERT INTO driver_friendships (driver_user_id, friend_user_id)
+      VALUES (?, ?)
+      ON DUPLICATE KEY UPDATE created_at = created_at
+      `,
+      [firstId, secondId]
+    );
+
+    return res.json({ ok: true, message: "Friend added successfully" });
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({ ok: false, error: "failed to add friend" });
+  }
+});
+
+/**
+ * DELETE /api/driver/friends/:friendUserId
+ * Removes a driver from this driver's friends list.
+ */
+router.delete("/driver/friends/:friendUserId", async (req, res) => {
+  const driverUserId = parsePositiveInt(req.user?.id);
+  const friendUserId = parsePositiveInt(req.params.friendUserId);
+  if (!driverUserId) return res.status(401).json({ ok: false, error: "invalid session" });
+  if (!friendUserId) return res.status(400).json({ ok: false, error: "invalid friendUserId" });
+
+  const [firstId, secondId] = normalizeFriendPair(driverUserId, friendUserId);
+
+  try {
+    await pool.query(
+      "DELETE FROM driver_friendships WHERE driver_user_id = ? AND friend_user_id = ?",
+      [firstId, secondId]
+    );
+    return res.json({ ok: true, message: "Friend removed" });
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({ ok: false, error: "failed to remove friend" });
+  }
+});
+
+/**
+ * GET /api/driver/sponsor-posts
+ * Returns sponsor-authored posts that drivers can browse.
+ */
+router.get("/driver/sponsor-posts", async (req, res) => {
+  try {
+    const [rows] = await pool.query(
+      `
+      SELECT
+        sp.id AS postId,
+        sp.title,
+        sp.body,
+        sp.created_at AS createdAt,
+        sp.updated_at AS updatedAt,
+        s.id AS sponsorId,
+        s.name AS sponsorName,
+        COUNT(c.id) AS commentCount
+      FROM sponsor_posts sp
+      JOIN sponsors s ON s.id = sp.sponsor_id
+      LEFT JOIN sponsor_post_comments c ON c.post_id = sp.id
+      WHERE s.status = 'ACTIVE'
+      GROUP BY sp.id, sp.title, sp.body, sp.created_at, sp.updated_at, s.id, s.name
+      ORDER BY sp.created_at DESC
+      `,
+    );
+
+    return res.json({ ok: true, posts: rows });
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({ ok: false, error: "failed to fetch sponsor posts" });
+  }
+});
+
+/**
+ * GET /api/driver/sponsor-posts/:postId/comments
+ * Returns comments for a sponsor post.
+ */
+router.get("/driver/sponsor-posts/:postId/comments", async (req, res) => {
+  const postId = parsePositiveInt(req.params.postId);
+  if (!postId) return res.status(400).json({ ok: false, error: "invalid postId" });
+
+  try {
+    const [postRows] = await pool.query(
+      `
+      SELECT sp.id
+      FROM sponsor_posts sp
+      JOIN sponsors s ON s.id = sp.sponsor_id
+      WHERE sp.id = ? AND s.status = 'ACTIVE'
+      LIMIT 1
+      `,
+      [postId]
+    );
+    if (!postRows[0]) return res.status(404).json({ ok: false, error: "post not found" });
+
+    const [rows] = await pool.query(
+      `
+      SELECT
+        c.id AS commentId,
+        c.comment_text AS commentText,
+        c.created_at AS createdAt,
+        c.updated_at AS updatedAt,
+        u.id AS driverUserId,
+        SUBSTRING_INDEX(u.email, '@', 1) AS driverName,
+        u.email AS driverEmail
+      FROM sponsor_post_comments c
+      JOIN users u ON u.id = c.driver_user_id
+      WHERE c.post_id = ?
+      ORDER BY c.created_at ASC
+      `,
+      [postId]
+    );
+
+    return res.json({ ok: true, comments: rows });
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({ ok: false, error: "failed to fetch comments" });
+  }
+});
+
+/**
+ * POST /api/driver/sponsor-posts/:postId/comments
+ * Body: { commentText }
+ * Adds a new driver comment to a sponsor post.
+ */
+router.post("/driver/sponsor-posts/:postId/comments", async (req, res) => {
+  const driverUserId = parsePositiveInt(req.user?.id);
+  const postId = parsePositiveInt(req.params.postId);
+  if (!driverUserId) return res.status(401).json({ ok: false, error: "invalid session" });
+  if (!postId) return res.status(400).json({ ok: false, error: "invalid postId" });
+
+  const commentText = String(req.body?.commentText || "").trim();
+  if (!commentText) {
+    return res.status(400).json({ ok: false, error: "commentText is required" });
+  }
+  if (commentText.length > COMMENT_TEXT_MAX) {
+    return res.status(400).json({ ok: false, error: `commentText must be ${COMMENT_TEXT_MAX} characters or fewer` });
+  }
+
+  try {
+    const [postRows] = await pool.query(
+      `
+      SELECT sp.id
+      FROM sponsor_posts sp
+      JOIN sponsors s ON s.id = sp.sponsor_id
+      WHERE sp.id = ? AND s.status = 'ACTIVE'
+      LIMIT 1
+      `,
+      [postId]
+    );
+    if (!postRows[0]) return res.status(404).json({ ok: false, error: "post not found" });
+
+    const [result] = await pool.query(
+      `
+      INSERT INTO sponsor_post_comments (post_id, driver_user_id, comment_text)
+      VALUES (?, ?, ?)
+      `,
+      [postId, driverUserId, commentText]
+    );
+
+    const [rows] = await pool.query(
+      `
+      SELECT
+        c.id AS commentId,
+        c.comment_text AS commentText,
+        c.created_at AS createdAt,
+        c.updated_at AS updatedAt,
+        u.id AS driverUserId,
+        SUBSTRING_INDEX(u.email, '@', 1) AS driverName,
+        u.email AS driverEmail
+      FROM sponsor_post_comments c
+      JOIN users u ON u.id = c.driver_user_id
+      WHERE c.id = ?
+      LIMIT 1
+      `,
+      [result.insertId]
+    );
+
+    return res.status(201).json({
+      ok: true,
+      message: "Comment posted successfully",
+      comment: rows[0],
+    });
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({ ok: false, error: "failed to add comment" });
+  }
+});
 
 /**
  * GET /api/driver/catalog/hidden
@@ -521,22 +966,28 @@ router.get("/driver/cart", async (req, res) => {
   if (!userId) return res.status(401).json({ ok: false, error: "invalid session" });
 
   try {
-    const [rows] = await pool.query(
-      `SELECT id,
-              product_id       AS itunes_track_id,
-              product_name,
-              artwork_url      AS product_image_url,
-              points_cost      AS price_in_points,
-              artist_name      AS artist,
-              media_type       AS kind,
-              added_at
-       FROM driver_cart WHERE driver_user_id = ? ORDER BY added_at DESC`,
-      [userId]
-    );
-    return res.json({ ok: true, cart: rows });
+    const { cart, notifications, warning } = await refreshDriverCartAvailability(userId);
+    return res.json({ ok: true, cart, notifications, warning });
   } catch (err) {
     console.error(err);
     return res.status(500).json({ ok: false, error: "Failed to fetch cart" });
+  }
+});
+
+/**
+ * POST /api/driver/cart/recheck-availability
+ * Forces a fresh availability check against the external catalog API.
+ */
+router.post("/driver/cart/recheck-availability", async (req, res) => {
+  const userId = parsePositiveInt(req.user?.id);
+  if (!userId) return res.status(401).json({ ok: false, error: "invalid session" });
+
+  try {
+    const { cart, notifications, warning } = await refreshDriverCartAvailability(userId);
+    return res.json({ ok: true, cart, notifications, warning });
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({ ok: false, error: "Failed to recheck cart availability" });
   }
 });
 
@@ -555,15 +1006,43 @@ router.post("/driver/cart", async (req, res) => {
   }
 
   try {
+    const schema = await getDriverCartSchema();
     await pool.query(
-      `INSERT INTO driver_cart (driver_user_id, product_id, product_name, artwork_url, points_cost, artist_name, media_type)
-       VALUES (?, ?, ?, ?, ?, ?, ?)
-       ON DUPLICATE KEY UPDATE id = id`,
-      [userId, String(itunes_track_id), String(product_name), product_image_url || null,
-       Number(price_in_points) || 0, artist || null, kind || null]
+      `
+      INSERT INTO driver_cart (
+        ${schema.driverColumn},
+        ${schema.itemIdColumn},
+        product_name,
+        ${schema.imageColumn},
+        ${schema.priceColumn},
+        ${schema.artistColumn},
+        ${schema.kindColumn},
+        is_available,
+        availability_message,
+        availability_checked_at,
+        availability_changed_at,
+        availability_notified_at
+      )
+      VALUES (?, ?, ?, ?, ?, ?, ?, 1, NULL, NOW(), NULL, NULL)
+      ON DUPLICATE KEY UPDATE id = id
+      `,
+      [
+        userId,
+        String(itunes_track_id),
+        String(product_name),
+        product_image_url || null,
+        Number(price_in_points) || 0,
+        artist || null,
+        kind || null,
+      ]
     );
     const [rows] = await pool.query(
-      "SELECT id FROM driver_cart WHERE driver_user_id = ? AND product_id = ? LIMIT 1",
+      `
+      SELECT id
+      FROM driver_cart
+      WHERE ${schema.driverColumn} = ? AND ${schema.itemIdColumn} = ?
+      LIMIT 1
+      `,
       [userId, String(itunes_track_id)]
     );
     return res.json({ ok: true, id: rows[0]?.id });
@@ -585,8 +1064,9 @@ router.delete("/driver/cart/:itemId", async (req, res) => {
   if (!itemId) return res.status(400).json({ ok: false, error: "invalid itemId" });
 
   try {
+    const schema = await getDriverCartSchema();
     await pool.query(
-      "DELETE FROM driver_cart WHERE id = ? AND driver_user_id = ?",
+      `DELETE FROM driver_cart WHERE id = ? AND ${schema.driverColumn} = ?`,
       [itemId, userId]
     );
     return res.json({ ok: true });

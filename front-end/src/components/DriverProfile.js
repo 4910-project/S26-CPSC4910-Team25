@@ -1,6 +1,9 @@
 import React, { useEffect, useState, useCallback } from "react";
 import SponsorshipApply from "./SponsorshipApply";
 import FeedbackForm from "./feedbackForm";
+import DriverFriendsPanel from "./DriverFriendsPanel";
+import SponsorFeedPanel from "./SponsorFeedPanel";
+import { summarizeCartAvailability, isCartItemAvailable } from "../utils/cartAvailability";
 
 const API_BASE = "http://localhost:8001/api";
 const BACKEND_BASE = "http://localhost:8001";
@@ -80,6 +83,8 @@ export default function DriverProfile({ token, onLogout, onChangePassword, onCha
   const [cartItems,   setCartItems]   = useState([]);
   const [cartLoading, setCartLoading] = useState(false);
   const [cartError,   setCartError]   = useState("");
+  const [cartNotifications, setCartNotifications] = useState([]);
+  const [cartWarning, setCartWarning] = useState("");
 
   // ── Profile photo fetch ───────────────────────────────────────────────────
   useEffect(() => {
@@ -158,11 +163,18 @@ export default function DriverProfile({ token, onLogout, onChangePassword, onCha
     if (activeTab !== "cart" || !token) return;
     setCartLoading(true);
     setCartError("");
+    setCartWarning("");
+    setCartNotifications([]);
     fetch(`${API_BASE}/driver/cart`, { headers: { Authorization: `Bearer ${token}` } })
       .then(r => r.json())
       .then(d => {
-        if (d.ok) setCartItems(d.cart || []);
-        else setCartError(d.error || "Failed to load cart");
+        if (d.ok) {
+          setCartItems(d.cart || []);
+          setCartNotifications(d.notifications || []);
+          setCartWarning(d.warning || "");
+        } else {
+          setCartError(d.error || "Failed to load cart");
+        }
       })
       .catch(() => setCartError("Failed to load cart"))
       .finally(() => setCartLoading(false));
@@ -174,7 +186,13 @@ export default function DriverProfile({ token, onLogout, onChangePassword, onCha
         method: "DELETE",
         headers: { Authorization: `Bearer ${token}` },
       });
+      const removed = cartItems.find((item) => item.id === itemId);
       setCartItems(prev => prev.filter(c => c.id !== itemId));
+      if (removed?.itunes_track_id) {
+        setCartNotifications(prev =>
+          prev.filter((notice) => String(notice.itemId) !== String(removed.itunes_track_id))
+        );
+      }
     } catch {
       setCartError("Failed to remove item");
     }
@@ -415,7 +433,7 @@ export default function DriverProfile({ token, onLogout, onChangePassword, onCha
 
       {/* Tabs */}
       <div style={{ display: "flex", gap: 8, marginTop: 24, marginBottom: 24 }}>
-        {["dashboard", "sponsors", "wishlist", "cart", "feedback"].map((tab) => (
+        {["dashboard", "sponsors", "friends", "feed", "wishlist", "cart", "feedback"].map((tab) => (
           <button
             key={tab}
             type="button"
@@ -431,7 +449,19 @@ export default function DriverProfile({ token, onLogout, onChangePassword, onCha
               textTransform: "capitalize",
             }}
           >
-            {tab === "dashboard" ? "Dashboard" : tab === "sponsors" ? "Sponsor Reviews" : tab === "wishlist" ? "My Wishlist" : tab === "cart" ? "Cart" : "Help & Feedback"}
+            {tab === "dashboard"
+              ? "Dashboard"
+              : tab === "sponsors"
+                ? "Sponsor Reviews"
+                : tab === "friends"
+                  ? "Friends"
+                  : tab === "feed"
+                    ? "Sponsor Feed"
+                    : tab === "wishlist"
+                      ? "My Wishlist"
+                      : tab === "cart"
+                        ? "Cart"
+                        : "Help & Feedback"}
           </button>
         ))}
       </div>
@@ -755,9 +785,18 @@ export default function DriverProfile({ token, onLogout, onChangePassword, onCha
         </div>
       )}
 
+      {activeTab === "friends" && (
+        <DriverFriendsPanel token={token} />
+      )}
+
+      {activeTab === "feed" && (
+        <SponsorFeedPanel token={token} />
+      )}
+
       {/* ── Cart tab ── */}
       {activeTab === "cart" && (() => {
-        const cartTotal = cartItems.reduce((sum, item) => sum + Number(item.price_in_points || 0), 0);
+        const { unavailableItems, availableTotal } = summarizeCartAvailability(cartItems);
+        const cartTotal = availableTotal;
         const canAffordAll = points !== null && points >= cartTotal;
         return (
           <div>
@@ -779,6 +818,22 @@ export default function DriverProfile({ token, onLogout, onChangePassword, onCha
               </div>
             )}
 
+            {!cartError && cartNotifications.length > 0 && (
+              <div style={{ padding: "10px 14px", borderRadius: 8, background: "#fff7ed", color: "#9a3412", marginBottom: 12 }}>
+                {cartNotifications.map((notice) => (
+                  <div key={notice.itemId} style={{ marginBottom: 4 }}>
+                    {notice.productName}: {notice.message}
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {!cartError && cartWarning && (
+              <div style={{ padding: "10px 14px", borderRadius: 8, background: "#eff6ff", color: "#1d4ed8", marginBottom: 12 }}>
+                {cartWarning}
+              </div>
+            )}
+
             {cartLoading && <p style={{ color: "var(--muted)" }}>Loading…</p>}
 
             {!cartLoading && cartItems.length === 0 && !cartError && (
@@ -788,7 +843,18 @@ export default function DriverProfile({ token, onLogout, onChangePassword, onCha
             {!cartLoading && cartItems.length > 0 && (
               <>
                 {cartItems.map(item => (
-                  <div key={item.id} style={{ ...card, marginBottom: 12, display: "flex", alignItems: "center", gap: 14 }}>
+                  <div
+                    key={item.id}
+                    style={{
+                      ...card,
+                      marginBottom: 12,
+                      display: "flex",
+                      alignItems: "center",
+                      gap: 14,
+                      border: isCartItemAvailable(item) ? card.border : "1px solid #fdba74",
+                      background: isCartItemAvailable(item) ? card.background : "#fff7ed",
+                    }}
+                  >
                     {item.product_image_url && (
                       <img
                         src={item.product_image_url}
@@ -806,6 +872,11 @@ export default function DriverProfile({ token, onLogout, onChangePassword, onCha
                       <div style={{ color: "#e53935", fontWeight: 600, fontSize: 13, marginTop: 2 }}>
                         {Number(item.price_in_points).toLocaleString()} pts
                       </div>
+                      {!isCartItemAvailable(item) && (
+                        <div style={{ color: "#9a3412", fontSize: 12, marginTop: 4 }}>
+                          {item.availability_message || "Item unavailable. It can no longer be purchased."}
+                        </div>
+                      )}
                     </div>
                     <button
                       type="button"
@@ -827,15 +898,20 @@ export default function DriverProfile({ token, onLogout, onChangePassword, onCha
                   </div>
                 ))}
 
-                <div style={{ ...card, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                  <div>
-                    <div style={{ fontSize: 13, color: "var(--muted)" }}>Total</div>
-                    <div style={{ fontSize: 22, fontWeight: 800, color: "#e53935" }}>
-                      {cartTotal.toLocaleString()} pts
-                    </div>
+              <div style={{ ...card, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                <div>
+                  <div style={{ fontSize: 13, color: "var(--muted)" }}>Total</div>
+                  <div style={{ fontSize: 22, fontWeight: 800, color: "#e53935" }}>
+                    {cartTotal.toLocaleString()} pts
                   </div>
-                  {points !== null && (
-                    <div style={{ textAlign: "right" }}>
+                  {unavailableItems.length > 0 && (
+                    <div style={{ fontSize: 12, color: "#9a3412", marginTop: 4 }}>
+                      {unavailableItems.length} unavailable item(s) excluded from the purchase total.
+                    </div>
+                  )}
+                </div>
+                {points !== null && (
+                  <div style={{ textAlign: "right" }}>
                       <div style={{ fontSize: 13, color: "var(--muted)" }}>Your balance</div>
                       <div style={{ fontSize: 22, fontWeight: 800, color: canAffordAll ? "#059669" : "#dc2626" }}>
                         {Number(points).toLocaleString()} pts

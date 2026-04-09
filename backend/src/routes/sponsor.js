@@ -32,6 +32,8 @@ const orgPhotoUpload = multer({
 const APP_STATUSES = new Set(["PENDING", "APPROVED", "REJECTED"]);
 const DRIVER_FILTERS = new Set(["ACTIVE", "DROPPED", "PROBATION", "PENDING"]);
 const DECISION_MESSAGE_MAX = 500;
+const POST_TITLE_MAX = 150;
+const POST_BODY_MAX = 2000;
 
 function parsePositiveInt(value) {
   const n = Number.parseInt(String(value), 10);
@@ -76,6 +78,80 @@ function getDriverNameFilter(searchTerm) {
 
 function getSponsorIdFromSession(req) {
   return parsePositiveInt(req.user?.sponsor_id);
+}
+
+function escapeCsvCell(value) {
+  const raw = String(value ?? "");
+  if (/[",\n]/.test(raw)) return `"${raw.replace(/"/g, '""')}"`;
+  return raw;
+}
+
+async function loadSponsorPointsReportData(sponsorId) {
+  const [[sponsor]] = await pool.query(
+    "SELECT id, name FROM sponsors WHERE id = ? LIMIT 1",
+    [sponsorId]
+  );
+  if (!sponsor) return null;
+
+  const hasHistory = await tableExists("driver_points_history");
+  const [driverRows] = hasHistory
+    ? await pool.query(
+        `
+        SELECT
+          d.id AS driverId,
+          u.email,
+          LOWER(d.status) AS driverStatus,
+          u.points AS currentPoints,
+          COALESCE(SUM(CASE WHEN h.points_change > 0 THEN h.points_change ELSE 0 END), 0) AS totalAwarded,
+          COALESCE(SUM(CASE WHEN h.points_change < 0 THEN ABS(h.points_change) ELSE 0 END), 0) AS totalReversed,
+          COALESCE(SUM(h.points_change), 0) AS netChange
+        FROM drivers d
+        JOIN users u ON u.id = d.user_id
+        LEFT JOIN driver_points_history h ON h.driver_user_id = d.user_id
+        WHERE d.sponsor_id = ?
+        GROUP BY d.id, u.email, d.status, u.points
+        ORDER BY u.email ASC
+        `,
+        [sponsorId]
+      )
+    : await pool.query(
+        `
+        SELECT
+          d.id AS driverId,
+          u.email,
+          LOWER(d.status) AS driverStatus,
+          u.points AS currentPoints,
+          0 AS totalAwarded,
+          0 AS totalReversed,
+          0 AS netChange
+        FROM drivers d
+        JOIN users u ON u.id = d.user_id
+        WHERE d.sponsor_id = ?
+        ORDER BY u.email ASC
+        `,
+        [sponsorId]
+      );
+
+  const [historyRows] = hasHistory
+    ? await pool.query(
+        `
+        SELECT
+          h.created_at AS occurredAt,
+          u.email,
+          h.points_change AS pointsChange,
+          h.reason
+        FROM driver_points_history h
+        JOIN users u ON u.id = h.driver_user_id
+        JOIN drivers d ON d.user_id = h.driver_user_id
+        WHERE d.sponsor_id = ?
+        ORDER BY h.created_at DESC
+        LIMIT 120
+        `,
+        [sponsorId]
+      )
+    : [[]];
+
+  return { sponsor, driverRows, historyRows };
 }
 
 router.use(requireActiveSession);
@@ -214,6 +290,122 @@ router.post("/org/photo", (req, res, next) => {
   } catch (err) {
     console.error(err);
     return res.status(500).json({ ok: false, error: "Failed to save photo" });
+  }
+});
+
+/**
+ * GET /sponsor/posts
+ * Returns sponsor-authored posts for management.
+ */
+router.get("/posts", async (req, res) => {
+  const sponsorId = getSponsorIdFromSession(req);
+  if (!sponsorId) return res.status(400).json({ ok: false, error: "sponsor account is not linked" });
+
+  try {
+    const [rows] = await pool.query(
+      `
+      SELECT
+        sp.id AS postId,
+        sp.title,
+        sp.body,
+        sp.created_at AS createdAt,
+        sp.updated_at AS updatedAt,
+        COUNT(c.id) AS commentCount
+      FROM sponsor_posts sp
+      LEFT JOIN sponsor_post_comments c ON c.post_id = sp.id
+      WHERE sp.sponsor_id = ?
+      GROUP BY sp.id, sp.title, sp.body, sp.created_at, sp.updated_at
+      ORDER BY sp.created_at DESC
+      `,
+      [sponsorId]
+    );
+
+    return res.json({ ok: true, posts: rows });
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({ ok: false, error: "failed to fetch sponsor posts" });
+  }
+});
+
+/**
+ * POST /sponsor/posts
+ * Body: { title, body }
+ * Creates a new sponsor-authored post.
+ */
+router.post("/posts", async (req, res) => {
+  const sponsorId = getSponsorIdFromSession(req);
+  if (!sponsorId) return res.status(400).json({ ok: false, error: "sponsor account is not linked" });
+
+  const title = String(req.body?.title || "").trim();
+  const body = String(req.body?.body || "").trim();
+
+  if (!title) return res.status(400).json({ ok: false, error: "title is required" });
+  if (!body) return res.status(400).json({ ok: false, error: "body is required" });
+  if (title.length > POST_TITLE_MAX) {
+    return res.status(400).json({ ok: false, error: `title must be ${POST_TITLE_MAX} characters or fewer` });
+  }
+  if (body.length > POST_BODY_MAX) {
+    return res.status(400).json({ ok: false, error: `body must be ${POST_BODY_MAX} characters or fewer` });
+  }
+
+  try {
+    const [result] = await pool.query(
+      `
+      INSERT INTO sponsor_posts (sponsor_id, author_user_id, title, body)
+      VALUES (?, ?, ?, ?)
+      `,
+      [sponsorId, req.user.id, title, body]
+    );
+
+    const [rows] = await pool.query(
+      `
+      SELECT
+        id AS postId,
+        title,
+        body,
+        created_at AS createdAt,
+        updated_at AS updatedAt
+      FROM sponsor_posts
+      WHERE id = ?
+      LIMIT 1
+      `,
+      [result.insertId]
+    );
+
+    return res.status(201).json({
+      ok: true,
+      message: "Post published successfully",
+      post: rows[0],
+    });
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({ ok: false, error: "failed to create post" });
+  }
+});
+
+/**
+ * DELETE /sponsor/posts/:postId
+ * Removes one of the sponsor's own posts.
+ */
+router.delete("/posts/:postId", async (req, res) => {
+  const sponsorId = getSponsorIdFromSession(req);
+  const postId = parsePositiveInt(req.params.postId);
+  if (!sponsorId) return res.status(400).json({ ok: false, error: "sponsor account is not linked" });
+  if (!postId) return res.status(400).json({ ok: false, error: "invalid postId" });
+
+  try {
+    const [result] = await pool.query(
+      "DELETE FROM sponsor_posts WHERE id = ? AND sponsor_id = ? LIMIT 1",
+      [postId, sponsorId]
+    );
+    if (!result.affectedRows) {
+      return res.status(404).json({ ok: false, error: "post not found" });
+    }
+
+    return res.json({ ok: true, message: "Post deleted" });
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({ ok: false, error: "failed to delete post" });
   }
 });
 
@@ -860,6 +1052,52 @@ router.post("/drivers/:driverId/reverse-points", async (req, res) => {
 });
 
 /**
+ * GET /sponsor/reports/points.csv
+ * Sponsor can export the points report as CSV.
+ */
+router.get("/reports/points.csv", async (req, res) => {
+  const sponsorId = getSponsorIdFromSession(req);
+  if (!sponsorId) return res.status(400).json({ ok: false, error: "sponsor account is not linked" });
+
+  try {
+    const reportData = await loadSponsorPointsReportData(sponsorId);
+    if (!reportData) return res.status(404).json({ ok: false, error: "sponsor not found" });
+
+    const { sponsor, driverRows, historyRows } = reportData;
+    const dateLabel = new Date().toISOString().slice(0, 10);
+    const filename = `sponsor-points-report-${dateLabel}.csv`;
+
+    const summaryRows = [
+      ["Sponsor", sponsor.name],
+      [],
+      ["Driver Email", "Status", "Current Points", "Total Awarded", "Total Reversed", "Net Change"],
+      ...driverRows.map((row) => [
+        row.email,
+        row.driverStatus,
+        row.currentPoints,
+        row.totalAwarded,
+        row.totalReversed,
+        row.netChange,
+      ]),
+      [],
+      ["Occurred At", "Driver Email", "Points Change", "Reason"],
+      ...historyRows.map((row) => [row.occurredAt, row.email, row.pointsChange, row.reason]),
+    ];
+
+    const csv = summaryRows
+      .map((row) => row.map((cell) => escapeCsvCell(cell)).join(","))
+      .join("\n");
+
+    res.setHeader("Content-Type", "text/csv; charset=utf-8");
+    res.setHeader("Content-Disposition", `attachment; filename="${filename}"`);
+    return res.status(200).send(csv);
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({ ok: false, error: "failed to export report csv" });
+  }
+});
+
+/**
  * GET /sponsor/reports/points.pdf
  * Story 10791 — Sponsor can export points report as a PDF.
  */
@@ -868,69 +1106,10 @@ router.get("/reports/points.pdf", async (req, res) => {
   if (!sponsorId) return res.status(400).json({ ok: false, error: "sponsor account is not linked" });
 
   try {
-    const [[sponsor]] = await pool.query(
-      "SELECT id, name FROM sponsors WHERE id = ? LIMIT 1",
-      [sponsorId]
-    );
-    if (!sponsor) return res.status(404).json({ ok: false, error: "sponsor not found" });
+    const reportData = await loadSponsorPointsReportData(sponsorId);
+    if (!reportData) return res.status(404).json({ ok: false, error: "sponsor not found" });
 
-    const hasHistory = await tableExists("driver_points_history");
-    const [driverRows] = hasHistory
-      ? await pool.query(
-          `
-          SELECT
-            d.id AS driverId,
-            u.email,
-            LOWER(d.status) AS driverStatus,
-            u.points AS currentPoints,
-            COALESCE(SUM(CASE WHEN h.points_change > 0 THEN h.points_change ELSE 0 END), 0) AS totalAwarded,
-            COALESCE(SUM(CASE WHEN h.points_change < 0 THEN ABS(h.points_change) ELSE 0 END), 0) AS totalReversed,
-            COALESCE(SUM(h.points_change), 0) AS netChange
-          FROM drivers d
-          JOIN users u ON u.id = d.user_id
-          LEFT JOIN driver_points_history h ON h.driver_user_id = d.user_id
-          WHERE d.sponsor_id = ?
-          GROUP BY d.id, u.email, d.status, u.points
-          ORDER BY u.email ASC
-          `,
-          [sponsorId]
-        )
-      : await pool.query(
-          `
-          SELECT
-            d.id AS driverId,
-            u.email,
-            LOWER(d.status) AS driverStatus,
-            u.points AS currentPoints,
-            0 AS totalAwarded,
-            0 AS totalReversed,
-            0 AS netChange
-          FROM drivers d
-          JOIN users u ON u.id = d.user_id
-          WHERE d.sponsor_id = ?
-          ORDER BY u.email ASC
-          `,
-          [sponsorId]
-        );
-
-    const [historyRows] = hasHistory
-      ? await pool.query(
-          `
-          SELECT
-            h.created_at AS occurredAt,
-            u.email,
-            h.points_change AS pointsChange,
-            h.reason
-          FROM driver_points_history h
-          JOIN users u ON u.id = h.driver_user_id
-          JOIN drivers d ON d.user_id = h.driver_user_id
-          WHERE d.sponsor_id = ?
-          ORDER BY h.created_at DESC
-          LIMIT 120
-          `,
-          [sponsorId]
-        )
-      : [[]];
+    const { sponsor, driverRows, historyRows } = reportData;
 
     const now = new Date();
     const dateLabel = now.toISOString().slice(0, 10);
