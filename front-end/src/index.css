@@ -11,3 +11,22 @@ code {
   font-family: source-code-pro, Menlo, Monaco, Consolas, 'Courier New',
     monospace;
 }
+:root {
+  --app-font-scale: 1;
+}
+
+:root[data-text-size="small"] {
+  --app-font-scale: 0.9;
+}
+
+:root[data-text-size="medium"] {
+  --app-font-scale: 1;
+}
+
+:root[data-text-size="large"] {
+  --app-font-scale: 1.2;
+}
+
+body {
+  font-size: calc(16px * var(--app-font-scale));
+}

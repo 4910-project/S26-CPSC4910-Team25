@@ -453,4 +453,61 @@ router.patch("/orders/:orderId/cancel", async (req, res) => {
   }
 });
 
+// ─────────────────────────────────────────────────────────────
+// Text size preference
+// ─────────────────────────────────────────────────────────────
+router.get("/text-size", async (req, res) => {
+  try {
+    const [rows] = await pool.query(
+      `
+      SELECT text_size
+      FROM users
+      WHERE id = ?
+      LIMIT 1
+      `,
+      [req.user.id]
+    );
+
+    return res.json({
+      ok: true,
+      text_size: rows[0]?.text_size || "medium",
+    });
+  } catch (err) {
+    console.error("Failed to load text size:", err);
+    return res.status(500).json({ ok: false, error: "failed to load text size" });
+  }
+});
+
+router.patch("/text-size", async (req, res) => {
+  try {
+    const allowed = ["small", "medium", "large"];
+    const textSize = String(req.body.text_size || "").toLowerCase();
+
+    if (!allowed.includes(textSize)) {
+      return res.status(400).json({
+        ok: false,
+        error: "text_size must be small, medium, or large",
+      });
+    }
+
+    await pool.query(
+      `
+      UPDATE users
+      SET text_size = ?
+      WHERE id = ?
+      LIMIT 1
+      `,
+      [textSize, req.user.id]
+    );
+
+    return res.json({
+      ok: true,
+      text_size: textSize,
+    });
+  } catch (err) {
+    console.error("Failed to update text size:", err);
+    return res.status(500).json({ ok: false, error: "failed to update text size" });
+  }
+});
+
 module.exports = router;

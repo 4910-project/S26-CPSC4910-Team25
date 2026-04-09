@@ -93,6 +93,11 @@ export default function DriverProfile({
   const [ordersError, setOrdersError] = useState("");
   const [cancelingOrderId, setCancelingOrderId] = useState(null);
 
+  const [textSize, setTextSize] = useState("medium");
+  const [textSizeLoading, setTextSizeLoading] = useState(false);
+  const [textSizeSaving, setTextSizeSaving] = useState(false);
+  const [textSizeMessage, setTextSizeMessage] = useState("");
+
   // ── Points fetch ──────────────────────────────────────────────────────────
   useEffect(() => {
     if (!token) return;
@@ -238,6 +243,30 @@ export default function DriverProfile({
         setHistoryError(e.message || "Failed to load point history");
       } finally {
         setHistoryLoading(false);
+      }
+    })();
+  }, [token]);
+
+  useEffect(() => {
+    if (!token) return;
+
+    (async () => {
+      setTextSizeLoading(true);
+      try {
+        const res = await fetch(`${API_BASE}/driver/text-size`, {
+          headers: { Authorization: `Bearer ${token}` },
+        });
+
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || "Failed to load text size");
+
+        const size = data.text_size || "medium";
+        setTextSize(size);
+        document.documentElement.setAttribute("data-text-size", size);
+      } catch (err) {
+        console.error(err);
+      } finally {
+        setTextSizeLoading(false);
       }
     })();
   }, [token]);
@@ -433,6 +462,34 @@ export default function DriverProfile({
       setHistoryError(e.message || "Failed to export CSV");
     } finally {
       setCsvDownloading(false);
+    }
+  };
+
+  const handleTextSizeChange = async (newSize) => {
+    setTextSizeSaving(true);
+    setTextSizeMessage("");
+
+    try {
+      const res = await fetch(`${API_BASE}/driver/text-size`, {
+        method: "PATCH",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({ text_size: newSize }),
+      });
+
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Failed to update text size");
+
+      setTextSize(newSize);
+      document.documentElement.setAttribute("data-text-size", newSize);
+      setTextSizeMessage("Text size updated.");
+    } catch (err) {
+      console.error(err);
+      setTextSizeMessage(err.message || "Failed to update text size");
+    } finally {
+      setTextSizeSaving(false);
     }
   };
 
@@ -784,6 +841,53 @@ export default function DriverProfile({
               )}
             </div>
           </div>
+          <div style={card}>
+  <div style={{ color: "var(--muted)", fontSize: 12 }}>Accessibility</div>
+
+  {textSizeLoading ? (
+    <div style={{ marginTop: 10, color: "var(--muted)" }}>Loading…</div>
+  ) : (
+    <>
+      <div style={{ marginTop: 10, fontSize: 18, fontWeight: 700 }}>
+        Text Size
+      </div>
+
+      <div style={{ marginTop: 6, color: "var(--muted)", fontSize: 13 }}>
+        Adjust the size of text across the system.
+      </div>
+
+      <div style={{ marginTop: 12, display: "flex", gap: 8, flexWrap: "wrap" }}>
+        {["small", "medium", "large"].map((size) => (
+          <button
+            key={size}
+            type="button"
+            onClick={() => handleTextSizeChange(size)}
+            disabled={textSizeSaving}
+            style={{
+              padding: "8px 14px",
+              borderRadius: 8,
+              border: "1px solid var(--border, #d1d5db)",
+              background: textSize === size ? "#4f46e5" : "transparent",
+              color: textSize === size ? "#fff" : "inherit",
+              fontWeight: 600,
+              cursor: textSizeSaving ? "not-allowed" : "pointer",
+              textTransform: "capitalize",
+              opacity: textSizeSaving ? 0.7 : 1,
+            }}
+          >
+            {size}
+          </button>
+        ))}
+      </div>
+
+      {textSizeMessage && (
+        <div style={{ marginTop: 10, fontSize: 12, color: "var(--muted)" }}>
+          {textSizeMessage}
+        </div>
+      )}
+    </>
+  )}
+</div>
 
           <div style={{ ...card, marginTop: 14 }}>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
