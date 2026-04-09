@@ -52,14 +52,11 @@ export default function SponsorProfile({ token, onLogout, onChangeUsername }) {
   const [reverseReasonInput, setReverseReasonInput] = useState({}); // { [driverId]: "reason" }
   const [reversingDriverId, setReversingDriverId] = useState(null);
   const [exportingReport, setExportingReport] = useState(false);
-<<<<<<< HEAD
   const [probationReasonInput, setProbationReasonInput] = useState({});
   const [dropReasonInput, setDropReasonInput] = useState({});
   const [probatingDriverId, setProbatingDriverId] = useState(null);
   const [droppingDriverId, setDroppingDriverId] = useState(null);
-=======
   const [exportingReportCsv, setExportingReportCsv] = useState(false);
->>>>>>> d31fc3eb87b5b145a036d581b7b9b987184b3c94
 
   // ─── Catalog hide/unhide state ──────────────────────────────────────────────
   const [hiddenIds,      setHiddenIds]      = useState(new Set());
