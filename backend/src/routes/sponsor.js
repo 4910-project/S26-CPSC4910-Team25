@@ -30,7 +30,7 @@ const orgPhotoUpload = multer({
 });
 
 const APP_STATUSES = new Set(["PENDING", "APPROVED", "REJECTED"]);
-const DRIVER_FILTERS = new Set(["ACTIVE", "DROPPED", "PENDING"]);
+const DRIVER_FILTERS = new Set(["ACTIVE", "DROPPED", "PROBATION", "PENDING"]);
 const DECISION_MESSAGE_MAX = 500;
 
 function parsePositiveInt(value) {
@@ -455,7 +455,7 @@ router.get("/drivers", async (req, res) => {
       return res.json({ drivers: pendingRows });
     }
 
-    if (requestedStatusRaw === "ACTIVE" || requestedStatusRaw === "DROPPED") {
+    if (requestedStatusRaw === "ACTIVE" || requestedStatusRaw === "DROPPED" || requestedStatusRaw === "PROBATION") {
       const [rows] = await pool.query(
         `
         SELECT
@@ -1193,5 +1193,204 @@ router.post("/feedback", async (req, res) => {
     return res.status(500).json({ ok: false, error: "failed to submit feedback" });
   }
 });
+
+/**
+ * POST /sponsor/drivers/:driverId/probation
+ * Body: { reason: "string" }
+ * Puts a driver on probation
+ */
+router.post("/drivers/:driverId/probation", async (req, res) => {
+  const sponsorId = getSponsorIdFromSession(req);
+  if (!sponsorId) return res.status(400).json({ ok: false, error: "sponsor account is not linked "});
+  
+  const driverId = parsePositiveInt(req.params.driverId);
+  if (!driverId) return res.status(400).json({ ok: false, error: "invalid driverId"});
+  
+  const reason = String(req.body?.reason || "").trim();
+  if(!reason) return res.status(400).json({ ok:false, error: "reason is required"});
+
+  const conn = await pool.getConnection();
+  try {
+    await conn.beginTransaction();
+
+    const [dRows] = await conn.query(
+      `SELECT id, user_id, status
+      FROM drivers
+      WHERE id = ? AND sponsor_id = ?
+      LIMIT 1 FOR UPDATE`,
+      [driverId, sponsorId]
+    );
+    if (!dRows[0]) {
+      await conn.rollback();
+      return res.status(404).json({ ok: false, error: "driver not found" });
+    }
+    if (dRows[0].status === "PROBATION") {
+      await conn.rollback();
+      return res.status(409).json({ ok: false, error: "Driver is already on probation"});
+    }
+    if (dRows[0].status === "DROPPED") {
+      await conn.rollback();
+      return res.status(409).json({ ok: false, error: "driver is dropped" });
+    }
+    await conn.query(
+      `UPDATE drivers
+      SET status = 'PROBATION', probation_reason = ?
+      WHERE id = ?`,
+      [reason, driverId]
+    );
+
+    await writeAudit({
+      category: "DRIVER_PROBATION",
+      actorUserId: req.user.id,
+      targetUserId: dRows[0].user_id,
+      sponsorId,
+      success: 1,
+      details: `sponsor placed driverId=${driverId} on probation; reason=${reason}`,
+      conn,
+    });
+
+    await conn.commit();
+    return res.json({ ok: true, message: "Driver placed on probation" });
+  } catch (err) {
+    await conn.rollback();
+    console.error(err);
+    return res.status(500).json({ ok: false, error: "failed to place driver on probation" });
+  } finally {
+    conn.release();
+  }
+});
+
+/**
+ * POST /sponsor/drivers/:driverId/lift-probation
+ * Lifts driver from probation and places them on active status
+ */
+router.post("/drivers/:driverId/lift-probation", async (req, res) => {
+  const sponsorId = getSponsorIdFromSession(req);
+  if (!sponsorId) return res.status(400).json({ ok: false, error: "sponsor account is not linked "});
+  
+  const driverId = parsePositiveInt(req.params.driverId);
+  if (!driverId) return res.status(400).json({ ok: false, error: "invalid driverId"});
+
+  const conn = await pool.getConnection();
+  try {
+    await conn.beginTransaction();
+
+    const [dRows] = await conn.query(
+      `SELECT id, user_id, status
+      FROM drivers
+      WHERE id = ? AND sponsor_id = ?
+      LIMIT 1 FOR UPDATE`,
+      [driverId, sponsorId]
+    );
+    if (!dRows[0]) {
+      await conn.rollback();
+      return res.status(404).json({ ok: false, error: "driver not found" });
+    }
+    if (dRows[0].status !== "PROBATION") {
+      await conn.rollback();
+      return res.status(409).json({ ok: false, error: "Driver is not on probation"});
+    }
+    
+    await conn.query(
+      `UPDATE drivers
+      SET status = 'ACTIVE', probation_reason = NULL
+      WHERE id = ?`,
+      [driverId]
+    );
+
+    await writeAudit({
+      category: "DRIVER_PROBATION_LIFTED",
+      actorUserId: req.user.id,
+      targetUserId: dRows[0].user_id,
+      sponsorId,
+      success: 1,
+      details: `sponsor lifted probation for driverId=${driverId}`,
+      conn,
+    });
+
+    await conn.commit();
+    return res.json({ ok: true, message: "probation lifted" });
+  } catch (err) {
+    await conn.rollback();
+    console.error(err);
+    return res.status(500).json({ ok: false, error: "failed to lift probation" });
+  } finally {
+    conn.release();
+  }
+});
+
+// DROP SPONSOR
+/**
+ * POST /sponsor/drivers/:driverId/drop
+ * Permanently drops a driver from the sponsor
+ */
+router.post("/drivers/:driverId/drop", async (req, res) => {
+  const sponsorId = getSponsorIdFromSession(req);
+  if (!sponsorId) return res.status(400).json({ ok: false, error: "sponsor account is not linked "});
+  
+  const driverId = parsePositiveInt(req.params.driverId);
+  if (!driverId) return res.status(400).json({ ok: false, error: "invalid driverId"});
+  
+  const reason = String(req.body?.reason || "").trim();
+  if(!reason) return res.status(400).json({ ok:false, error: "reason is required"});
+
+  const conn = await pool.getConnection();
+  try {
+    await conn.beginTransaction();
+
+    const [dRows] = await conn.query(
+      `SELECT id, user_id, status
+      FROM drivers
+      WHERE id = ? AND sponsor_id = ?
+      LIMIT 1 FOR UPDATE`,
+      [driverId, sponsorId]
+    );
+    if (!dRows[0]) {
+      await conn.rollback();
+      return res.status(404).json({ ok: false, error: "driver not found" });
+    }
+    if (dRows[0].status === "DROPPED") {
+      await conn.rollback();
+      return res.status(409).json({ ok: false, error: "Driver is already dropped"});
+    }
+  
+    await conn.query(
+      `UPDATE drivers
+      SET status = 'DROPPED', dropped_reason = ?, dropped_at = NOW(), probation_reason = NULL
+      WHERE id = ?`,
+      [reason, driverId]
+    );
+
+    await conn.query(
+      `UPDATE drivers
+      SET sponsor_id = NULL
+      WHERE id = ?
+      LIMIT 1`,
+      [dRows[0].user_id]
+    );
+
+    await writeAudit({
+      category: "DRIVER_DROPPED",
+      actorUserId: req.user.id,
+      targetUserId: dRows[0].user_id,
+      sponsorId,
+      success: 1,
+      details: `sponsor dropped driverId=${driverId}; reason=${reason}`,
+      conn,
+    });
+
+    await conn.commit();
+    return res.json({ ok: true, message: "Driver dropped successfully" });
+  } catch (err) {
+    await conn.rollback();
+    console.error(err);
+    return res.status(500).json({ ok: false, error: "failed to drop driver" });
+  } finally {
+    conn.release();
+  }
+});
+
+
+
 
 module.exports = router;

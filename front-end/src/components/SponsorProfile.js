@@ -51,6 +51,10 @@ export default function SponsorProfile({ token, onLogout, onChangeUsername }) {
   const [reverseReasonInput, setReverseReasonInput] = useState({}); // { [driverId]: "reason" }
   const [reversingDriverId, setReversingDriverId] = useState(null);
   const [exportingReport, setExportingReport] = useState(false);
+  const [probationReasonInput, setProbationReasonInput] = useState({});
+  const [dropReasonInput, setDropReasonInput] = useState({});
+  const [probatingDriverId, setProbatingDriverId] = useState(null);
+  const [droppingDriverId, setDroppingDriverId] = useState(null);
 
   // ─── Catalog hide/unhide state ──────────────────────────────────────────────
   const [hiddenIds,      setHiddenIds]      = useState(new Set());
@@ -408,6 +412,69 @@ export default function SponsorProfile({ token, onLogout, onChangeUsername }) {
     }
   };
 
+  const handleProbation = async(driverId) => {
+    const reason = String(probationReasonInput[driverId] || "").trim();
+    setProbatingDriverId(driverId);
+    setDriverError("");
+    setDriverSuccess("");
+    try {
+      const res = await fetch(`${SPONSOR_API}/drivers/${driverId}/probation`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ reason: reason || "No reason provided" }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Failed to place driver on probation");
+      setDriverSuccess(data.message);
+      setProbationReasonInput((prev) => ({ ...prev, [driverId]: "" }));
+      fetchDrivers();
+    } catch (err) {
+      setDriverError(err.message);
+    } finally {
+      setProbatingDriverId(null);
+    }
+  };
+
+  const handleLiftProbation = async (driverId) => {
+    setDriverError("");
+    setDriverSuccess("");
+    try {
+      const res = await fetch(`${SPONSOR_API}/drivers/${driverId}/lift-probation`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Failed to lift probation");
+      setDriverSuccess(data.message);
+      fetchDrivers();
+    } catch (err) {
+      setDriverError(err.message);
+    } 
+  };
+
+  const handleDrop = async (driverId) => {
+    const reason = String(dropReasonInput[driverId] || "").trim();
+    setDroppingDriverId(driverId);
+    setDriverError("");
+    setDriverSuccess("");
+    try {
+      const res = await fetch(`${SPONSOR_API}/drivers/${driverId}/drop`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ reason: reason || "No reason provided" }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Failed to drop driver");
+      setDriverSuccess(data.message);
+      setDropReasonInput((prev) => ({ ...prev, [driverId]: "" }));
+      fetchDrivers();
+    } catch (err) {
+      setDriverError(err.message);
+    } finally {
+      setDroppingDriverId(null);
+    }
+  };
+
   const handleReversePoints = async (driverId) => {
     const rawPoints = reversePointsInput[driverId];
     const points = Number.parseInt(String(rawPoints || "").trim(), 10);
@@ -520,12 +587,13 @@ export default function SponsorProfile({ token, onLogout, onChangeUsername }) {
   // ─── Status badge helper ────────────────────────────────────────────────────
   const StatusBadge = ({ status }) => {
     const colors = {
-      ACTIVE:   { bg: "#d1fae5", color: "#065f46" },
-      BLOCKED:  { bg: "#fee2e2", color: "#991b1b" },
-      DROPPED:  { bg: "#fef3c7", color: "#92400e" },
-      PENDING:  { bg: "#dbeafe", color: "#1e40af" },
-      ACCEPTED: { bg: "#d1fae5", color: "#065f46" },
-      REJECTED: { bg: "#fee2e2", color: "#991b1b" },
+      ACTIVE:    { bg: "#d1fae5", color: "#065f46" },
+      BLOCKED:   { bg: "#fee2e2", color: "#991b1b" },
+      DROPPED:   { bg: "#fef3c7", color: "#92400e" },
+      PROBATION: { bg: "#fef3c7", color: "#b45309" },
+      PENDING:   { bg: "#dbeafe", color: "#1e40af" },
+      ACCEPTED:  { bg: "#d1fae5", color: "#065f46" },
+      REJECTED:  { bg: "#fee2e2", color: "#991b1b" },
     };
     const style = colors[status?.toUpperCase()] || { bg: "#f3f4f6", color: "#374151" };
     return (
@@ -867,14 +935,27 @@ export default function SponsorProfile({ token, onLogout, onChangeUsername }) {
                       <td style={{ padding: "10px 12px" }}>
                         {!d.driverId ? (
                           <span style={{ color: "#9ca3af", fontSize: 12 }}>Pending application</span>
-                        ) : d.status?.toLowerCase() !== "blocked" ? (
+                        ) : d.status?.toLowerCase() === "dropped" ? (
+                          <span style={{ color: "#9ca3af", fontSize: 12 }}></span>
+                        ) : d.status?.toLowerCase() === "probation" ? (
                           <div style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" }}>
+                            <button
+                              type="button"
+                              onClick={() => handleLiftProbation(d.driverId)}
+                              style={{
+                                padding: "5px 12px", borderRadius: 6, border: "none",
+                                background: "#10b981", color: "#fff", fontWeight: 600,
+                                cursor: "pointer", fontSize: 12
+                              }}
+                            >
+                              Lift Probation
+                            </button>
                             <input
                               type="text"
-                              placeholder="Reason (required)"
-                              value={blockReason[d.driverId] || ""}
+                              placeholder="Drop reason (optional)"
+                              value={dropReasonInput[d.driverId] || ""}
                               onChange={(e) =>
-                                setBlockReason((prev) => ({ ...prev, [d.driverId]: e.target.value }))
+                                setDropReasonInput((prev) => ({ ...prev, [d.driverId]: e.target.value}))
                               }
                               style={{
                                 padding: "5px 8px", borderRadius: 6,
@@ -883,21 +964,24 @@ export default function SponsorProfile({ token, onLogout, onChangeUsername }) {
                             />
                             <button
                               type="button"
-                              onClick={() => handleBlock(d.driverId)}
+                              disabled={droppingDriverId === d.driverId}
+                              onClick={() => handleDrop(d.driverId)}
                               style={{
                                 padding: "5px 12px", borderRadius: 6, border: "none",
                                 background: "#ef4444", color: "#fff", fontWeight: 600,
-                                cursor: "pointer", fontSize: 12
+                                cursor: droppingDriverId === d.driverId ? "not-allowed" : "pointer",
+                                fontSize: 12,
+                                opacity: droppingDriverId === d.driverId ? 0.7 : 1,
                               }}
                             >
-                              Block
+                              {droppingDriverId === d.driverId ? "Dropping..." : "Drop"}
                             </button>
                             <input
                               type="number"
                               min="1"
                               placeholder="Reverse pts"
                               value={reversePointsInput[d.driverId] || ""}
-                              onChange={(e) =>
+                              onChange={(e) => 
                                 setReversePointsInput((prev) => ({ ...prev, [d.driverId]: e.target.value }))
                               }
                               style={{
@@ -922,12 +1006,8 @@ export default function SponsorProfile({ token, onLogout, onChangeUsername }) {
                               disabled={reversingDriverId === d.driverId}
                               onClick={() => handleReversePoints(d.driverId)}
                               style={{
-                                padding: "5px 12px",
-                                borderRadius: 6,
-                                border: "none",
-                                background: "#7c3aed",
-                                color: "#fff",
-                                fontWeight: 600,
+                                padding: "5px 12px", borderRadius: 6, border: "none",
+                                background: "#7c3aed", color: "#fff", fontWeight: 600,
                                 cursor: reversingDriverId === d.driverId ? "not-allowed" : "pointer",
                                 fontSize: 12,
                                 opacity: reversingDriverId === d.driverId ? 0.7 : 1,
@@ -935,8 +1015,34 @@ export default function SponsorProfile({ token, onLogout, onChangeUsername }) {
                             >
                               {reversingDriverId === d.driverId ? "Reversing..." : "Reverse Points"}
                             </button>
+                            <div style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" }}>
+                            <input
+                              type="text"
+                              placeholder="Reason (required)"
+                              value={blockReason[d.driverId] || ""}
+                              onChange={(e) =>
+                                setBlockReason((prev) => ({ ...prev, [d.driverId]: e.target.value }))
+                              }
+                              style={{
+                                padding: "5px 8px", borderRadius: 6,
+                                border: "1px solid #d1d5db", fontSize: 12, minWidth: 160
+                              }}
+                            />
+                            <button
+                              type="button"
+                              onClick={() => handleBlock(d.driverId)}
+                              style={{
+                                padding: "5px 12px", borderRadius: 6, border: "none",
+                                background: "#ef4444", color: "#fff", fontWeight: 600,
+                                cursor: "pointer", fontSize: 12
+                              }}
+                            >
+                              Block
+                            </button>
                           </div>
-                        ) : (
+
+                          </div>
+                        ) : d.status?.toLowerCase() === "blocked" ? (
                           <div style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" }}>
                             <button
                               type="button"
@@ -980,6 +1086,125 @@ export default function SponsorProfile({ token, onLogout, onChangeUsername }) {
                             >
                               {reversingDriverId === d.driverId ? "Reversing..." : "Reverse Points"}
                             </button>
+                          </div>
+                        ) : (
+                          <div style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" }}>
+                            <input
+                              type="text"
+                              placeholder="Probation reason (optional)"
+                              value={probationReasonInput[d.driverId] || ""}
+                              onChange={(e) =>
+                                setProbationReasonInput((prev) => ({ ...prev, [d.driverId]: e.target.value }))
+                              }
+                              style={{
+                                padding: "5px 8px", borderRadius: 6,
+                                border: "1px solid #d1d5db", fontSize: 12, minWidth: 160
+                              }}
+                            />
+                            <button
+                              type="button"
+                              disabled={probatingDriverId === d.driverId}
+                              onClick={() => handleProbation(d.driverId)}
+                              style={{
+                                padding: "5px 12px", borderRadius: 6, border: "none",
+                                background: "#f59e0b", color: "#fff", fontWeight: 600,
+                                cursor: probatingDriverId === d.driverId ? "not-allowed" : "pointer",
+                                fontSize: 12,
+                                opacity: probatingDriverId === d.driverId ? 0.7 : 1,
+                              }}
+                            >
+                              {probatingDriverId === d.driverId ? "Placing..." : "Probation"}
+                            </button>
+                            <input
+                              type="text"
+                              placeholder="Drop reason (optional)"
+                              value={dropReasonInput[d.driverId] || ""}
+                              onChange={(e) => 
+                                setDropReasonInput((prev) => ({ ...prev, [d.driverId]: e.target.value }))
+                              }
+                              style={{
+                                padding: "5px 8px", borderRadius: 6,
+                                border: "1px solid #d1d5db", fontSize: 12, minWidth: 160
+                              }}
+                            />
+                            <button
+                              type="button"
+                              disabled={droppingDriverId === d.driverId}
+                              onClick={() => handleDrop(d.driverId)}
+                              style={{
+                                padding: "5px 12px", borderRadius: 6, border: "none",
+                                background: "#ef4444", color: "#fff", fontWeight: 600,
+                                cursor: droppingDriverId === d.driverId ? "not-allowed" : "pointer",
+                                fontSize: 12,
+                                opacity: droppingDriverId === d.driverId ? 0.7 : 1,
+                              }}
+                            >
+                              {droppingDriverId === d.driverId ? "Dropping..." : "Drop"}
+                            </button>
+                            <input
+                              type="number"
+                              min="1"
+                              placeholder="Reverse pts"
+                              value={reversePointsInput[d.driverId] || ""}
+                              onChange={(e) => 
+                                setReversePointsInput((prev) => ({ ...prev, [d.driverId]: e.target.value }))
+                              }
+                              style={{
+                                padding: "5px 8px", borderRadius: 6,
+                                border: "1px solid #d1d5db", fontSize: 12, width: 110
+                              }}
+                            />
+                            <input
+                              type="text"
+                              placeholder="Reason (optional)"
+                              value={reverseReasonInput[d.driverId] || ""}
+                              onChange={(e) =>
+                                setReverseReasonInput((prev) => ({ ...prev, [d.driverId]: e.target.value }))
+                              }
+                              style={{
+                                padding: "5px 8px", borderRadius: 6,
+                                border: "1px solid #d1d5db", fontSize: 12, minWidth: 150
+                              }}
+                            />
+                            <button
+                              type="button"
+                              disabled={reversingDriverId === d.driverId}
+                              onClick={() => handleReversePoints(d.driverId)}
+                              style={{
+                                padding: "5px 12px", borderRadius: 6, border: "none",
+                                background: "#7c3aed", color: "#fff", fontWeight: 600,
+                                cursor: reversingDriverId === d.driverId ? "not-allowed" : "pointer",
+                                fontSize: 12,
+                                opacity: reversingDriverId === d.driverId ? 0.7 : 1,
+                              }}
+                            >
+                              {reversingDriverId === d.driverId ? "Reversing..." : "Reverse Points"}
+                            </button>
+                            <div style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" }}>
+                            <input
+                              type="text"
+                              placeholder="Reason (required)"
+                              value={blockReason[d.driverId] || ""}
+                              onChange={(e) =>
+                                setBlockReason((prev) => ({ ...prev, [d.driverId]: e.target.value }))
+                              }
+                              style={{
+                                padding: "5px 8px", borderRadius: 6,
+                                border: "1px solid #d1d5db", fontSize: 12, minWidth: 160
+                              }}
+                            />
+                            <button
+                              type="button"
+                              onClick={() => handleBlock(d.driverId)}
+                              style={{
+                                padding: "5px 12px", borderRadius: 6, border: "none",
+                                background: "#ef4444", color: "#fff", fontWeight: 600,
+                                cursor: "pointer", fontSize: 12
+                              }}
+                            >
+                              Block
+                            </button>
+                          </div>
                           </div>
                         )}
                       </td>
