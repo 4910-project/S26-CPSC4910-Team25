@@ -2,7 +2,9 @@ import React, { useState, useEffect, useCallback } from "react";
 import "./SponsorProfile.css";
 
 const SPONSOR_API = "http://localhost:8001/sponsor";
+const API_BASE = "http://localhost:8001/api";
 const ITUNES_API = "https://itunes.apple.com/search";
+
 const CAT_CATEGORIES = [
   { label: "Music", media: "music", entity: "song" },
   { label: "Movies", media: "movie", entity: "movie" },
@@ -16,7 +18,7 @@ export default function SponsorProfile({
   onLogout,
   onChangeUsername,
   onManageRules,
-  onRiskDashboard
+  onRiskDashboard,
 }) {
   const [profile, setProfile] = useState({
     company_name: "",
@@ -27,7 +29,7 @@ export default function SponsorProfile({
     state: "",
     zip_code: "",
     point_value: "0.01",
-    points_expire_days: ""
+    points_expire_days: "",
   });
 
   const [loading, setLoading] = useState(true);
@@ -55,11 +57,40 @@ export default function SponsorProfile({
   const [catalogCat, setCatalogCat] = useState(CAT_CATEGORIES[0]);
   const [catalogLoading, setCatalogLoading] = useState(false);
 
+  // Events state
+  const [events, setEvents] = useState([]);
+  const [eventsLoading, setEventsLoading] = useState(false);
+  const [eventsError, setEventsError] = useState("");
+  const [eventsMessage, setEventsMessage] = useState("");
+  const [eventsSaving, setEventsSaving] = useState(false);
+
+  const [eventForm, setEventForm] = useState({
+    id: null,
+    title: "",
+    description: "",
+    event_date: "",
+    event_time: "",
+    location: "",
+    is_active: true,
+  });
+
+  const handleEditEvent = (event) => {
+    setEventForm({
+      id: event.id,
+      title: event.title || "",
+      description: event.description || "",
+      event_date: event.event_date || "",
+      event_time: event.event_time || "",
+      location: event.location || "",
+      is_active: !!event.is_active,
+    });
+  };
+
   const fetchProfile = useCallback(async () => {
     try {
       setLoading(true);
       const res = await fetch(`${SPONSOR_API}/org`, {
-        headers: { Authorization: `Bearer ${token}` }
+        headers: { Authorization: `Bearer ${token}` },
       });
 
       const data = await res.json();
@@ -74,7 +105,7 @@ export default function SponsorProfile({
           state: "",
           zip_code: "",
           point_value: data.pointValue ?? "0.01",
-          points_expire_days: data.pointsExpireDays ?? ""
+          points_expire_days: data.pointsExpireDays ?? "",
         });
         setIsEditing(false);
       } else if (res.status === 404) {
@@ -129,7 +160,7 @@ export default function SponsorProfile({
         method: "PATCH",
         headers: {
           "Content-Type": "application/json",
-          Authorization: `Bearer ${token}`
+          Authorization: `Bearer ${token}`,
         },
         body: JSON.stringify({
           name: profile.company_name,
@@ -140,8 +171,8 @@ export default function SponsorProfile({
             .filter(Boolean)
             .join(", "),
           pointValue,
-          pointsExpireDays
-        })
+          pointsExpireDays,
+        }),
       });
 
       const data = await res.json();
@@ -169,7 +200,7 @@ export default function SponsorProfile({
     setDriverError("");
     try {
       const res = await fetch(`${SPONSOR_API}/drivers`, {
-        headers: { Authorization: `Bearer ${token}` }
+        headers: { Authorization: `Bearer ${token}` },
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "Failed to fetch drivers");
@@ -183,7 +214,7 @@ export default function SponsorProfile({
           .map(async (d) => {
             try {
               const r = await fetch(`${SPONSOR_API}/drivers/${d.driverId}/rate`, {
-                headers: { Authorization: `Bearer ${token}` }
+                headers: { Authorization: `Bearer ${token}` },
               });
               const rd = await r.json();
               return [d.driverId, rd.rating || null];
@@ -206,7 +237,7 @@ export default function SponsorProfile({
     setDriverError("");
     try {
       const res = await fetch(`${SPONSOR_API}/driver-applications`, {
-        headers: { Authorization: `Bearer ${token}` }
+        headers: { Authorization: `Bearer ${token}` },
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "Failed to fetch applications");
@@ -225,12 +256,6 @@ export default function SponsorProfile({
       setDriverLoading(false);
     }
   }, [token]);
-
-  useEffect(() => {
-    if (activeTab === "drivers") fetchDrivers();
-    else if (activeTab === "applications") fetchApplications();
-    else if (activeTab === "catalog") fetchHiddenIds();
-  }, [activeTab, fetchDrivers, fetchApplications]);
 
   const fetchHiddenIds = async () => {
     try {
@@ -251,6 +276,12 @@ export default function SponsorProfile({
     }
   };
 
+  useEffect(() => {
+    if (activeTab === "drivers") fetchDrivers();
+    else if (activeTab === "applications") fetchApplications();
+    else if (activeTab === "catalog") fetchHiddenIds();
+  }, [activeTab, fetchDrivers, fetchApplications]);
+
   const fetchCatalog = async (term, category) => {
     setCatalogLoading(true);
     setCatalogResults([]);
@@ -267,6 +298,84 @@ export default function SponsorProfile({
     setCatalogLoading(false);
   };
 
+  const fetchEvents = useCallback(async () => {
+    setEventsLoading(true);
+    setEventsError("");
+    setEventsMessage("");
+
+    try {
+      const res = await fetch(`${API_BASE}/sponsor/events`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Failed to load events");
+
+      setEvents(data.events || []);
+    } catch (err) {
+      console.error(err);
+      setEventsError(err.message || "Failed to load events");
+    } finally {
+      setEventsLoading(false);
+    }
+  }, [token]);
+
+  useEffect(() => {
+    if (activeTab === "events" && token) {
+      fetchEvents();
+    }
+  }, [activeTab, token, fetchEvents]);
+
+  const handleSaveEvent = async () => {
+    setEventsSaving(true);
+    setEventsError("");
+    setEventsMessage("");
+
+    try {
+      const method = eventForm.id ? "PUT" : "POST";
+      const url = eventForm.id
+        ? `${API_BASE}/sponsor/events/${eventForm.id}`
+        : `${API_BASE}/sponsor/events`;
+
+      const res = await fetch(url, {
+        method,
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({
+          title: eventForm.title,
+          description: eventForm.description,
+          event_date: eventForm.event_date,
+          event_time: eventForm.event_time,
+          location: eventForm.location,
+          is_active: !!eventForm.is_active,
+        }),
+      });
+
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Failed to save event");
+
+      setEventsMessage(eventForm.id ? "Event updated." : "Event created.");
+      setEventForm({
+        id: null,
+        title: "",
+        description: "",
+        event_date: "",
+        event_time: "",
+        location: "",
+        is_active: true,
+      });
+
+      await fetchEvents();
+    } catch (err) {
+      console.error(err);
+      setEventsError(err.message || "Failed to save event");
+    } finally {
+      setEventsSaving(false);
+    }
+  };
+
   const handleToggleHide = async (item) => {
     const productId = String(item.trackId || item.collectionId);
     const isHidden = hiddenIds.has(productId);
@@ -276,7 +385,7 @@ export default function SponsorProfile({
           method: "POST",
           headers: {
             "Content-Type": "application/json",
-            Authorization: `Bearer ${token}`
+            Authorization: `Bearer ${token}`,
           },
           body: JSON.stringify({ productId }),
         });
@@ -295,7 +404,7 @@ export default function SponsorProfile({
           method: "POST",
           headers: {
             "Content-Type": "application/json",
-            Authorization: `Bearer ${token}`
+            Authorization: `Bearer ${token}`,
           },
           body: JSON.stringify({
             productId,
@@ -331,7 +440,7 @@ export default function SponsorProfile({
           method: "POST",
           headers: {
             "Content-Type": "application/json",
-            Authorization: `Bearer ${token}`
+            Authorization: `Bearer ${token}`,
           },
           body: JSON.stringify({ rating: newRating }),
         });
@@ -360,9 +469,9 @@ export default function SponsorProfile({
         method: "POST",
         headers: {
           "Content-Type": "application/json",
-          Authorization: `Bearer ${token}`
+          Authorization: `Bearer ${token}`,
         },
-        body: JSON.stringify({ reason })
+        body: JSON.stringify({ reason }),
       });
 
       const data = await res.json();
@@ -383,7 +492,7 @@ export default function SponsorProfile({
     try {
       const res = await fetch(`${SPONSOR_API}/drivers/${driverId}/unblock`, {
         method: "POST",
-        headers: { Authorization: `Bearer ${token}` }
+        headers: { Authorization: `Bearer ${token}` },
       });
 
       const data = await res.json();
@@ -405,7 +514,7 @@ export default function SponsorProfile({
         method: "PATCH",
         headers: {
           "Content-Type": "application/json",
-          Authorization: `Bearer ${token}`
+          Authorization: `Bearer ${token}`,
         },
         body: JSON.stringify({ action }),
       });
@@ -424,7 +533,7 @@ export default function SponsorProfile({
     try {
       const res = await fetch(`${SPONSOR_API}/driver-applications/${appId}/reopen`, {
         method: "POST",
-        headers: { Authorization: `Bearer ${token}` }
+        headers: { Authorization: `Bearer ${token}` },
       });
 
       const data = await res.json();
@@ -458,7 +567,7 @@ export default function SponsorProfile({
           fontSize: 12,
           fontWeight: 600,
           background: style.bg,
-          color: style.color
+          color: style.color,
         }}
       >
         {status}
@@ -669,7 +778,7 @@ export default function SponsorProfile({
         <h2>Driver Management</h2>
 
         <div style={{ display: "flex", gap: 8, marginBottom: 20 }}>
-          {["drivers", "applications", "catalog"].map((tab) => (
+          {["drivers", "applications", "catalog", "events"].map((tab) => (
             <button
               key={tab}
               type="button"
@@ -682,7 +791,7 @@ export default function SponsorProfile({
                 color: activeTab === tab ? "#fff" : "inherit",
                 fontWeight: 600,
                 cursor: "pointer",
-                textTransform: "capitalize"
+                textTransform: "capitalize",
               }}
             >
               {tab}
@@ -815,7 +924,7 @@ export default function SponsorProfile({
                                 onChange={(e) =>
                                   setBlockReason((prev) => ({
                                     ...prev,
-                                    [d.driverId]: e.target.value
+                                    [d.driverId]: e.target.value,
                                   }))
                                 }
                                 style={{
@@ -823,7 +932,7 @@ export default function SponsorProfile({
                                   borderRadius: 6,
                                   border: "1px solid #d1d5db",
                                   fontSize: 12,
-                                  minWidth: 160
+                                  minWidth: 160,
                                 }}
                               />
                               <button
@@ -837,7 +946,7 @@ export default function SponsorProfile({
                                   color: "#fff",
                                   fontWeight: 600,
                                   cursor: "pointer",
-                                  fontSize: 12
+                                  fontSize: 12,
                                 }}
                               >
                                 Block
@@ -855,7 +964,7 @@ export default function SponsorProfile({
                                 color: "#fff",
                                 fontWeight: 600,
                                 cursor: "pointer",
-                                fontSize: 12
+                                fontSize: 12,
                               }}
                             >
                               Unblock
@@ -908,7 +1017,7 @@ export default function SponsorProfile({
                               color: "#fff",
                               fontWeight: 600,
                               cursor: "pointer",
-                              fontSize: 12
+                              fontSize: 12,
                             }}
                           >
                             Approve
@@ -924,7 +1033,7 @@ export default function SponsorProfile({
                               color: "#fff",
                               fontWeight: 600,
                               cursor: "pointer",
-                              fontSize: 12
+                              fontSize: 12,
                             }}
                           >
                             Reject
@@ -943,7 +1052,7 @@ export default function SponsorProfile({
                             color: "#fff",
                             fontWeight: 600,
                             cursor: "pointer",
-                            fontSize: 12
+                            fontSize: 12,
                           }}
                         >
                           Reopen
@@ -977,7 +1086,7 @@ export default function SponsorProfile({
                   borderRadius: 6,
                   border: "1px solid #d1d5db",
                   fontSize: 13,
-                  minWidth: 200
+                  minWidth: 200,
                 }}
               />
               <button
@@ -991,7 +1100,7 @@ export default function SponsorProfile({
                   color: "#fff",
                   fontWeight: 600,
                   cursor: "pointer",
-                  fontSize: 13
+                  fontSize: 13,
                 }}
               >
                 Search
@@ -1010,7 +1119,7 @@ export default function SponsorProfile({
                   color: showHiddenOnly ? "#991b1b" : "inherit",
                   fontWeight: 600,
                   cursor: "pointer",
-                  fontSize: 13
+                  fontSize: 13,
                 }}
               >
                 {showHiddenOnly ? "Showing hidden only" : "Show hidden only"}
@@ -1035,7 +1144,7 @@ export default function SponsorProfile({
                       fontSize: 12,
                       cursor: "pointer",
                       background: catalogCat.media === c.media ? "#4f46e5" : "#e5e7eb",
-                      color: catalogCat.media === c.media ? "#fff" : "#374151"
+                      color: catalogCat.media === c.media ? "#fff" : "#374151",
                     }}
                   >
                     {c.label}
@@ -1059,7 +1168,7 @@ export default function SponsorProfile({
                         borderRadius: 10,
                         overflow: "hidden",
                         background: "var(--card, #fff)",
-                        opacity: 0.75
+                        opacity: 0.75,
                       }}
                     >
                       {p.artwork_url && (
@@ -1083,7 +1192,7 @@ export default function SponsorProfile({
                               trackId: p.product_id,
                               trackName: p.product_name,
                               artistName: p.artist_name,
-                              artworkUrl100: p.artwork_url
+                              artworkUrl100: p.artwork_url,
                             })
                           }
                           style={{
@@ -1095,7 +1204,7 @@ export default function SponsorProfile({
                             color: "#fff",
                             fontWeight: 600,
                             cursor: "pointer",
-                            fontSize: 11
+                            fontSize: 11,
                           }}
                         >
                           Unhide
@@ -1130,7 +1239,7 @@ export default function SponsorProfile({
                         overflow: "hidden",
                         background: isHidden ? "#fff5f5" : "var(--card, #fff)",
                         opacity: isHidden ? 0.7 : 1,
-                        transition: "all 0.15s"
+                        transition: "all 0.15s",
                       }}
                     >
                       {img && (
@@ -1159,7 +1268,7 @@ export default function SponsorProfile({
                             color: "#fff",
                             fontWeight: 600,
                             cursor: "pointer",
-                            fontSize: 11
+                            fontSize: 11,
                           }}
                         >
                           {isHidden ? "Unhide" : "Hide"}
@@ -1172,7 +1281,213 @@ export default function SponsorProfile({
             )}
           </div>
         )}
+
+        {!driverLoading && activeTab === "events" && (
+          <div>
+            <h2 style={{ marginBottom: 4 }}>Events</h2>
+            <p style={{ color: "var(--muted)", fontSize: 14, marginTop: 0, marginBottom: 20 }}>
+              Create and manage sponsor events for drivers.
+            </p>
+
+            {(eventsError || eventsMessage) && (
+              <div
+                style={{
+                  padding: "10px 14px",
+                  borderRadius: 8,
+                  background: eventsError ? "#fef2f2" : "#ecfdf5",
+                  color: eventsError ? "#991b1b" : "#065f46",
+                  marginBottom: 16,
+                }}
+              >
+                {eventsError || eventsMessage}
+              </div>
+            )}
+
+            <div style={{ ...card, marginBottom: 16 }}>
+              <h3 style={{ marginTop: 0 }}>
+                {eventForm.id ? "Edit Event" : "Create Event"}
+              </h3>
+
+              <div style={{ display: "grid", gap: 12 }}>
+                <input
+                  type="text"
+                  placeholder="Event title"
+                  value={eventForm.title}
+                  onChange={(e) =>
+                    setEventForm((prev) => ({ ...prev, title: e.target.value }))
+                  }
+                  style={inputStyle}
+                />
+
+                <textarea
+                  placeholder="Description"
+                  rows={3}
+                  value={eventForm.description}
+                  onChange={(e) =>
+                    setEventForm((prev) => ({
+                      ...prev,
+                      description: e.target.value,
+                    }))
+                  }
+                  style={{ ...inputStyle, resize: "vertical" }}
+                />
+
+                <input
+                  type="date"
+                  value={eventForm.event_date}
+                  onChange={(e) =>
+                    setEventForm((prev) => ({
+                      ...prev,
+                      event_date: e.target.value,
+                    }))
+                  }
+                  style={inputStyle}
+                />
+
+                <input
+                  type="time"
+                  value={eventForm.event_time}
+                  onChange={(e) =>
+                    setEventForm((prev) => ({
+                      ...prev,
+                      event_time: e.target.value,
+                    }))
+                  }
+                  style={inputStyle}
+                />
+
+                <input
+                  type="text"
+                  placeholder="Location"
+                  value={eventForm.location}
+                  onChange={(e) =>
+                    setEventForm((prev) => ({
+                      ...prev,
+                      location: e.target.value,
+                    }))
+                  }
+                  style={inputStyle}
+                />
+
+                <label style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                  <input
+                    type="checkbox"
+                    checked={eventForm.is_active}
+                    onChange={(e) =>
+                      setEventForm((prev) => ({
+                        ...prev,
+                        is_active: e.target.checked,
+                      }))
+                    }
+                  />
+                  Event is active
+                </label>
+
+                <button
+                  type="button"
+                  onClick={handleSaveEvent}
+                  disabled={eventsSaving}
+                  style={primaryBtn}
+                >
+                  {eventsSaving
+                    ? "Saving..."
+                    : eventForm.id
+                    ? "Update Event"
+                    : "Create Event"}
+                </button>
+              </div>
+            </div>
+
+            {eventsLoading ? (
+              <p style={{ color: "var(--muted)" }}>Loading events...</p>
+            ) : events.length === 0 ? (
+              <p style={{ color: "var(--muted)" }}>No events yet.</p>
+            ) : (
+              <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+                {events.map((event) => (
+                  <div key={event.id} style={card}>
+                    <div style={{ display: "flex", justifyContent: "space-between", gap: 12 }}>
+                      <div>
+                        <div style={{ fontWeight: 700, fontSize: 16 }}>
+                          {event.title}
+                        </div>
+
+                        <div
+                          style={{
+                            fontSize: 13,
+                            color: "var(--muted)",
+                            marginTop: 4,
+                          }}
+                        >
+                          {event.event_date}
+                          {event.event_time ? ` · ${event.event_time}` : ""}
+                        </div>
+
+                        {event.location && (
+                          <div
+                            style={{
+                              fontSize: 13,
+                              color: "var(--muted)",
+                              marginTop: 4,
+                            }}
+                          >
+                            📍 {event.location}
+                          </div>
+                        )}
+
+                        {event.description && (
+                          <div
+                            style={{
+                              fontSize: 13,
+                              marginTop: 8,
+                            }}
+                          >
+                            {event.description}
+                          </div>
+                        )}
+                      </div>
+
+                      <button
+                        type="button"
+                        onClick={() => handleEditEvent(event)}
+                        style={btnSecondary}
+                      >
+                        Edit
+                      </button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
       </div>
     </div>
   );
 }
+
+const card = {
+  border: "1px solid var(--border, #d1d5db)",
+  borderRadius: 12,
+  padding: 16,
+  background: "var(--card, #fff)",
+};
+
+const inputStyle = {
+  padding: "10px 12px",
+  borderRadius: 8,
+  border: "1px solid #d1d5db",
+  fontSize: 14,
+  width: "100%",
+  boxSizing: "border-box",
+};
+
+const primaryBtn = {
+  padding: "9px 18px",
+  borderRadius: 8,
+  border: "none",
+  background: "#4f46e5",
+  color: "#fff",
+  fontWeight: 600,
+  cursor: "pointer",
+};

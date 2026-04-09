@@ -1095,4 +1095,120 @@ router.post("/catalog/unhide", async (req, res) => {
   }
 });
 
+router.get("/events", async (req, res) => {
+  try {
+    const sponsorId = req.user.sponsor_id || req.user.id;
+
+    const [rows] = await pool.query(
+      `
+      SELECT id, title, description, event_date, event_time, location, is_active
+      FROM sponsor_events
+      WHERE sponsor_id = ?
+      ORDER BY event_date ASC, event_time ASC
+      `,
+      [sponsorId]
+    );
+
+    return res.json({ ok: true, events: rows });
+  } catch (err) {
+    console.error("Failed to load sponsor events:", err);
+    return res.status(500).json({ ok: false, error: "failed to load sponsor events" });
+  }
+});
+router.post("/events", async (req, res) => {
+  try {
+    const sponsorId = req.user.sponsor_id || req.user.id;
+    const { title, description, event_date, event_time, location } = req.body;
+
+    if (!title || !event_date) {
+      return res.status(400).json({
+        ok: false,
+        error: "title and event_date are required",
+      });
+    }
+
+    const [result] = await pool.query(
+      `
+      INSERT INTO sponsor_events
+      (sponsor_id, title, description, event_date, event_time, location)
+      VALUES (?, ?, ?, ?, ?, ?)
+      `,
+      [
+        sponsorId,
+        title,
+        description || "",
+        event_date,
+        event_time || null,
+        location || "",
+      ]
+    );
+
+    return res.status(201).json({
+      ok: true,
+      eventId: result.insertId,
+      message: "event created successfully",
+    });
+  } catch (err) {
+    console.error("Failed to create sponsor event:", err);
+    return res.status(500).json({ ok: false, error: "failed to create event" });
+  }
+});
+router.put("/events/:eventId", async (req, res) => {
+  try {
+    const sponsorId = req.user.sponsor_id || req.user.id;
+    const eventId = parseInt(req.params.eventId, 10);
+    const { title, description, event_date, event_time, location, is_active } = req.body;
+
+    if (!eventId || !title || !event_date) {
+      return res.status(400).json({
+        ok: false,
+        error: "valid event id, title, and event_date are required",
+      });
+    }
+
+    const [existing] = await pool.query(
+      `
+      SELECT id
+      FROM sponsor_events
+      WHERE id = ? AND sponsor_id = ?
+      LIMIT 1
+      `,
+      [eventId, sponsorId]
+    );
+
+    if (!existing.length) {
+      return res.status(404).json({ ok: false, error: "event not found" });
+    }
+
+    await pool.query(
+      `
+      UPDATE sponsor_events
+      SET
+        title = ?,
+        description = ?,
+        event_date = ?,
+        event_time = ?,
+        location = ?,
+        is_active = ?
+      WHERE id = ? AND sponsor_id = ?
+      `,
+      [
+        title,
+        description || "",
+        event_date,
+        event_time || null,
+        location || "",
+        is_active ? 1 : 0,
+        eventId,
+        sponsorId,
+      ]
+    );
+
+    return res.json({ ok: true, message: "event updated successfully" });
+  } catch (err) {
+    console.error("Failed to update sponsor event:", err);
+    return res.status(500).json({ ok: false, error: "failed to update event" });
+  }
+});
+
 module.exports = router;
