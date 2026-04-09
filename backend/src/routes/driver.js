@@ -478,6 +478,116 @@ router.get("/text-size", async (req, res) => {
   }
 });
 
+// ─────────────────────────────────────────────────────────────
+// Driver goals and progress
+// ─────────────────────────────────────────────────────────────
+router.get("/goals", async (req, res) => {
+  try {
+    const driverUserId = req.user.id;
+
+    const [goalRows] = await pool.query(
+      `
+      SELECT monthly_goal, yearly_goal
+      FROM driver_goals
+      WHERE driver_user_id = ?
+      LIMIT 1
+      `,
+      [driverUserId]
+    );
+
+    const goal = goalRows[0] || {
+      monthly_goal: 0,
+      yearly_goal: 0,
+    };
+
+    const [monthlyRows] = await pool.query(
+      `
+      SELECT COALESCE(SUM(amount), 0) AS monthly_points
+      FROM point_transactions
+      WHERE user_id = ?
+        AND amount > 0
+        AND YEAR(created_at) = YEAR(CURDATE())
+        AND MONTH(created_at) = MONTH(CURDATE())
+      `,
+      [driverUserId]
+    );
+
+    const [yearlyRows] = await pool.query(
+      `
+      SELECT COALESCE(SUM(amount), 0) AS yearly_points
+      FROM point_transactions
+      WHERE user_id = ?
+        AND amount > 0
+        AND YEAR(created_at) = YEAR(CURDATE())
+      `,
+      [driverUserId]
+    );
+
+    const monthlyPoints = Number(monthlyRows[0]?.monthly_points || 0);
+    const yearlyPoints = Number(yearlyRows[0]?.yearly_points || 0);
+
+    const monthlyGoal = Number(goal.monthly_goal || 0);
+    const yearlyGoal = Number(goal.yearly_goal || 0);
+
+    return res.json({
+      ok: true,
+      monthly_goal: monthlyGoal,
+      yearly_goal: yearlyGoal,
+      monthly_points: monthlyPoints,
+      yearly_points: yearlyPoints,
+      monthly_progress_percent:
+        monthlyGoal > 0 ? Math.min(100, Math.round((monthlyPoints / monthlyGoal) * 100)) : 0,
+      yearly_progress_percent:
+        yearlyGoal > 0 ? Math.min(100, Math.round((yearlyPoints / yearlyGoal) * 100)) : 0,
+    });
+  } catch (err) {
+    console.error("Failed to load goals:", err);
+    return res.status(500).json({ ok: false, error: "failed to load goals" });
+  }
+});
+
+router.patch("/goals", async (req, res) => {
+  try {
+    const driverUserId = req.user.id;
+    const monthlyGoal = Number(req.body.monthly_goal);
+    const yearlyGoal = Number(req.body.yearly_goal);
+
+    if (
+      !Number.isInteger(monthlyGoal) ||
+      monthlyGoal < 0 ||
+      !Number.isInteger(yearlyGoal) ||
+      yearlyGoal < 0
+    ) {
+      return res.status(400).json({
+        ok: false,
+        error: "monthly_goal and yearly_goal must be non-negative integers",
+      });
+    }
+
+    await pool.query(
+      `
+      INSERT INTO driver_goals (driver_user_id, monthly_goal, yearly_goal)
+      VALUES (?, ?, ?)
+      ON DUPLICATE KEY UPDATE
+        monthly_goal = VALUES(monthly_goal),
+        yearly_goal = VALUES(yearly_goal),
+        updated_at = CURRENT_TIMESTAMP
+      `,
+      [driverUserId, monthlyGoal, yearlyGoal]
+    );
+
+    return res.json({
+      ok: true,
+      monthly_goal: monthlyGoal,
+      yearly_goal: yearlyGoal,
+      message: "Goals updated successfully",
+    });
+  } catch (err) {
+    console.error("Failed to update goals:", err);
+    return res.status(500).json({ ok: false, error: "failed to update goals" });
+  }
+});
+
 router.patch("/text-size", async (req, res) => {
   try {
     const allowed = ["small", "medium", "large"];

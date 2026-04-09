@@ -93,10 +93,23 @@ export default function DriverProfile({
   const [ordersError, setOrdersError] = useState("");
   const [cancelingOrderId, setCancelingOrderId] = useState(null);
 
+  // Text size state
   const [textSize, setTextSize] = useState("medium");
   const [textSizeLoading, setTextSizeLoading] = useState(false);
   const [textSizeSaving, setTextSizeSaving] = useState(false);
   const [textSizeMessage, setTextSizeMessage] = useState("");
+
+  // Goals state
+  const [monthlyGoal, setMonthlyGoal] = useState("");
+  const [yearlyGoal, setYearlyGoal] = useState("");
+  const [monthlyPoints, setMonthlyPoints] = useState(0);
+  const [yearlyPoints, setYearlyPoints] = useState(0);
+  const [monthlyProgressPercent, setMonthlyProgressPercent] = useState(0);
+  const [yearlyProgressPercent, setYearlyProgressPercent] = useState(0);
+  const [goalsLoading, setGoalsLoading] = useState(false);
+  const [goalsSaving, setGoalsSaving] = useState(false);
+  const [goalsMessage, setGoalsMessage] = useState("");
+  const [goalsError, setGoalsError] = useState("");
 
   // ── Points fetch ──────────────────────────────────────────────────────────
   useEffect(() => {
@@ -247,6 +260,7 @@ export default function DriverProfile({
     })();
   }, [token]);
 
+  // ── Text size fetch ──────────────────────────────────────────────────────
   useEffect(() => {
     if (!token) return;
 
@@ -271,7 +285,7 @@ export default function DriverProfile({
     })();
   }, [token]);
 
-  // ── Orders fetch ─────────────────────────────────────────────
+  // ── Orders fetch ─────────────────────────────────────────────────────────
   useEffect(() => {
     if (!token) return;
 
@@ -301,43 +315,107 @@ export default function DriverProfile({
   }, [token]);
 
   const handleCancelOrder = async (orderId) => {
-  const confirmed = window.confirm("Cancel this purchase?");
-  if (!confirmed) return;
+    const confirmed = window.confirm("Cancel this purchase?");
+    if (!confirmed) return;
 
-  setCancelingOrderId(orderId);
-  setOrdersError("");
+    setCancelingOrderId(orderId);
+    setOrdersError("");
 
-  try {
-    const res = await fetch(`${API_BASE}/driver/orders/${orderId}/cancel`, {
-      method: "PATCH",
-      headers: {
-        Authorization: `Bearer ${token}`,
-      },
-    });
+    try {
+      const res = await fetch(`${API_BASE}/driver/orders/${orderId}/cancel`, {
+        method: "PATCH",
+        headers: {
+          Authorization: `Bearer ${token}`,
+        },
+      });
 
-    const data = await res.json();
+      const data = await res.json();
 
-    if (!res.ok) {
-      throw new Error(data.error || "Failed to cancel purchase");
+      if (!res.ok) {
+        throw new Error(data.error || "Failed to cancel purchase");
+      }
+
+      setOrders((prev) =>
+        prev.map((o) =>
+          o.id === orderId ? { ...o, status: "CANCELLED" } : o
+        )
+      );
+
+      alert("Purchase canceled and points refunded.");
+    } catch (err) {
+      console.error(err);
+      setOrdersError(err.message || "Failed to cancel purchase");
+    } finally {
+      setCancelingOrderId(null);
     }
+  };
 
-    // update UI
-    setOrders((prev) =>
-      prev.map((o) =>
-        o.id === orderId ? { ...o, status: "CANCELLED" } : o
-      )
-    );
+  // ── Goals fetch ──────────────────────────────────────────────────────────
+  const fetchGoals = useCallback(async () => {
+    setGoalsLoading(true);
+    setGoalsError("");
+    setGoalsMessage("");
 
-    alert("Purchase canceled and points refunded.");
-  } catch (err) {
-    console.error(err);
-    setOrdersError(err.message || "Failed to cancel purchase");
-  } finally {
-    setCancelingOrderId(null);
-  }
-};
+    try {
+      const res = await fetch(`${API_BASE}/driver/goals`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
 
-  // ── Drop sponsor ──────────────────────────────────────────────────────────
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Failed to load goals");
+
+      setMonthlyGoal(String(data.monthly_goal ?? 0));
+      setYearlyGoal(String(data.yearly_goal ?? 0));
+      setMonthlyPoints(Number(data.monthly_points || 0));
+      setYearlyPoints(Number(data.yearly_points || 0));
+      setMonthlyProgressPercent(Number(data.monthly_progress_percent || 0));
+      setYearlyProgressPercent(Number(data.yearly_progress_percent || 0));
+    } catch (err) {
+      console.error(err);
+      setGoalsError(err.message || "Failed to load goals");
+    } finally {
+      setGoalsLoading(false);
+    }
+  }, [token]);
+
+  useEffect(() => {
+    if (activeTab === "goals" && token) {
+      fetchGoals();
+    }
+  }, [activeTab, token, fetchGoals]);
+
+  const handleSaveGoals = async () => {
+    setGoalsSaving(true);
+    setGoalsError("");
+    setGoalsMessage("");
+
+    try {
+      const res = await fetch(`${API_BASE}/driver/goals`, {
+        method: "PATCH",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({
+          monthly_goal: Number(monthlyGoal || 0),
+          yearly_goal: Number(yearlyGoal || 0),
+        }),
+      });
+
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Failed to save goals");
+
+      setGoalsMessage("Goals updated successfully.");
+      await fetchGoals();
+    } catch (err) {
+      console.error(err);
+      setGoalsError(err.message || "Failed to save goals");
+    } finally {
+      setGoalsSaving(false);
+    }
+  };
+
+  // ── Drop sponsor ─────────────────────────────────────────────────────────
   async function dropSponsor() {
     try {
       const res = await fetch(`${API_BASE}/driver/drop-sponsor`, {
@@ -361,7 +439,7 @@ export default function DriverProfile({
     }
   }
 
-  // ── Sponsors fetch ────────────────────────────────────────────────────────
+  // ── Sponsors fetch ───────────────────────────────────────────────────────
   const fetchSponsors = useCallback(async () => {
     setSponsorLoading(true);
     setSponsorError("");
@@ -493,7 +571,7 @@ export default function DriverProfile({
     }
   };
 
-  // Applications fetch
+  // ── Applications fetch ───────────────────────────────────────────────────
   useEffect(() => {
     if (!token) return;
 
@@ -510,7 +588,7 @@ export default function DriverProfile({
     })();
   }, [token]);
 
-  // Driver status fetch
+  // ── Driver status fetch ──────────────────────────────────────────────────
   useEffect(() => {
     if (!token) return;
 
@@ -533,7 +611,14 @@ export default function DriverProfile({
 
   return (
     <div style={{ maxWidth: 900, margin: "30px auto", padding: 20 }}>
-      <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "center" }}>
+      <div
+        style={{
+          display: "flex",
+          justifyContent: "space-between",
+          gap: 12,
+          alignItems: "center",
+        }}
+      >
         <h1 style={{ margin: 0 }}>Driver Dashboard</h1>
         <div style={{ display: "flex", gap: 10 }}>
           <button style={btnSecondary} onClick={onChangeUsername} type="button">
@@ -556,7 +641,7 @@ export default function DriverProfile({
       </div>
 
       <div style={{ display: "flex", gap: 8, marginTop: 24, marginBottom: 24 }}>
-        {["dashboard", "sponsors", "feedback"].map((tab) => (
+        {["dashboard", "goals", "sponsors", "feedback"].map((tab) => (
           <button
             key={tab}
             type="button"
@@ -574,6 +659,8 @@ export default function DriverProfile({
           >
             {tab === "dashboard"
               ? "Dashboard"
+              : tab === "goals"
+              ? "Goals"
               : tab === "sponsors"
               ? "Sponsor Reviews"
               : "Help & Feedback"}
@@ -584,7 +671,12 @@ export default function DriverProfile({
       {activeTab === "dashboard" && (
         <>
           {applications
-            .filter((a) => a && a.status === "REJECTED" && !dismissedIds.includes(a.applicationId))
+            .filter(
+              (a) =>
+                a &&
+                a.status === "REJECTED" &&
+                !dismissedIds.includes(a.applicationId)
+            )
             .map((a) => (
               <div
                 key={a.applicationId}
@@ -611,7 +703,9 @@ export default function DriverProfile({
                 </div>
                 <button
                   type="button"
-                  onClick={() => setDismissedIds((prev) => [...prev, a.applicationId])}
+                  onClick={() =>
+                    setDismissedIds((prev) => [...prev, a.applicationId])
+                  }
                   style={{
                     background: "none",
                     border: "none",
@@ -668,15 +762,30 @@ export default function DriverProfile({
             </div>
           )}
 
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(260px, 1fr))", gap: 14 }}>
+          <div
+            style={{
+              display: "grid",
+              gridTemplateColumns: "repeat(auto-fit, minmax(260px, 1fr))",
+              gap: 14,
+            }}
+          >
             <div style={card}>
-              <div style={{ color: "var(--muted)", fontSize: 12 }}>Current Points</div>
+              <div style={{ color: "var(--muted)", fontSize: 12 }}>
+                Current Points
+              </div>
               {loading ? (
                 <div style={{ marginTop: 10, color: "var(--muted)" }}>Loading…</div>
               ) : err ? (
                 <div style={{ marginTop: 10, color: "#b91c1c" }}>{err}</div>
               ) : (
-                <div style={{ marginTop: 10, fontSize: 48, fontWeight: 800, letterSpacing: -1 }}>
+                <div
+                  style={{
+                    marginTop: 10,
+                    fontSize: 48,
+                    fontWeight: 800,
+                    letterSpacing: -1,
+                  }}
+                >
                   {points}
                 </div>
               )}
@@ -705,7 +814,9 @@ export default function DriverProfile({
 
             <div style={card}>
               <div style={{ color: "var(--muted)", fontSize: 12 }}>Status</div>
-              <div style={{ marginTop: 10, fontSize: 18, fontWeight: 700 }}>Active</div>
+              <div style={{ marginTop: 10, fontSize: 18, fontWeight: 700 }}>
+                Active
+              </div>
               <div style={{ marginTop: 6, color: "var(--muted)", fontSize: 13 }}>
                 Add driver status, sponsor, tier, etc.
               </div>
@@ -713,14 +824,18 @@ export default function DriverProfile({
 
             <div style={card}>
               <div style={{ color: "var(--muted)", fontSize: 12 }}>Rewards</div>
-              <div style={{ marginTop: 10, fontSize: 18, fontWeight: 700 }}>Coming soon</div>
+              <div style={{ marginTop: 10, fontSize: 18, fontWeight: 700 }}>
+                Coming soon
+              </div>
               <div style={{ marginTop: 6, color: "var(--muted)", fontSize: 13 }}>
                 Later: catalog + redeem flow.
               </div>
             </div>
 
             <div style={card}>
-              <div style={{ color: "var(--muted)", fontSize: 12 }}>Notifications</div>
+              <div style={{ color: "var(--muted)", fontSize: 12 }}>
+                Notifications
+              </div>
 
               {notifLoading ? (
                 <div style={{ marginTop: 10, color: "var(--muted)" }}>Loading…</div>
@@ -734,7 +849,14 @@ export default function DriverProfile({
                     Choose when you want to be notified.
                   </div>
 
-                  <div style={{ marginTop: 14, display: "flex", flexDirection: "column", gap: 10 }}>
+                  <div
+                    style={{
+                      marginTop: 14,
+                      display: "flex",
+                      flexDirection: "column",
+                      gap: 10,
+                    }}
+                  >
                     <label style={{ display: "flex", alignItems: "center", gap: 10 }}>
                       <input
                         type="checkbox"
@@ -840,57 +962,67 @@ export default function DriverProfile({
                 </>
               )}
             </div>
+
+            <div style={card}>
+              <div style={{ color: "var(--muted)", fontSize: 12 }}>
+                Accessibility
+              </div>
+
+              {textSizeLoading ? (
+                <div style={{ marginTop: 10, color: "var(--muted)" }}>Loading…</div>
+              ) : (
+                <>
+                  <div style={{ marginTop: 10, fontSize: 18, fontWeight: 700 }}>
+                    Text Size
+                  </div>
+
+                  <div style={{ marginTop: 6, color: "var(--muted)", fontSize: 13 }}>
+                    Adjust the size of text across the system.
+                  </div>
+
+                  <div style={{ marginTop: 12, display: "flex", gap: 8, flexWrap: "wrap" }}>
+                    {["small", "medium", "large"].map((size) => (
+                      <button
+                        key={size}
+                        type="button"
+                        onClick={() => handleTextSizeChange(size)}
+                        disabled={textSizeSaving}
+                        style={{
+                          padding: "8px 14px",
+                          borderRadius: 8,
+                          border: "1px solid var(--border, #d1d5db)",
+                          background: textSize === size ? "#4f46e5" : "transparent",
+                          color: textSize === size ? "#fff" : "inherit",
+                          fontWeight: 600,
+                          cursor: textSizeSaving ? "not-allowed" : "pointer",
+                          textTransform: "capitalize",
+                          opacity: textSizeSaving ? 0.7 : 1,
+                        }}
+                      >
+                        {size}
+                      </button>
+                    ))}
+                  </div>
+
+                  {textSizeMessage && (
+                    <div style={{ marginTop: 10, fontSize: 12, color: "var(--muted)" }}>
+                      {textSizeMessage}
+                    </div>
+                  )}
+                </>
+              )}
+            </div>
           </div>
-          <div style={card}>
-  <div style={{ color: "var(--muted)", fontSize: 12 }}>Accessibility</div>
-
-  {textSizeLoading ? (
-    <div style={{ marginTop: 10, color: "var(--muted)" }}>Loading…</div>
-  ) : (
-    <>
-      <div style={{ marginTop: 10, fontSize: 18, fontWeight: 700 }}>
-        Text Size
-      </div>
-
-      <div style={{ marginTop: 6, color: "var(--muted)", fontSize: 13 }}>
-        Adjust the size of text across the system.
-      </div>
-
-      <div style={{ marginTop: 12, display: "flex", gap: 8, flexWrap: "wrap" }}>
-        {["small", "medium", "large"].map((size) => (
-          <button
-            key={size}
-            type="button"
-            onClick={() => handleTextSizeChange(size)}
-            disabled={textSizeSaving}
-            style={{
-              padding: "8px 14px",
-              borderRadius: 8,
-              border: "1px solid var(--border, #d1d5db)",
-              background: textSize === size ? "#4f46e5" : "transparent",
-              color: textSize === size ? "#fff" : "inherit",
-              fontWeight: 600,
-              cursor: textSizeSaving ? "not-allowed" : "pointer",
-              textTransform: "capitalize",
-              opacity: textSizeSaving ? 0.7 : 1,
-            }}
-          >
-            {size}
-          </button>
-        ))}
-      </div>
-
-      {textSizeMessage && (
-        <div style={{ marginTop: 10, fontSize: 12, color: "var(--muted)" }}>
-          {textSizeMessage}
-        </div>
-      )}
-    </>
-  )}
-</div>
 
           <div style={{ ...card, marginTop: 14 }}>
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
+            <div
+              style={{
+                display: "flex",
+                justifyContent: "space-between",
+                alignItems: "center",
+                marginBottom: 10,
+              }}
+            >
               <div style={{ color: "var(--muted)", fontSize: 12 }}>
                 Point Activity Timeline
               </div>
@@ -900,7 +1032,9 @@ export default function DriverProfile({
             </div>
 
             {historyLoading ? (
-              <div style={{ color: "var(--muted)", fontSize: 13 }}>Loading point history…</div>
+              <div style={{ color: "var(--muted)", fontSize: 13 }}>
+                Loading point history…
+              </div>
             ) : historyError ? (
               <div style={{ color: "#b91c1c", fontSize: 13 }}>{historyError}</div>
             ) : timelineEvents.length === 0 ? (
@@ -928,11 +1062,19 @@ export default function DriverProfile({
                       <div style={{ fontSize: 12, color: "var(--muted)" }}>
                         {formatEventDate(event.occurredAt)}
                       </div>
-                      <div style={{ fontSize: 14, fontWeight: 700, color: earned ? "#166534" : "#991b1b" }}>
+                      <div
+                        style={{
+                          fontSize: 14,
+                          fontWeight: 700,
+                          color: earned ? "#166534" : "#991b1b",
+                        }}
+                      >
                         {earned ? "+" : "-"}
                         {event.points}
                       </div>
-                      <div style={{ fontSize: 13, color: "var(--text)" }}>{event.reason}</div>
+                      <div style={{ fontSize: 13, color: "var(--text)" }}>
+                        {event.reason}
+                      </div>
                     </div>
                   );
                 })}
@@ -946,88 +1088,254 @@ export default function DriverProfile({
             </div>
             <SponsorshipApply token={token} />
           </div>
+
+          <div style={{ ...card, marginTop: 14 }}>
+            <div style={{ color: "var(--muted)", fontSize: 12, marginBottom: 12 }}>
+              My Purchases
+            </div>
+
+            {ordersLoading ? (
+              <div style={{ color: "var(--muted)" }}>Loading purchases...</div>
+            ) : ordersError ? (
+              <div style={{ color: "#b91c1c" }}>{ordersError}</div>
+            ) : orders.length === 0 ? (
+              <div style={{ color: "var(--muted)" }}>No purchases yet.</div>
+            ) : (
+              <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+                {orders.map((order) => {
+                  const canCancel = ["PLACED", "PENDING"].includes(
+                    String(order.status || "").toUpperCase()
+                  );
+
+                  return (
+                    <div
+                      key={order.id}
+                      style={{
+                        border: "1px solid var(--border, #e5e7eb)",
+                        borderRadius: 10,
+                        padding: 12,
+                        display: "flex",
+                        justifyContent: "space-between",
+                        alignItems: "center",
+                        gap: 12,
+                      }}
+                    >
+                      <div>
+                        <div style={{ fontWeight: 700 }}>{order.item_name || "Item"}</div>
+
+                        <div style={{ fontSize: 13, color: "var(--muted)" }}>
+                          Qty: {order.quantity} · Points: {order.total_points}
+                        </div>
+
+                        <div style={{ fontSize: 13, color: "var(--muted)" }}>
+                          Status: {order.status}
+                        </div>
+                      </div>
+
+                      {canCancel && (
+                        <button
+                          type="button"
+                          onClick={() => handleCancelOrder(order.id)}
+                          disabled={cancelingOrderId === order.id}
+                          style={{
+                            padding: "7px 14px",
+                            borderRadius: 8,
+                            border: "none",
+                            background: "#ef4444",
+                            color: "#fff",
+                            fontWeight: 600,
+                            cursor:
+                              cancelingOrderId === order.id
+                                ? "not-allowed"
+                                : "pointer",
+                            opacity: cancelingOrderId === order.id ? 0.6 : 1,
+                          }}
+                        >
+                          {cancelingOrderId === order.id
+                            ? "Canceling..."
+                            : "Cancel Purchase"}
+                        </button>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
         </>
       )}
 
-      <div style={{ ...card, marginTop: 14 }}>
-  <div style={{ color: "var(--muted)", fontSize: 12, marginBottom: 12 }}>
-    My Purchases
-  </div>
-
-  {ordersLoading ? (
-    <div style={{ color: "var(--muted)" }}>Loading purchases...</div>
-  ) : ordersError ? (
-    <div style={{ color: "#b91c1c" }}>{ordersError}</div>
-  ) : orders.length === 0 ? (
-    <div style={{ color: "var(--muted)" }}>No purchases yet.</div>
-  ) : (
-    <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-      {orders.map((order) => {
-        const canCancel = ["PLACED", "PENDING"].includes(order.status);
-
-        return (
-          <div
-            key={order.id}
+      {activeTab === "goals" && (
+        <div>
+          <h2 style={{ marginBottom: 4 }}>Points Goals</h2>
+          <p
             style={{
-              border: "1px solid var(--border, #e5e7eb)",
-              borderRadius: 10,
-              padding: 12,
-              display: "flex",
-              justifyContent: "space-between",
-              alignItems: "center",
-              gap: 12,
+              color: "var(--muted)",
+              fontSize: 14,
+              marginTop: 0,
+              marginBottom: 20,
             }}
           >
-            <div>
-              <div style={{ fontWeight: 700 }}>
-                {order.item_name || "Item"}
-              </div>
+            Set monthly and yearly point goals and track your progress.
+          </p>
 
-              <div style={{ fontSize: 13, color: "var(--muted)" }}>
-                Qty: {order.quantity} · Points: {order.total_points}
-              </div>
-
-              <div style={{ fontSize: 13, color: "var(--muted)" }}>
-                Status: {order.status}
-              </div>
+          {(goalsError || goalsMessage) && (
+            <div
+              style={{
+                padding: "10px 14px",
+                borderRadius: 8,
+                background: goalsError ? "#fef2f2" : "#ecfdf5",
+                color: goalsError ? "#991b1b" : "#065f46",
+                marginBottom: 16,
+              }}
+            >
+              {goalsError || goalsMessage}
             </div>
+          )}
 
-            {canCancel && (
-              <button
-                type="button"
-                onClick={() => handleCancelOrder(order.id)}
-                disabled={cancelingOrderId === order.id}
+          {goalsLoading ? (
+            <p style={{ color: "var(--muted)" }}>Loading goals...</p>
+          ) : (
+            <>
+              <div style={{ ...card, marginBottom: 16 }}>
+                <h3 style={{ marginTop: 0 }}>Set Your Goals</h3>
+
+                <div style={{ display: "grid", gap: 12 }}>
+                  <input
+                    type="number"
+                    min="0"
+                    placeholder="Monthly goal"
+                    value={monthlyGoal}
+                    onChange={(e) => setMonthlyGoal(e.target.value)}
+                    style={{
+                      padding: "10px 12px",
+                      borderRadius: 8,
+                      border: "1px solid var(--border, #d1d5db)",
+                      fontSize: 14,
+                      background: "var(--card)",
+                      color: "var(--text)",
+                    }}
+                  />
+
+                  <input
+                    type="number"
+                    min="0"
+                    placeholder="Yearly goal"
+                    value={yearlyGoal}
+                    onChange={(e) => setYearlyGoal(e.target.value)}
+                    style={{
+                      padding: "10px 12px",
+                      borderRadius: 8,
+                      border: "1px solid var(--border, #d1d5db)",
+                      fontSize: 14,
+                      background: "var(--card)",
+                      color: "var(--text)",
+                    }}
+                  />
+
+                  <button
+                    type="button"
+                    onClick={handleSaveGoals}
+                    disabled={goalsSaving}
+                    style={{
+                      padding: "9px 18px",
+                      borderRadius: 8,
+                      border: "none",
+                      background: "#4f46e5",
+                      color: "#fff",
+                      fontWeight: 600,
+                      cursor: goalsSaving ? "not-allowed" : "pointer",
+                      opacity: goalsSaving ? 0.7 : 1,
+                    }}
+                  >
+                    {goalsSaving ? "Saving..." : "Save Goals"}
+                  </button>
+                </div>
+              </div>
+
+              <div
                 style={{
-                  padding: "7px 14px",
-                  borderRadius: 8,
-                  border: "none",
-                  background: "#ef4444",
-                  color: "#fff",
-                  fontWeight: 600,
-                  cursor:
-                    cancelingOrderId === order.id
-                      ? "not-allowed"
-                      : "pointer",
-                  opacity:
-                    cancelingOrderId === order.id ? 0.6 : 1,
+                  display: "grid",
+                  gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))",
+                  gap: 14,
                 }}
               >
-                {cancelingOrderId === order.id
-                  ? "Canceling..."
-                  : "Cancel Purchase"}
-              </button>
-            )}
-          </div>
-        );
-      })}
-    </div>
-  )}
-</div>
+                <div style={card}>
+                  <div style={{ color: "var(--muted)", fontSize: 12 }}>
+                    Monthly Goal
+                  </div>
+                  <div style={{ marginTop: 10, fontSize: 18, fontWeight: 700 }}>
+                    {monthlyPoints} / {monthlyGoal || 0} points
+                  </div>
+                  <div
+                    style={{
+                      marginTop: 12,
+                      width: "100%",
+                      height: 10,
+                      background: "#e5e7eb",
+                      borderRadius: 999,
+                      overflow: "hidden",
+                    }}
+                  >
+                    <div
+                      style={{
+                        width: `${monthlyProgressPercent}%`,
+                        height: "100%",
+                        background: "#4f46e5",
+                      }}
+                    />
+                  </div>
+                  <div style={{ marginTop: 8, fontSize: 13, color: "var(--muted)" }}>
+                    {monthlyProgressPercent}% complete
+                  </div>
+                </div>
+
+                <div style={card}>
+                  <div style={{ color: "var(--muted)", fontSize: 12 }}>
+                    Yearly Goal
+                  </div>
+                  <div style={{ marginTop: 10, fontSize: 18, fontWeight: 700 }}>
+                    {yearlyPoints} / {yearlyGoal || 0} points
+                  </div>
+                  <div
+                    style={{
+                      marginTop: 12,
+                      width: "100%",
+                      height: 10,
+                      background: "#e5e7eb",
+                      borderRadius: 999,
+                      overflow: "hidden",
+                    }}
+                  >
+                    <div
+                      style={{
+                        width: `${yearlyProgressPercent}%`,
+                        height: "100%",
+                        background: "#10b981",
+                      }}
+                    />
+                  </div>
+                  <div style={{ marginTop: 8, fontSize: 13, color: "var(--muted)" }}>
+                    {yearlyProgressPercent}% complete
+                  </div>
+                </div>
+              </div>
+            </>
+          )}
+        </div>
+      )}
 
       {activeTab === "sponsors" && (
         <div>
           <h2 style={{ marginBottom: 4 }}>Sponsor Reviews</h2>
-          <p style={{ color: "var(--muted)", fontSize: 14, marginTop: 0, marginBottom: 20 }}>
+          <p
+            style={{
+              color: "var(--muted)",
+              fontSize: 14,
+              marginTop: 0,
+              marginBottom: 20,
+            }}
+          >
             Rate and review your sponsors. Only you can see your own reviews.
           </p>
 
@@ -1038,7 +1346,7 @@ export default function DriverProfile({
                 borderRadius: 8,
                 background: "#fef2f2",
                 color: "#991b1b",
-                marginBottom: 12
+                marginBottom: 12,
               }}
             >
               {sponsorError}
@@ -1052,7 +1360,7 @@ export default function DriverProfile({
                 borderRadius: 8,
                 background: "#ecfdf5",
                 color: "#065f46",
-                marginBottom: 12
+                marginBottom: 12,
               }}
             >
               ✓ {sponsorSuccess}
@@ -1078,13 +1386,21 @@ export default function DriverProfile({
                       display: "flex",
                       justifyContent: "space-between",
                       alignItems: "flex-start",
-                      gap: 12
+                      gap: 12,
                     }}
                   >
                     <div>
-                      <div style={{ fontWeight: 700, fontSize: 16 }}>{s.sponsorName}</div>
+                      <div style={{ fontWeight: 700, fontSize: 16 }}>
+                        {s.sponsorName}
+                      </div>
                       {s.address && (
-                        <div style={{ color: "var(--muted)", fontSize: 13, marginTop: 2 }}>
+                        <div
+                          style={{
+                            color: "var(--muted)",
+                            fontSize: 13,
+                            marginTop: 2,
+                          }}
+                        >
                           📍 {s.address}
                         </div>
                       )}
@@ -1105,11 +1421,27 @@ export default function DriverProfile({
                       )}
                     </div>
 
-                    <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 6 }}>
+                    <div
+                      style={{
+                        display: "flex",
+                        flexDirection: "column",
+                        alignItems: "flex-end",
+                        gap: 6,
+                      }}
+                    >
                       {hasReview && !isOpen && (
-                        <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 2 }}>
+                        <div
+                          style={{
+                            display: "flex",
+                            flexDirection: "column",
+                            alignItems: "flex-end",
+                            gap: 2,
+                          }}
+                        >
                           <StarRating value={s.myRating} readOnly />
-                          <span style={{ fontSize: 11, color: "var(--muted)" }}>Your rating</span>
+                          <span style={{ fontSize: 11, color: "var(--muted)" }}>
+                            Your rating
+                          </span>
                         </div>
                       )}
 
@@ -1137,14 +1469,20 @@ export default function DriverProfile({
                   </div>
 
                   {isOpen && (
-                    <div style={{ marginTop: 16, borderTop: "1px solid var(--border, #e5e7eb)", paddingTop: 16 }}>
+                    <div
+                      style={{
+                        marginTop: 16,
+                        borderTop: "1px solid var(--border, #e5e7eb)",
+                        paddingTop: 16,
+                      }}
+                    >
                       <div style={{ marginBottom: 10 }}>
                         <label
                           style={{
                             fontWeight: 600,
                             fontSize: 14,
                             display: "block",
-                            marginBottom: 6
+                            marginBottom: 6,
                           }}
                         >
                           Your Rating *
@@ -1154,7 +1492,7 @@ export default function DriverProfile({
                           onChange={(val) =>
                             setReviewForm((prev) => ({
                               ...prev,
-                              [s.sponsorId]: { ...form, rating: val }
+                              [s.sponsorId]: { ...form, rating: val },
                             }))
                           }
                         />
@@ -1166,7 +1504,7 @@ export default function DriverProfile({
                             fontWeight: 600,
                             fontSize: 14,
                             display: "block",
-                            marginBottom: 6
+                            marginBottom: 6,
                           }}
                         >
                           Comments (optional)
@@ -1178,7 +1516,7 @@ export default function DriverProfile({
                           onChange={(e) =>
                             setReviewForm((prev) => ({
                               ...prev,
-                              [s.sponsorId]: { ...form, comment: e.target.value }
+                              [s.sponsorId]: { ...form, comment: e.target.value },
                             }))
                           }
                           style={{
