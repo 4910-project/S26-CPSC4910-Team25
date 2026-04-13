@@ -1,7 +1,7 @@
 import "./App.css";
 import React, { useState, useEffect } from "react";
 import { Routes, Route, Navigate, useNavigate } from "react-router-dom";
-
+ 
 import Navbar from "./components/Navbar";
 import Login from "./login.js";
 import MFASettings from "./MFASettings";
@@ -15,7 +15,9 @@ import ForgotPassword from "./components/ForgotPassword";
 import ForgotUsername from "./components/ForgotUsername";
 import ChangeUsername from "./components/ChangeUsername";
 import Catalogue from "./Catalogue.js"; // ← NEW
-
+ 
+const POINTS_API = "http://localhost:8002/api/points";
+ 
 // ── Small dark toggle for unauthenticated pages ────────────────────────────
 function PreAuthToggle({ dark, onToggleDark }) {
   return (
@@ -36,7 +38,7 @@ function PreAuthToggle({ dark, onToggleDark }) {
     </div>
   );
 }
-
+ 
 // ── Authenticated layout: Navbar + page content ────────────────────────────
 function AuthLayout({ userRole, onLogout, dark, onToggleDark, children }) {
   const navigate = useNavigate();
@@ -58,19 +60,22 @@ function AuthLayout({ userRole, onLogout, dark, onToggleDark, children }) {
     </>
   );
 }
-
+ 
 // ── Main App ───────────────────────────────────────────────────────────────
 export default function App() {
   const [token, setToken] = useState(() => sessionStorage.getItem("token") || null);
   const [userRole, setUserRole] = useState(() => sessionStorage.getItem("userRole") || null);
-
+ 
   const [mfaComplete, setMfaComplete] = useState(
     () => sessionStorage.getItem("mfaComplete") === "true"
   );
-
+ 
   const [showChangePassword, setShowChangePassword] = useState(false);
   const [showChangeUsername, setShowChangeUsername] = useState(false);
-
+ 
+  // ── Points ──
+  const [userPoints, setUserPoints] = useState(0);
+ 
   // ── Dark mode ──
   const [dark, setDark] = useState(() => {
     const saved = localStorage.getItem("theme");
@@ -78,14 +83,25 @@ export default function App() {
     if (saved === "light") return false;
     return window.matchMedia?.("(prefers-color-scheme: dark)")?.matches ?? false;
   });
-
+ 
   useEffect(() => {
     document.body.classList.toggle("dark", dark);
     localStorage.setItem("theme", dark ? "dark" : "light");
   }, [dark]);
-
+ 
+  // ── Fetch real point balance once logged in and MFA done ──
+  useEffect(() => {
+    if (!token || !mfaComplete) return;
+    fetch(`${POINTS_API}/balance`, {
+      headers: { Authorization: `Bearer ${token}` },
+    })
+      .then(r => r.ok ? r.json() : null)
+      .then(d => { if (d?.points != null) setUserPoints(d.points); })
+      .catch(() => {});
+  }, [token, mfaComplete]);
+ 
   const toggleDark = () => setDark((d) => !d);
-
+ 
   const handleLogin = (t, role) => {
     sessionStorage.setItem("token", t);
     sessionStorage.setItem("userRole", role);
@@ -94,12 +110,12 @@ export default function App() {
     setUserRole(role);
     setMfaComplete(false);
   };
-
+ 
   const handleMFAComplete = () => {
     sessionStorage.setItem("mfaComplete", "true");
     setMfaComplete(true);
   };
-
+ 
   const handleLogout = () => {
     sessionStorage.clear();
     setToken(null);
@@ -107,8 +123,9 @@ export default function App() {
     setMfaComplete(false);
     setShowChangePassword(false);
     setShowChangeUsername(false);
+    setUserPoints(0);
   };
-
+ 
   // ── NOT logged in ──────────────────────────────────────────────────────────
   if (!token) {
     return (
@@ -135,7 +152,7 @@ export default function App() {
       </Routes>
     );
   }
-
+ 
   // ── LOGGED IN but MFA not done ─────────────────────────────────────────────
   if (!mfaComplete) {
     return (
@@ -156,16 +173,16 @@ export default function App() {
       </>
     );
   }
-
+ 
   // ── LOGGED IN + MFA done ───────────────────────────────────────────────────
   const dashboardRedirect =
     userRole === "DRIVER"  ? "/driver"  :
     userRole === "SPONSOR" ? "/sponsor" :
     userRole === "ADMIN"   ? "/admin"   : "/driver";
-
+ 
   return (
     <Routes>
-
+ 
       {/* Driver dashboard */}
       <Route path="/driver" element={
         <AuthLayout userRole={userRole} onLogout={handleLogout} dark={dark} onToggleDark={toggleDark}>
@@ -183,7 +200,7 @@ export default function App() {
           )}
         </AuthLayout>
       } />
-
+ 
       {/* Sponsor dashboard */}
       <Route path="/sponsor" element={
         <AuthLayout userRole={userRole} onLogout={handleLogout} dark={dark} onToggleDark={toggleDark}>
@@ -201,24 +218,29 @@ export default function App() {
           )}
         </AuthLayout>
       } />
-
+ 
       {/* Admin dashboard */}
       <Route path="/admin" element={
         <AuthLayout userRole={userRole} onLogout={handleLogout} dark={dark} onToggleDark={toggleDark}>
           <AdminDashboard token={token} onLogout={handleLogout} />
         </AuthLayout>
       } />
-
+ 
       {/* Catalogue — all roles */}
       <Route path="/catalogue" element={
         <AuthLayout userRole={userRole} onLogout={handleLogout} dark={dark} onToggleDark={toggleDark}>
-          <Catalogue token={token} userRole={userRole} initialPoints={1000} />
+          <Catalogue
+            token={token}
+            userRole={userRole}
+            initialPoints={userPoints}
+            onPointsChange={setUserPoints}
+          />
         </AuthLayout>
       } />
-
+ 
       {/* Catch-all */}
       <Route path="*" element={<Navigate to={dashboardRedirect} replace />} />
-
+ 
     </Routes>
   );
 }
