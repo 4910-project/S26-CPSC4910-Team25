@@ -73,6 +73,37 @@ function isCartItemAvailable(item) {
   return Number(item?.is_available ?? 1) !== 0;
 }
 
+async function awardPoints(driverUserId, points, reason = "Points awarded") {
+  const [driverRows] = await pool.query(
+    `SELECT status
+    FROM drivers
+    WHERE user_id = ?
+    ORDER BY id DESC
+    LIMIT 1`,
+    [driverUserId]
+  );
+
+  if (driverRows[0]?.status === "PROBATION") {
+    return { ok: false, blocked: true, reason: "User is on probation and unable to earn points"};
+  }
+
+  await pool.query(
+    `UPDATE users
+    SET points = points + ?
+    WHERE id = ?`,
+    [points, driverUserId]
+  );
+
+  if (await tableExists("point_transactions")) {
+    await pool.query(
+      `INSERT INTO point_transactions (user_id, amount, reason)
+      VALUES (?, ?, ?)`,
+      [driverUserId, points, reason]
+    );
+  }
+  return { ok: true };
+}
+
 async function getDriverCartSchema() {
   if (cachedDriverCartSchema) return cachedDriverCartSchema;
 
@@ -352,6 +383,16 @@ router.get("/driver/points", async (req, res) => {
     // Your JWT middleware sets: req.user = { id: payload.userId, role: payload.role }
     const userId = parsePositiveInt(req.user?.id);
     if (!userId) return res.status(401).json({ ok: false, error: "invalid user" });
+
+    const [driverRows] = await pool.query(
+      `SELECT status
+      FROM drivers
+      WHERE user_id = ?
+      ORDER BY id DESC
+      LIMIT 1`,
+      [userId]
+    );
+    const onProbation = driverRows[0]?.status === "PROBATION";
 
     // If your points are stored somewhere else later, swap this query
     const [rows] = await pool.query(

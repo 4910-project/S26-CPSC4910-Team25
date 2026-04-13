@@ -1429,7 +1429,7 @@ router.post("/drivers/:driverId/probation", async (req, res) => {
     });
 
     await conn.commit();
-    return res.json({ ok: true, message: "Driver placed on probation" });
+    return res.json({ ok: true, message: "Driver placed on probation and is currently suspended. They will not be able to earn points in this state" });
   } catch (err) {
     await conn.rollback();
     console.error(err);
