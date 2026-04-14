@@ -72,6 +72,10 @@ export default function SponsorProfile({ token, onLogout, onChangeUsername }) {
   const [dismissedIds, setDismissedIds] = useState([]);
   const [droppedDismissed, setDroppedDismissed] = useState(false);
   const [flagDismissedIds, setFlagDismissedIds] = useState([]);
+
+  // Bulk Upload -----------------------------
+  const [bulkUploadResult, setBulkUploadResult] = useState(null);
+  const [bulkUploading, setBulkUploading] = useState(false);
   
 
   // ─── Existing profile fetch ────────────────────────────────────
@@ -196,6 +200,34 @@ export default function SponsorProfile({ token, onLogout, onChangeUsername }) {
       setOrgPhotoError(err.message);
     } finally {
       setOrgPhotoUploading(false);
+      e.target.value = "";
+    }
+  };
+
+  const handleBulkUpload = async (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setBulkUploading(true);
+    setBulkUploadResult(null);
+    setDriverError("");
+    setDriverSuccess("");
+
+    try {
+      const formData = new FormData();
+      formData.append("file", file);
+      const res = await fetch(`${SPONSOR_API}/bulk-upload`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${token}` },
+        body: formData,
+      });
+      const data = await res.json();
+      if (!res.ok) throw new error(data.error || "Bulk upload failed");
+      setBulkUploadResult(data);
+      if (data.processed > 0) fetchDrivers();
+    } catch (err) {
+      setDriverError(err.message);
+    } finally {
+      setBulkUploading(false);
       e.target.value = "";
     }
   };
@@ -813,7 +845,7 @@ export default function SponsorProfile({ token, onLogout, onChangeUsername }) {
 
         {/* Tab bar */}
         <div style={{ display: "flex", gap: 8, marginBottom: 20 }}>
-          {["drivers", "applications", "catalog", "posts", "reports", "help & feedback"].map((tab) => (
+          {["drivers", "applications", "catalog", "posts", "reports", "bulk upload", "help & feedback"].map((tab) => (
             <button
               key={tab}
               type="button"
@@ -1477,6 +1509,76 @@ export default function SponsorProfile({ token, onLogout, onChangeUsername }) {
             </div>
           </div>
         )}
+
+        {/* -- Bulk Upload Tab -- */}
+        {activeTab === "bulk upload" && (
+          <div style={{ maxWidth: 600 }}>
+            <h3 style={{ margin: "0 0 6px", fontSize: 18 }}>Bulk Upload</h3>
+            <p style={{ margin: "0 0 16px", color: "#6b7280", fontSize: 14 }}>
+              Upload a pipe-delimited text file to bulk create drivers or sponsors
+              Use <strong>D</strong> for drivers and <strong>S</strong> for sponsors
+            </p>
+            <div style={{
+              background: "#f8fafc", border: "1px solid #e5e7eb",
+              borderRadius: 10, padding: 14, marginBottom: 16, fontSize: 13, color: "#374151"
+            }}>
+              <strong>File format:</strong><br />
+              <code>D||firstName|lastName|email|points (optional)|reason (optional)</code><br />
+              <code>S||firstName|lastName|email</code><br />
+              <span style={{ color: "6b7280", marginTop: 6, display: "block" }}>
+                Leave organization name blank
+              </span>
+            </div>
+
+            <label style={{
+              display: "inline-block", padding: "9px 20px", borderRadius: 8,
+              background: bulkUploading ? "#a5b4fc" : "#4f46e5", color: "#fff",
+              fontWeight: 700, fontSize: 14,
+              cursor: bulkUploading ? "not-allowed" : "pointer",
+            }}>
+              {bulkUploading ? "Uploading..." : "Choose File & Upload"}
+              <input
+                type="file"
+                accept=".txt,.csv"
+                style={{ display: "none" }}
+                onChange={handleBulkUpload}
+                disabled={bulkUploading}
+              />
+            </label>
+
+            {bulkUploadResult && (
+              <div style={{ marginTop: 20 }}>
+                <div style={{
+                  padding: "10px 14px", borderRadius: 8,
+                  background: "#d1fae5", color: "#065f46",
+                  marginBottom: 12, fontWeight: 600
+                }}>
+                  {bulkUploadResult.processed} row{bulkUploadResult.processed !== 1 ? "s" : ""} processed successfully
+                </div>
+
+                {bulkUploadResult.errors.length > 0 && (
+                  <div>
+                    <p style={{ fontWeight: 700, color: "#991b1b", marginBottom: 8 }}>
+                      {bulkUploadResult.errors.length} issue{bulkUploadResult.errors.length !== 1 ? "s" : ""} found:
+                    </p>
+                    <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                      {bulkUploadResult.errors.map((e, i) => (
+                        <div key={i} style={{
+                          padding: "8px 12px", borderRadius: 8,
+                          background: "#fef2f2", color: "#991b1b",
+                          border: "1px solid #fca5a5", fontSize: 13
+                        }}>
+                          <strong>Line {e.line}:</strong> {e.error}
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+        )}
+
         {/* ── Feedback tab ── */}
         {activeTab === "help & feedback" && (
           <FeedbackForm token={token} apiBase={SPONSOR_API} />
