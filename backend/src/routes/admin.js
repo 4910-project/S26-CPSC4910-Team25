@@ -1,5 +1,6 @@
 const express = require("express");
 const bcrypt = require("bcryptjs");
+const PDFDocument = require("pdfkit");
 const pool = require("../db");
 const multer = require("multer")
 const upload = multer({ storage: multer.memoryStorage() });
@@ -83,6 +84,220 @@ async function tableExists(tableName, conn = null) {
     [tableName]
   );
   return !!rows[0];
+}
+
+function escapeCsvCell(value) {
+  const raw = String(value ?? "");
+  if (/[",\n]/.test(raw)) return `"${raw.replace(/"/g, '""')}"`;
+  return raw;
+}
+
+async function loadSponsorAccountSnapshot(sponsorId) {
+  const [sponsorRows] = await pool.query(
+    `
+    SELECT
+      id,
+      name,
+      status,
+      accepting_drivers AS acceptingDrivers,
+      flagged,
+      admin_note AS adminNote,
+      contact_name AS contactName,
+      contact_email AS contactEmail,
+      contact_phone AS contactPhone,
+      address,
+      org_photo_url AS orgPhotoUrl
+    FROM sponsors
+    WHERE id = ?
+    LIMIT 1
+    `,
+    [sponsorId]
+  );
+  const sponsor = sponsorRows[0];
+  if (!sponsor) return null;
+
+  const [drivers] = await pool.query(
+    `
+    SELECT
+      d.id AS driverId,
+      d.user_id AS userId,
+      SUBSTRING_INDEX(u.email, '@', 1) AS name,
+      u.email,
+      LOWER(d.status) AS status,
+      d.joined_on AS joinedOn,
+      u.points AS currentPoints,
+      d.flagged,
+      d.admin_note AS adminNote
+    FROM drivers d
+    JOIN users u ON u.id = d.user_id
+    WHERE d.sponsor_id = ?
+    ORDER BY
+      CASE d.status
+        WHEN 'ACTIVE' THEN 0
+        WHEN 'PROBATION' THEN 1
+        WHEN 'DROPPED' THEN 2
+        ELSE 3
+      END,
+      u.email ASC
+    `,
+    [sponsorId]
+  );
+
+  const [applications] = await pool.query(
+    `
+    SELECT
+      da.id AS applicationId,
+      da.driver_user_id AS driverUserId,
+      d.id AS driverId,
+      SUBSTRING_INDEX(u.email, '@', 1) AS name,
+      u.email,
+      da.status,
+      da.decision_message AS decisionMessage,
+      da.applied_at AS appliedAt,
+      da.decided_at AS decidedAt,
+      d.starting_points AS startingPoints
+    FROM driver_applications da
+    JOIN users u ON u.id = da.driver_user_id
+    LEFT JOIN drivers d ON d.user_id = da.driver_user_id AND d.sponsor_id = da.sponsor_id
+    WHERE da.sponsor_id = ?
+    ORDER BY da.applied_at DESC
+    LIMIT 15
+    `,
+    [sponsorId]
+  );
+
+  const counts = {
+    totalDrivers: drivers.length,
+    activeDrivers: drivers.filter((driver) => driver.status === "active").length,
+    probationDrivers: drivers.filter((driver) => driver.status === "probation").length,
+    droppedDrivers: drivers.filter((driver) => driver.status === "dropped").length,
+    pendingApplications: applications.filter((application) => String(application.status).toUpperCase() === "PENDING").length,
+  };
+
+  return { sponsor, drivers, applications, counts };
+}
+
+async function loadAdminSponsorPointsReportData(sponsorId, driverId = null) {
+  const [sponsorRows] = await pool.query(
+    "SELECT id, name FROM sponsors WHERE id = ? LIMIT 1",
+    [sponsorId]
+  );
+  const sponsor = sponsorRows[0];
+  if (!sponsor) return { sponsor: null };
+
+  let filter = { driverId: null, driverEmail: null, label: "All drivers" };
+  let driverClause = "";
+  const driverParams = [sponsorId];
+  const parsedDriverId = driverId == null || driverId === "" ? null : parsePositiveInt(driverId);
+
+  if (driverId != null && driverId !== "" && !parsedDriverId) {
+    return { sponsor, invalidDriverFilter: true };
+  }
+
+  if (parsedDriverId) {
+    const [driverFilterRows] = await pool.query(
+      `
+      SELECT d.id AS driverId, u.email
+      FROM drivers d
+      JOIN users u ON u.id = d.user_id
+      WHERE d.id = ? AND d.sponsor_id = ?
+      LIMIT 1
+      `,
+      [parsedDriverId, sponsorId]
+    );
+
+    const selectedDriver = driverFilterRows[0];
+    if (!selectedDriver) {
+      return { sponsor, driverNotFound: true };
+    }
+
+    filter = {
+      driverId: selectedDriver.driverId,
+      driverEmail: selectedDriver.email,
+      label: selectedDriver.email,
+    };
+    driverClause = " AND d.id = ?";
+    driverParams.push(parsedDriverId);
+  }
+
+  const hasHistory = await tableExists("driver_points_history");
+  const [driverRows] = hasHistory
+    ? await pool.query(
+        `
+        SELECT
+          d.id AS driverId,
+          u.email,
+          LOWER(d.status) AS driverStatus,
+          u.points AS currentPoints,
+          COALESCE(SUM(CASE WHEN h.points_change > 0 THEN h.points_change ELSE 0 END), 0) AS totalAwarded,
+          COALESCE(SUM(CASE WHEN h.points_change < 0 THEN ABS(h.points_change) ELSE 0 END), 0) AS totalReversed,
+          COALESCE(SUM(h.points_change), 0) AS netChange
+        FROM drivers d
+        JOIN users u ON u.id = d.user_id
+        LEFT JOIN driver_points_history h ON h.driver_user_id = d.user_id
+        WHERE d.sponsor_id = ?
+        ${driverClause}
+        GROUP BY d.id, u.email, d.status, u.points
+        ORDER BY u.email ASC
+        `,
+        driverParams
+      )
+    : await pool.query(
+        `
+        SELECT
+          d.id AS driverId,
+          u.email,
+          LOWER(d.status) AS driverStatus,
+          u.points AS currentPoints,
+          0 AS totalAwarded,
+          0 AS totalReversed,
+          0 AS netChange
+        FROM drivers d
+        JOIN users u ON u.id = d.user_id
+        WHERE d.sponsor_id = ?
+        ${driverClause}
+        ORDER BY u.email ASC
+        `,
+        driverParams
+      );
+
+  const [historyRows] = hasHistory
+    ? await pool.query(
+        `
+        SELECT
+          h.created_at AS occurredAt,
+          u.email,
+          h.points_change AS pointsChange,
+          h.reason
+        FROM driver_points_history h
+        JOIN users u ON u.id = h.driver_user_id
+        JOIN drivers d ON d.user_id = h.driver_user_id
+        WHERE d.sponsor_id = ?
+        ${driverClause}
+        ORDER BY h.created_at DESC
+        LIMIT 120
+        `,
+        driverParams
+      )
+    : [[]];
+
+  return { sponsor, filter, driverRows, historyRows };
+}
+
+function summarizeSponsorReport(reportData) {
+  const { sponsor, filter, driverRows, historyRows } = reportData;
+  return {
+    sponsor,
+    filter,
+    summary: {
+      totalDrivers: driverRows.length,
+      totalAwarded: driverRows.reduce((sum, row) => sum + Number(row.totalAwarded || 0), 0),
+      totalReversed: driverRows.reduce((sum, row) => sum + Number(row.totalReversed || 0), 0),
+      currentTotal: driverRows.reduce((sum, row) => sum + Number(row.currentPoints || 0), 0),
+    },
+    driverRows,
+    historyRows,
+  };
 }
 
 /**
@@ -759,7 +974,236 @@ router.patch("/feedback/:id", async (req, res) => {
   }
  });
 
- /**
+/**
+ * NEW STORY 10888 / 20719 — Admin can securely access sponsor accounts
+ * GET /admin/sponsors/:sponsorId/account
+ */
+router.get("/sponsors/:sponsorId/account", async (req, res) => {
+  const sponsorId = parsePositiveInt(req.params.sponsorId);
+  if (!sponsorId) {
+    return res.status(400).json({ ok: false, error: "invalid sponsorId" });
+  }
+
+  try {
+    const snapshot = await loadSponsorAccountSnapshot(sponsorId);
+    if (!snapshot) {
+      return res.status(404).json({ ok: false, error: "sponsor not found" });
+    }
+
+    await writeAudit({
+      category: "ADMIN_SPONSOR_ACCOUNT_VIEW",
+      actorUserId: req.user.id,
+      sponsorId,
+      success: 1,
+      details: `admin opened sponsor workspace for sponsorId=${sponsorId}`,
+    });
+
+    return res.json({ ok: true, ...snapshot });
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({ ok: false, error: "failed to fetch sponsor account" });
+  }
+});
+
+/**
+ * NEW STORY 10855 / 10923 / 10924 — Admin sponsor workspace report preview
+ * GET /admin/sponsors/:sponsorId/reports/points
+ * Optional query params: driverId
+ */
+router.get("/sponsors/:sponsorId/reports/points", async (req, res) => {
+  const sponsorId = parsePositiveInt(req.params.sponsorId);
+  if (!sponsorId) {
+    return res.status(400).json({ ok: false, error: "invalid sponsorId" });
+  }
+
+  try {
+    const reportData = await loadAdminSponsorPointsReportData(sponsorId, req.query?.driverId);
+    if (!reportData.sponsor) {
+      return res.status(404).json({ ok: false, error: "sponsor not found" });
+    }
+    if (reportData.invalidDriverFilter) {
+      return res.status(400).json({ ok: false, error: "invalid driverId" });
+    }
+    if (reportData.driverNotFound) {
+      return res.status(404).json({ ok: false, error: "driver not found for sponsor" });
+    }
+
+    const payload = summarizeSponsorReport(reportData);
+    await writeAudit({
+      category: "ADMIN_SPONSOR_REPORT_VIEW",
+      actorUserId: req.user.id,
+      sponsorId,
+      success: 1,
+      details: `admin viewed sponsor report for sponsorId=${sponsorId} filter=${payload.filter.label}`,
+    });
+
+    return res.json({ ok: true, ...payload });
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({ ok: false, error: "failed to fetch sponsor report" });
+  }
+});
+
+/**
+ * NEW STORY 10923 / 10924 — Admin sponsor workspace CSV export
+ * GET /admin/sponsors/:sponsorId/reports/points.csv
+ * Optional query params: driverId
+ */
+router.get("/sponsors/:sponsorId/reports/points.csv", async (req, res) => {
+  const sponsorId = parsePositiveInt(req.params.sponsorId);
+  if (!sponsorId) {
+    return res.status(400).json({ ok: false, error: "invalid sponsorId" });
+  }
+
+  try {
+    const reportData = await loadAdminSponsorPointsReportData(sponsorId, req.query?.driverId);
+    if (!reportData.sponsor) {
+      return res.status(404).json({ ok: false, error: "sponsor not found" });
+    }
+    if (reportData.invalidDriverFilter) {
+      return res.status(400).json({ ok: false, error: "invalid driverId" });
+    }
+    if (reportData.driverNotFound) {
+      return res.status(404).json({ ok: false, error: "driver not found for sponsor" });
+    }
+
+    const payload = summarizeSponsorReport(reportData);
+    const dateLabel = new Date().toISOString().slice(0, 10);
+    const filterSuffix = payload.filter.driverId ? `driver-${payload.filter.driverId}` : "all-drivers";
+    const filename = `admin-sponsor-points-report-${sponsorId}-${filterSuffix}-${dateLabel}.csv`;
+
+    const csvRows = [
+      ["Sponsor", payload.sponsor.name],
+      ["Driver Filter", payload.filter.label],
+      [],
+      ["Driver Email", "Status", "Current Points", "Total Awarded", "Total Reversed", "Net Change"],
+      ...payload.driverRows.map((row) => [
+        row.email,
+        row.driverStatus,
+        row.currentPoints,
+        row.totalAwarded,
+        row.totalReversed,
+        row.netChange,
+      ]),
+      [],
+      ["Occurred At", "Driver Email", "Points Change", "Reason"],
+      ...payload.historyRows.map((row) => [row.occurredAt, row.email, row.pointsChange, row.reason]),
+    ];
+
+    const csv = csvRows.map((row) => row.map((cell) => escapeCsvCell(cell)).join(",")).join("\n");
+
+    await writeAudit({
+      category: "ADMIN_SPONSOR_REPORT_EXPORT_CSV",
+      actorUserId: req.user.id,
+      sponsorId,
+      success: 1,
+      details: `admin exported sponsor report csv for sponsorId=${sponsorId} filter=${payload.filter.label}`,
+    });
+
+    res.setHeader("Content-Type", "text/csv; charset=utf-8");
+    res.setHeader("Content-Disposition", `attachment; filename="${filename}"`);
+    return res.status(200).send(csv);
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({ ok: false, error: "failed to export sponsor report csv" });
+  }
+});
+
+/**
+ * NEW STORY 10923 / 10924 — Admin sponsor workspace PDF export
+ * GET /admin/sponsors/:sponsorId/reports/points.pdf
+ * Optional query params: driverId
+ */
+router.get("/sponsors/:sponsorId/reports/points.pdf", async (req, res) => {
+  const sponsorId = parsePositiveInt(req.params.sponsorId);
+  if (!sponsorId) {
+    return res.status(400).json({ ok: false, error: "invalid sponsorId" });
+  }
+
+  try {
+    const reportData = await loadAdminSponsorPointsReportData(sponsorId, req.query?.driverId);
+    if (!reportData.sponsor) {
+      return res.status(404).json({ ok: false, error: "sponsor not found" });
+    }
+    if (reportData.invalidDriverFilter) {
+      return res.status(400).json({ ok: false, error: "invalid driverId" });
+    }
+    if (reportData.driverNotFound) {
+      return res.status(404).json({ ok: false, error: "driver not found for sponsor" });
+    }
+
+    const payload = summarizeSponsorReport(reportData);
+    const now = new Date();
+    const dateLabel = now.toISOString().slice(0, 10);
+    const filterSuffix = payload.filter.driverId ? `driver-${payload.filter.driverId}` : "all-drivers";
+    const filename = `admin-sponsor-points-report-${sponsorId}-${filterSuffix}-${dateLabel}.pdf`;
+
+    await writeAudit({
+      category: "ADMIN_SPONSOR_REPORT_EXPORT_PDF",
+      actorUserId: req.user.id,
+      sponsorId,
+      success: 1,
+      details: `admin exported sponsor report pdf for sponsorId=${sponsorId} filter=${payload.filter.label}`,
+    });
+
+    res.setHeader("Content-Type", "application/pdf");
+    res.setHeader("Content-Disposition", `attachment; filename="${filename}"`);
+
+    const doc = new PDFDocument({ size: "LETTER", margin: 40 });
+    doc.pipe(res);
+
+    doc.fontSize(18).text("Admin Sponsor Points Report");
+    doc.moveDown(0.3);
+    doc.fontSize(11).text(`Sponsor: ${payload.sponsor.name}`);
+    doc.text(`Driver Filter: ${payload.filter.label}`);
+    doc.text(`Generated: ${now.toLocaleString()}`);
+    doc.moveDown(1);
+
+    doc.fontSize(12).text(`Total Drivers: ${payload.summary.totalDrivers}`);
+    doc.text(`Total Awarded: ${payload.summary.totalAwarded} pts`);
+    doc.text(`Total Reversed: ${payload.summary.totalReversed} pts`);
+    doc.text(`Current Points Across Drivers: ${payload.summary.currentTotal} pts`);
+    doc.moveDown(1);
+
+    doc.fontSize(13).text("Driver Summary");
+    doc.moveDown(0.4);
+    if (!payload.driverRows.length) {
+      doc.fontSize(10).text("No drivers matched the selected filter.");
+    } else {
+      payload.driverRows.forEach((row) => {
+        const line =
+          `${row.email} | status=${row.driverStatus} | ` +
+          `current=${row.currentPoints} | awarded=${row.totalAwarded} | reversed=${row.totalReversed}`;
+        doc.fontSize(10).text(line, { width: 530 });
+      });
+    }
+
+    doc.moveDown(1);
+    doc.fontSize(13).text("Recent Point Activity");
+    doc.moveDown(0.4);
+    if (!payload.historyRows.length) {
+      doc.fontSize(10).text("No point history rows found.");
+    } else {
+      payload.historyRows.forEach((row) => {
+        const occurred = row.occurredAt ? new Date(row.occurredAt).toLocaleString() : "Unknown date";
+        const sign = Number(row.pointsChange || 0) >= 0 ? "+" : "";
+        const line = `${occurred} | ${row.email} | ${sign}${row.pointsChange} pts | ${row.reason || "No reason"}`;
+        doc.fontSize(9).text(line, { width: 530 });
+      });
+    }
+
+    doc.end();
+    return null;
+  } catch (err) {
+    console.error(err);
+    if (!res.headersSent) {
+      return res.status(500).json({ ok: false, error: "failed to export sponsor report pdf" });
+    }
+    return null;
+  }
+});
+
+/**
  * NEW STORY 10907 — Admin can flag a sponsor
  * PATCH /admin/sponsors/:sponsorId/flag
  */
