@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useCallback } from "react";
+import AdminSponsorWorkspace from "./AdminSponsorWorkspace";
 
 const ADMIN_API = "http://localhost:8001/admin";
 
@@ -66,6 +67,7 @@ export default function AdminDashboard({ token, onLogout }) {
   const [expandedSponsor, setExpandedSponsor] = useState(null);
   const [sponsorNoteText, setSponsorNoteText] = useState("");
   const [savingSponsorNote, setSavingSponsorNote] = useState({});
+  const [selectedSponsor, setSelectedSponsor] = useState(null);
 
   // Drivers state
   const [drivers, setDrivers] = useState([]);
@@ -752,6 +754,10 @@ export default function AdminDashboard({ token, onLogout }) {
       {/* ── Sponsors tab ── */}
       {activeTab === "sponsors" && (
         <div>
+          <div style={{ marginBottom: 16, color: "var(--muted)", fontSize: 14 }}>
+            Open a sponsor workspace to review the account from the sponsor side and filter sponsor reports by all drivers or one driver.
+          </div>
+
           {sponsorError && (
             <div
               style={{
@@ -764,6 +770,14 @@ export default function AdminDashboard({ token, onLogout }) {
             >
               {sponsorError}
             </div>
+          )}
+
+          {selectedSponsor && (
+            <AdminSponsorWorkspace
+              token={token}
+              sponsor={selectedSponsor}
+              onClose={() => setSelectedSponsor(null)}
+            />
           )}
 
           {sponsorLoading && <p style={{ color: "var(--muted)" }}>Loading sponsors...</p>}
@@ -821,12 +835,29 @@ export default function AdminDashboard({ token, onLogout }) {
                     </div>
 
                     <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-                     <button
-                       type="button"
+                      <button
+                        type="button"
+                        onClick={() => setSelectedSponsor(s)}
+                        style={{
+                          padding: "7px 16px",
+                          borderRadius: 8,
+                          border: "1px solid #c7d2fe",
+                          background: selectedSponsor?.id === s.id ? "#e0e7ff" : "#eef2ff",
+                          color: "#3730a3",
+                          fontWeight: 700,
+                          fontSize: 13,
+                          cursor: "pointer",
+                        }}
+                      >
+                        {selectedSponsor?.id === s.id ? "Viewing Workspace" : "Open Workspace"}
+                      </button>
+
+                      <button
+                        type="button"
                         onClick={() => {
                           setExpandedSponsor(isNoteOpen ? null : s.id);
                           setSponsorNoteText(s.admin_note || "");
-                       }}
+                        }}
                         style={{
                           padding: "4px 12px",
                           borderRadius: 6,
