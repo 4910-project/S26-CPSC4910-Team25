@@ -83,6 +83,10 @@ export default function AdminDashboard({ token, onLogout }) {
   const [settingsError, setSettingsError] = useState("");
   const [settingsToggling, setSettingsToggling] = useState(false);
 
+  // Bulk Upload State
+  const [bulkUploadResult, setBulkUploadResult] = useState(null);
+  const [bulkUploading, setBulkUploading] = useState(false);
+
   const fetchFeedback = useCallback(async () => {
     setLoading(true);
     setError("");
@@ -399,6 +403,35 @@ export default function AdminDashboard({ token, onLogout }) {
     }
   };
 
+  const handleAdminBulkUpload = async (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    setBulkUploading(true);
+    setBulkUploadResult(null);
+    setError("");
+
+    try {
+      const formData = new FormData();
+      formData.append("file", file);
+      const res = await fetch(`${ADMIN_API}/bulk-upload`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${token}` },
+        body: formData,
+      });
+
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Bulk upload failed");
+      setBulkUploadResult(data);
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setBulkUploading(false);
+      e.target.value = "";
+    }
+  };
+  
+
   const totalPages = Math.ceil(total / limit);
 
   return (
@@ -406,7 +439,7 @@ export default function AdminDashboard({ token, onLogout }) {
       <h1 style={{ margin: 0, marginBottom: 4 }}>Admin Dashboard</h1>
 
       <div style={{ display: "flex", gap: 8, marginTop: 16, marginBottom: 24 }}>
-        {["feedback", "sponsors", "drivers", "settings"].map((tab) => (
+        {["feedback", "sponsors", "drivers", "bulk upload", "settings"].map((tab) => (
           <button
             key={tab}
             type="button"
@@ -428,6 +461,8 @@ export default function AdminDashboard({ token, onLogout }) {
               ? "Sponsor Management"
               : tab === "drivers"
               ? "Driver Management"
+              : tab === "bulk upload"
+              ? "Bulk Upload"
               : "Settings"}
           </button>
         ))}
@@ -1103,6 +1138,76 @@ export default function AdminDashboard({ token, onLogout }) {
         </div>
       )}
   
+      {/* -- Bulk Upload Tab -- */}
+      {activeTab === "bulk upload" && (
+        <div style={{ maxWidth: 600 }}>
+          <h2 style={{ marginTop: 0, marginBottom: 4}}>Bulk Upload</h2>
+            <p style={{ color: "var(--muted)", fontSize: 14, marginTop: 0, marginBottom: 16 }}>
+              Upload a pip-delimited text file to bulk create organizations, drivers, or sponsors
+            </p>
+
+            <div style={{
+              background: "var(--card)", border: "1px solid var(--border, #e5e7eb)",
+              borderRadius: 10, padding: 14, marginBottom: 16, fontSize: 13
+            }}>
+              <strong>File format:</strong><br />
+              <code>O|Organization Name</code><br />
+              <code>D|firstName|lastName|email|points (optional)|reason (optional)</code><br />
+              <code>S|firstName|lastName|email</code><br />
+              <span style={{ color: "var(--muted)", marginTop: 6, display: "block" }}>
+                Organization must already exist in the system or created in the file
+              </span>
+            </div>
+
+            <label style={{
+              display: "inline-block", padding: "9px 20px", borderRadius: 8,
+              background: bulkUploading ? "#a5b4fc" : "#4f46e5", color: "#fff",
+              fontWeight: 700, fontSize: 14,
+              cursor: bulkUploading ? "not-allowed" : "pointer",
+            }}>
+              {bulkUploading ? "Uploading..." : "Choose File & Upload"}
+              <input
+                type="file"
+                accept=".txt,.csv"
+                style={{ display: "none" }}
+                onChange={handleAdminBulkUpload}
+                disabled={bulkUploading}
+              />
+            </label>
+
+            {bulkUploadResult && (
+              <div style={{ marginTop: 20 }}>
+                <div style={{
+                  padding: "10px 14px", borderRadius: 8,
+                  background: "#d1fae5", color: "#065f46",
+                  marginBottom: 12, fontWeight: 600
+                }}>
+                  {bulkUploadResult.processed} row{bulkUploadResult.processed !== 1 ? "s" : ""} processed successfully
+                </div>
+
+                {bulkUploadResult.errors.length > 0 && (
+                  <div>
+                    <p style={{ fontweight: 700, color: "#991b1b", marginBottom: 8 }}>
+                      {bulkUploadResult.errors.length} issue{bulkUploadResult.errors.length !== 1 ? "s" : ""} found:
+                    </p>
+                    <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                      {bulkUploadResult.errors.map((e, i) => (
+                        <div key={i} style={{
+                          padding: "8px 12px", borderRdaius: 8,
+                          background: "#fef2f2", color: "#991b1b",
+                          border: "1px solid #fca5a5", fontSize: 13
+                        }}>
+                          <strong>Line {e.line}:</strong> {e.error}
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+        )}
+
       {/* ── Settings tab ── */}
       {activeTab === "settings" && (
         <div>

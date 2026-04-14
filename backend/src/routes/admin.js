@@ -1,7 +1,8 @@
 const express = require("express");
 const bcrypt = require("bcryptjs");
 const pool = require("../db");
-
+const multer = require("multer")
+const upload = multer({ storage: multer.memoryStorage() });
 const requireActiveSession = require("../middleware/requireActiveSession");
 
 
@@ -67,6 +68,21 @@ async function writeAudit({
 
   if (conn) return conn.query(q, params);
   return pool.query(q, params);
+}
+
+async function tableExists(tableName, conn = null) {
+  const client = conn || pool;
+  const [rows] = await client.query(
+    `
+    SELECT 1
+    FROM information_schema.TABLES
+    WHERE TABLE_SCHEMA = DATABASE()
+      AND TABLE_NAME = ?
+    LIMIT 1
+    `,
+    [tableName]
+  );
+  return !!rows[0];
 }
 
 /**
@@ -1008,6 +1024,220 @@ router.patch("/drivers/:driverId/note", async (req, res) => {
    console.error(err);
    return res.status(500).json({ ok: false, error: "failed to save note"});
  }
+});
+
+/**
+ * POST /admin/bulk-upload
+ * Requirement Change #1 - Admin bulk load organizations
+ */
+router.post("/bulk-upload", upload.single("file"), async (req, res) => {
+  //const sponsorId = getSponsorIdFromSession(req);
+  if (!req.file) return res.status(400).json({ ok: false, error: "no file uploaded" });
+
+  const lines = req.file.buffer
+    .toString("utf-8")
+    .split("\n")
+    .map(l => l.trim())
+    .filter(Boolean);
+  const errors = [];
+  const results = [];
+  const sessionOrgs = new Map();
+
+  for (let i = 0; i < lines.length; i++) {
+    const lineNum = i + 1;
+    const parts = lines[i].split("|");
+    const type = parts[0]?.trim().toUpperCase();
+
+    if (!["O", "D", "S"].includes(type)) {
+      errors.push({ line: lineNum, error: "Invalid type, must be O, D, or S" });
+      continue;
+    }
+
+    if (type === "O") {
+      const orgName = parts[1]?.trim();
+      if (!orgName) {
+        errors.push({ line: lineNum, error: "Organization name is required for O type" });
+        continue;
+      }
+      try {
+        const [existing] = await pool.query(
+          `SELECT id
+          FROM sponsors
+          WHERE name = ?
+          LIMIT 1`,
+          [orgName]
+        );
+        if (existing[0]) {
+          sessionOrgs.set(orgName.toLowerCase(), existing[0].id);
+          results.push({ line: lineNum, error: "Organization already exists" });
+        } else {
+          const [ins] = await pool.query(
+            `INSERT INTO sponsors (name, status)
+            VALUES (?, 'ACTIVE')`,
+            [orgName]
+          );
+          sessionOrgs.set(orgName.toLowerCase(), ins.insertId);
+          await writeAudit({
+            category: "BULK_UPLOAD_ORG",
+            actorUserId: req.user.id,
+            sponsorId: ins.insertId,
+            success: 1,
+            details: `bulk upload created org="${orgName}" (id=${ins.insertId})`,
+          });
+          results.push({ line: lineNum, type: "O", orgName, status: "ok" });
+        }
+      } catch (err) {
+        errors.push({ line: lineNum, error: `Failed to create org: ${err.message}` });
+      }
+      continue;
+    }
+
+    const orgName = parts[1]?.trim();
+    const firstName = parts[2]?.trim();
+    const lastName = parts[3]?.trim();
+    const email = parts[4]?.trim();
+    // points optional
+    const points = parts[5]?.trim();
+    const reason = parts[6]?.trim();
+
+    if (!orgName) {
+      errors.push({ line: lineNum, error: "Organization name is required" });
+      continue;
+    }
+    if (!email) {
+      errors.push({ line: lineNum, error: "Email is required"});
+      continue;
+    }
+    if (type === "S" && points) {
+      errors.push({ line: lineNum, error: "Points cant be assigned on this line"});
+      continue;
+    }
+    if (points && !reason) {
+      errors.push({ line: lineNum, error: "Must provide reason since points have been assigned"});
+      continue;
+    }
+
+    let sponsorId = sessionOrgs.get(orgName.toLowerCase()) ?? null;
+    if(!sponsorId) {
+      const [orgRows] = await pool.query(
+        `SELECT id
+        FROM sponsors
+        WHERE name = ?
+        LIMIT 1`,
+        [orgName]
+      );
+      if (!orgRows[0]) {
+        errors.push({ line: lineNum, error: `Organization "${orgName}" does not exist` });
+        continue;
+      }
+      sponsorId = orgRows[0].id;
+    }
+
+    const conn = await pool.getConnection();
+    try {
+      await conn.beginTransaction();
+      const [existingUsers] = await conn.query(
+        `SELECT id
+        FROM users
+        WHERE email = ?
+        LIMIT 1`,
+        [email]
+      );
+      let userId;
+      if (existingUsers[0]) {
+        userId = existingUsers[0].id;
+      } else {
+        const tempPassword = await bcrypt.hash(Math.random().toString(36) + Date.now(), 10);
+        const role = type === "D" ? "DRIVER" : "SPONSOR";
+        const [newUser] = await conn.query(
+          `INSERT INTO users (email, password_hash, role, points)
+          VALUES (?, ?, ?, 0)`,
+          [email, tempPassword, role]
+        );
+        userId = newUser.insertId;
+      }
+
+      if (type === "D") {
+        const [existingDriver] = await conn.query (
+          `SELECT id
+          From drivers
+          WHERE user_id = ? AND sponsor_id = ?
+          LIMIT 1`,
+          [userId, sponsorId]
+        );
+        if (!existingDriver[0]) {
+          await conn.query(
+            `INSERT INTO drivers (user_id, sponsor_id, status, joined_on)
+            VALUES (?, ?, 'ACTIVE', NOW())
+            ON DUPLICATE KEY UPDATE status = 'ACTIVE', joined_on = NOW()`,
+            [userId, sponsorId]
+          );
+          await conn.query(
+            `UPDATE users
+            SET sponsor_id = ?
+            WHERE id = ?
+            LIMIT 1`,
+            [sponsorId, userId]
+          );
+        }
+
+        if (points && reason) {
+          const pointsInt = parsePositiveInt(points);
+          if (!pointsInt) {
+            errors.push({ line: lineNum, error: "Invalid points value"});
+            continue;
+          } else {
+            await conn.query (
+              `UPDATE users
+              SET points = points + ?
+              WHERE id = ?
+              LIMIT 1`,
+              [pointsInt, userId]
+            );
+
+            if (await tableExists("driver_points_history", conn)) {
+              await conn.query(
+                `INSERT INTo driver_points_history (driver_user_id, points_change, reason, created_at)
+                VALUES (?, ?, ?, NOW())`,
+                [userId, pointsInt, reason]
+              );
+            }
+          }
+        }
+      }
+
+      if (type === "S") {
+        await conn.query(
+          `UPDATE users
+          SET sponsor_id = ?
+          WHERE id = ? AND sponsor_id IS NULL
+          LIMIT 1`,
+          [sponsorId, userId]
+        );
+      }
+
+      await writeAudit({
+        category: "BULK_UPLOAD_ROW",
+        actorUserId: req.user.id,
+        targetUserId: userId,
+        sponsorId,
+        success: 1,
+        details: `bulk upload line ${lineNum}: type=${type} email=${email}`,
+        conn,
+      });
+
+      await conn.commit();
+      results.push({ line: lineNum, email, type, status: "ok" });
+    } catch (err) {
+      await conn.rollback();
+      errors.push({ line: lineNum, error: `Database error: ${err.message}` });
+    } finally {
+      conn.release();
+    }
+  }
+  
+  return res.json({ ok: true, processed: results.length, errors });
+
 });
 
 module.exports = router;

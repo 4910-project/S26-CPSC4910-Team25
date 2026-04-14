@@ -2,6 +2,8 @@ const express = require("express");
 const path = require("path");
 const fs = require("fs");
 const multer = require("multer");
+const upload = multer({ storage: multer.memoryStorage() });
+const bcrypt = require("bcryptjs");
 const pool = require("../db");
 const requireActiveSession = require("../middleware/requireActiveSession");
 const PDFDocument = require("pdfkit");
@@ -1567,6 +1569,163 @@ router.post("/drivers/:driverId/drop", async (req, res) => {
   } finally {
     conn.release();
   }
+});
+
+/**
+ * POST /sponsor/bulk-upload
+ * Body: pipe delimited text file
+ * Requirement Change #1
+ */
+router.post("/bulk-upload", upload.single("file"), async (req, res) => {
+  const sponsorId = getSponsorIdFromSession(req);
+  if (!sponsorId) return res.status(400).json({ ok: false, error: "sponsor account is not linked" });
+  if (!req.file) return res.status(400).json({ ok: false, error: "no file uploaded" });
+
+  const lines = req.file.buffer
+    .toString("utf-8")
+    .split("\n")
+    .map(l => l.trim())
+    .filter(Boolean);
+  const errors = [];
+  const results = [];
+
+  for (let i = 0; i < lines.length; i++) {
+    const lineNum = i + 1;
+    const parts = lines[i].split("|");
+    const type = parts[0]?.trim().toUpperCase();
+
+    if (type === "O") {
+      errors.push({ line: lineNum, error: "Sponsors cannot use the O type" });
+      continue;
+    }
+    if (type !=="D" && type != "S") {
+      errors.push({ line: lineNum, error: "Invalid type, must be D or S" });
+      continue;
+    }
+
+    const orgName = parts[1]?.trim();
+    const firstName = parts[2]?.trim();
+    const lastName = parts[3]?.trim();
+    const email = parts[4]?.trim();
+    // points optional
+    const points = parts[5]?.trim();
+    const reason = parts[6]?.trim();
+
+    if (orgName) {
+      errors.push({ line: lineNum, error: "Organization name must be blank for sponsors" });
+      continue;
+    }
+    if (!email) {
+      errors.push({ line: lineNum, error: "Email is required"});
+      continue;
+    }
+    if (type === "S" && points) {
+      errors.push({ line: lineNum, error: "Points cant be assigned on this line"});
+      continue;
+    }
+    if (points && !reason) {
+      errors.push({ line: lineNum, error: "Must provide reason since points have been assigned"});
+      continue;
+    }
+
+    const conn = await pool.getConnection();
+    try {
+      await conn.beginTransaction();
+      const [existingUsers] = await conn.query(
+        `SELECT id
+        FROM users
+        WHERE email = ?
+        LIMIT 1`,
+        [email]
+      );
+      let userId;
+      if (existingUsers[0]) {
+        userId = existingUsers[0].id;
+      } else {
+        const tempPassword = await bcrypt.hash(Math.random().toString(36) + Date.now(), 10);
+        const role = type === "D" ? "DRIVER" : "SPONSOR";
+        const [newUser] = await conn.query(
+          `INSERT INTO users (email, password_hash, role, points)
+          VALUES (?, ?, ?, 0)`,
+          [email, tempPassword, role]
+        );
+        userId = newUser.insertId;
+      }
+
+      if (type === "D") {
+        const [existingDriver] = await conn.query (
+          `SELECT id
+          From drivers
+          WHERE user_id = ? AND sponsor_id = ?
+          LIMIT 1`,
+          [userId, sponsorId]
+        );
+        if (!existingDriver[0]) {
+          await conn.query(
+            `INSERT INTO drivers (user_id, sponsor_id, status, joined_on)
+            VALUES (?, ?, 'ACTIVE', NOW())
+            ON DUPLICATE KEY UPDATE status = 'ACTIVE', joined_on = NOW()`,
+            [userId, sponsorId]
+          );
+        }
+
+        if (points && reason) {
+          const pointsInt = parseNonNegativeInt(points);
+          if (pointsInt === null) {
+            errors.push({ line: lineNum, error: "Invalid points value"});
+            continue;
+          } else {
+            await conn.query (
+              `UPDATE users
+              SET points = points + ?
+              WHERE id = ?
+              LIMIT 1`,
+              [pointsInt, userId]
+            );
+
+            if (await tableExists("driver_points_history", conn)) {
+              await conn.query(
+                `INSERT INTo driver_points_history (driver_user_id, points_change, reason, created_at)
+                VALUES (?, ?, ?, NOW())`,
+                [userId, pointsInt, reason]
+              );
+            }
+          }
+        }
+      }
+
+      if (type === "S") {
+        await conn.query(
+          `UPDATE users
+          SET sponsor_id = ?
+          WHERE id = ? AND sponsor_id IS NULL
+          LIMIT 1`,
+          [sponsorId, userId]
+        );
+      }
+
+      await writeAudit({
+        category: "BULK_UPLOAD_ROW",
+        actorUserId: req.user.id,
+        targetUserId: userId,
+        sponsorId,
+        success: 1,
+        details: `bulk upload line ${lineNum}: type=${type} email=${email}`,
+        conn,
+      });
+
+      await conn.commit();
+      results.push({ line: lineNum, email, type, status: "ok" });
+    } catch (err) {
+      await conn.rollback();
+      errors.push({ line: lineNum, error: `Database error: ${err.message}` });
+    } finally {
+      conn.release();
+    }
+  }
+  
+  return res.json({ ok: true, processed: results.length, errors });
+
 });
 
 
