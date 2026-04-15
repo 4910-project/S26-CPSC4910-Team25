@@ -3,8 +3,8 @@ import "./Catalogue.css";
 import { useNavigate } from "react-router-dom";
 import { summarizeCartAvailability, isCartItemAvailable } from "./utils/cartAvailability";
  
-const API_BASE       = "http://localhost:8002/api/catalogue";
-const DRIVER_API     = "http://localhost:8001/api";
+const API_BASE       = "/api/catalogue";
+const DRIVER_API     = "/api";
 const ITUNES_API     = "https://itunes.apple.com/search";
 const POINTS_PER_USD = 100;
  

@@ -3,8 +3,8 @@ import "./SponsorProfile.css";
 import FeedbackForm from "./feedbackForm";
 import SponsorPostsManager from "./SponsorPostsManager";
 
-const SPONSOR_API   = "http://localhost:8001/sponsor";
-const BACKEND_BASE  = "http://localhost:8001";
+const SPONSOR_API   = "/sponsor";
+const BACKEND_BASE  = "";
 const ITUNES_API   = "https://itunes.apple.com/search";
 const CAT_CATEGORIES = [
   { label: "Music",  media: "music",    entity: "song"      },

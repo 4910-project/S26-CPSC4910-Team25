@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from "react";
 import "./PasswordReset.css";
 
-const API_BASE = "http://localhost:8001/api/password-reset";
+const API_BASE = "/api/password-reset";
 
 export default function PasswordReset() {
   const [step, setStep] = useState("request"); // request, reset, success

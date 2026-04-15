@@ -2,7 +2,7 @@ import React, { useEffect, useState } from "react";
 import "./DriverPointsCard.css";
 
 // ✅ Change this if your API base differs
-const API_BASE = "http://localhost:8001";
+const API_BASE = "";
 
 export default function DriverPointsCard({ token }) {
   const [points, setPoints] = useState(null);

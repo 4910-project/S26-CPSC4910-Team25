@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback } from "react";
 
-const API_BASE = "http://localhost:8001/api/profile";
-const SPONSOR_API = "http://localhost:8001/sponsor";
+const API_BASE = "/api/profile";
+const SPONSOR_API = "/sponsor";
 
 function ApplyModal({ sponsor, token, onClose}) {
     const [form, setForm] = useState({ statement: ""});
@@ -14,7 +14,7 @@ function ApplyModal({ sponsor, token, onClose}) {
         setSubmitting(true);
         setError("");
         try {
-            const res = await fetch(`http://localhost:8001/api/apps`, {
+            const res = await fetch(`/api/apps`, {
                 method: "POST",
                 headers: {
                     "Content-Type": "application/json",
@@ -196,7 +196,7 @@ export default function SponsorshipApply({ token }) {
 
     const handleWithdraw = async (appId, sponsorId) => {
     try {
-        const res = await fetch(`http://localhost:8001/api/apps/${appId}/cancel`, {
+        const res = await fetch(`/api/apps/${appId}/cancel`, {
             headers: { Authorization: `Bearer ${token}` },
             method: "PATCH"
         });
@@ -217,7 +217,7 @@ export default function SponsorshipApply({ token }) {
         setError("");
 
         try {
-            const res = await fetch(`http://localhost:8001/api/driver/sponsors`, {
+            const res = await fetch(`/api/driver/sponsors`, {
                 headers: { Authorization: `Bearer ${token}` },
             });
 
@@ -237,7 +237,7 @@ export default function SponsorshipApply({ token }) {
 
     const fetchApplied = useCallback(async () => {
         try {
-            const res = await fetch(`http://localhost:8001/api/driver/applications`, {
+            const res = await fetch(`/api/driver/applications`, {
                 headers: { Authorization: `Bearer ${token}` },
             });
             const appsData = await res.json();

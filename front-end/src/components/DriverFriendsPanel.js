@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useState } from "react";
 
-const API_BASE = "http://localhost:8001/api";
+const API_BASE = "/api";
 
 const cardStyle = {
   border: "1px solid var(--border, #e5e7eb)",

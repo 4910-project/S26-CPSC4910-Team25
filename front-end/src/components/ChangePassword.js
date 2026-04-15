@@ -1,7 +1,7 @@
 import React, { useState } from "react";
 import "./ChangePassword.css";
 
-const API_BASE = "http://localhost:8001/api/profile";
+const API_BASE = "/api/profile";
 
 export default function ChangePassword({ token, onClose }) {
   const [formData, setFormData] = useState({

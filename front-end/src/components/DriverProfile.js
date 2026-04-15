@@ -5,8 +5,8 @@ import DriverFriendsPanel from "./DriverFriendsPanel";
 import SponsorFeedPanel from "./SponsorFeedPanel";
 import { summarizeCartAvailability, isCartItemAvailable } from "../utils/cartAvailability";
 
-const API_BASE = "http://localhost:8001/api";
-const BACKEND_BASE = "http://localhost:8001";
+const API_BASE = "/api";
+const BACKEND_BASE = "";
 
 // ── Star rating component ─────────────────────────────────────────────────
 function StarRating({ value, onChange, readOnly = false }) {

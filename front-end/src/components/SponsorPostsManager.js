@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useState } from "react";
 
-const SPONSOR_API = "http://localhost:8001/sponsor";
+const SPONSOR_API = "/sponsor";
 
 function formatTimestamp(value) {
   const date = new Date(value);
