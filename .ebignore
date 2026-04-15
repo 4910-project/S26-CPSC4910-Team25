@@ -1,0 +1,10 @@
+# Exclude dependencies and secrets
+node_modules/
+.env
+
+# Exclude React source — only the build output is needed
+front-end/src/
+front-end/node_modules/
+front-end/public/
+
+# Include front-end/build (no rule needed — absence of exclusion includes it)

@@ -26,6 +26,7 @@ const mfaRoutes = require("./routes/mfa");
 const sponsorRoutes = require("./routes/sponsor");
 const profileRoutes = require("./routes/profile");
 const driverAppsRoutes = require("./routes/driverApps");
+const catalogueRoutes = require("./routes/catalogue");
 
 const app = express();
 
@@ -90,6 +91,9 @@ app.use("/api", driverRoutes);
 app.use("/sponsor", sponsorRoutes);
 
 app.use("/api/apps", driverAppsRoutes);
+
+// Catalogue (merged from backend/catalogue)
+app.use("/api/catalogue", catalogueRoutes);
 
 
 app.get("/health", async (req, res) => {
@@ -225,6 +229,14 @@ async function addColumnIfMissing(table, column, definition) {
 const minutes = Number(process.env.SPONSOR_ARCHIVE_JOB_MINUTES || 10);
 setInterval(runArchiveSponsorsJob, minutes * 60 * 1000);
 runArchiveSponsorsJob();
+
+// Serve React production build (must come after all API routes)
+app.use(express.static(path.join(__dirname, "../../front-end/build")));
+
+// Catch-all: let React Router handle non-API routes
+app.get(/.*/, (req, res) => {
+  res.sendFile(path.join(__dirname, "../../front-end/build", "index.html"));
+});
 
 const PORT = process.env.PORT || 8001;
 app.listen(PORT, () => {

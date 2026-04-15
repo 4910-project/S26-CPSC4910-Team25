@@ -1,0 +1,8 @@
+{
+  "name": "team25-gdip",
+  "version": "1.0.0",
+  "scripts": {
+    "install": "npm install --prefix backend",
+    "start": "node backend/src/index.js"
+  }
+}

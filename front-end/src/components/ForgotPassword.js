@@ -2,7 +2,7 @@ import React, { useState } from "react";
 import "../login.css";
 import { useNavigate } from 'react-router-dom';
 
-const API_BASE = "http://localhost:8001/auth";
+const API_BASE = "/auth";
 
 export default function ForgotPassword() {
   const navigate = useNavigate();

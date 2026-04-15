@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from "react";
 import "./MFASettings.css";
 
-const API_BASE = "http://localhost:8001/api";
+const API_BASE = "/api";
 
 const MFA_OPTIONS = [
   {

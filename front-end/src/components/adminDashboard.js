@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback } from "react";
 
-const ADMIN_API = "http://localhost:8001/admin";
+const ADMIN_API = "/admin";
 
 const CATEGORIES = [
   "All",
