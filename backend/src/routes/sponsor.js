@@ -89,7 +89,12 @@ function escapeCsvCell(value) {
   return raw;
 }
 
-async function loadSponsorPointsReportData(sponsorId) {
+/**
+ * Load points report data for a sponsor, with optional filters.
+ * @param {number} sponsorId
+ * @param {{ driverUserId?: number, startDate?: string, endDate?: string }} filters
+ */
+async function loadSponsorPointsReportData(sponsorId, filters = {}) {
   const [[sponsor]] = await pool.query(
     "SELECT id, name FROM sponsors WHERE id = ? LIMIT 1",
     [sponsorId]
@@ -97,11 +102,39 @@ async function loadSponsorPointsReportData(sponsorId) {
   if (!sponsor) return null;
 
   const hasHistory = await tableExists("driver_points_history");
+
+  // ── Driver summary rows ──────────────────────────────────────────────────────
+  const driverWhere = ["d.sponsor_id = ?"];
+  const driverParams = [sponsorId];
+  if (filters.driverUserId) {
+    driverWhere.push("d.user_id = ?");
+    driverParams.push(filters.driverUserId);
+  }
+  const driverWhereClause = `WHERE ${driverWhere.join(" AND ")}`;
+
+  // ── History filter extras ───────────────────────────────────────────────────
+  const histWhere = ["d.sponsor_id = ?"];
+  const histParams = [sponsorId];
+  if (filters.driverUserId) {
+    histWhere.push("h.driver_user_id = ?");
+    histParams.push(filters.driverUserId);
+  }
+  if (filters.startDate) {
+    histWhere.push("h.created_at >= ?");
+    histParams.push(`${filters.startDate} 00:00:00`);
+  }
+  if (filters.endDate) {
+    histWhere.push("h.created_at <= ?");
+    histParams.push(`${filters.endDate} 23:59:59`);
+  }
+  const histWhereClause = `WHERE ${histWhere.join(" AND ")}`;
+
   const [driverRows] = hasHistory
     ? await pool.query(
         `
         SELECT
           d.id AS driverId,
+          d.user_id AS driverUserId,
           u.email,
           LOWER(d.status) AS driverStatus,
           u.points AS currentPoints,
@@ -110,17 +143,25 @@ async function loadSponsorPointsReportData(sponsorId) {
           COALESCE(SUM(h.points_change), 0) AS netChange
         FROM drivers d
         JOIN users u ON u.id = d.user_id
-        LEFT JOIN driver_points_history h ON h.driver_user_id = d.user_id
-        WHERE d.sponsor_id = ?
-        GROUP BY d.id, u.email, d.status, u.points
+        LEFT JOIN driver_points_history h
+          ON h.driver_user_id = d.user_id
+          ${filters.startDate ? "AND h.created_at >= ?" : ""}
+          ${filters.endDate   ? "AND h.created_at <= ?" : ""}
+        ${driverWhereClause}
+        GROUP BY d.id, d.user_id, u.email, d.status, u.points
         ORDER BY u.email ASC
         `,
-        [sponsorId]
+        [
+          ...(filters.startDate ? [`${filters.startDate} 00:00:00`] : []),
+          ...(filters.endDate   ? [`${filters.endDate} 23:59:59`]   : []),
+          ...driverParams,
+        ]
       )
     : await pool.query(
         `
         SELECT
           d.id AS driverId,
+          d.user_id AS driverUserId,
           u.email,
           LOWER(d.status) AS driverStatus,
           u.points AS currentPoints,
@@ -129,10 +170,10 @@ async function loadSponsorPointsReportData(sponsorId) {
           0 AS netChange
         FROM drivers d
         JOIN users u ON u.id = d.user_id
-        WHERE d.sponsor_id = ?
+        ${driverWhereClause}
         ORDER BY u.email ASC
         `,
-        [sponsorId]
+        driverParams
       );
 
   const [historyRows] = hasHistory
@@ -146,11 +187,11 @@ async function loadSponsorPointsReportData(sponsorId) {
         FROM driver_points_history h
         JOIN users u ON u.id = h.driver_user_id
         JOIN drivers d ON d.user_id = h.driver_user_id
-        WHERE d.sponsor_id = ?
+        ${histWhereClause}
         ORDER BY h.created_at DESC
-        LIMIT 120
+        LIMIT 500
         `,
-        [sponsorId]
+        histParams
       )
     : [[]];
 
@@ -1063,7 +1104,15 @@ router.get("/reports/points.csv", async (req, res) => {
   if (!sponsorId) return res.status(400).json({ ok: false, error: "sponsor account is not linked" });
 
   try {
-    const reportData = await loadSponsorPointsReportData(sponsorId);
+    const filters = {};
+    if (req.query.driverId) {
+      const did = parsePositiveInt(req.query.driverId);
+      if (did) filters.driverUserId = did;
+    }
+    if (req.query.startDate) filters.startDate = req.query.startDate;
+    if (req.query.endDate)   filters.endDate   = req.query.endDate;
+
+    const reportData = await loadSponsorPointsReportData(sponsorId, filters);
     if (!reportData) return res.status(404).json({ ok: false, error: "sponsor not found" });
 
     const { sponsor, driverRows, historyRows } = reportData;
@@ -1109,7 +1158,15 @@ router.get("/reports/points.pdf", async (req, res) => {
   if (!sponsorId) return res.status(400).json({ ok: false, error: "sponsor account is not linked" });
 
   try {
-    const reportData = await loadSponsorPointsReportData(sponsorId);
+    const filters = {};
+    if (req.query.driverId) {
+      const did = parsePositiveInt(req.query.driverId);
+      if (did) filters.driverUserId = did;
+    }
+    if (req.query.startDate) filters.startDate = req.query.startDate;
+    if (req.query.endDate)   filters.endDate   = req.query.endDate;
+
+    const reportData = await loadSponsorPointsReportData(sponsorId, filters);
     if (!reportData) return res.status(404).json({ ok: false, error: "sponsor not found" });
 
     const { sponsor, driverRows, historyRows } = reportData;
@@ -1910,6 +1967,91 @@ router.post("/bulk-upload", upload.single("file"), async (req, res) => {
 
   return res.json({ ok: true, processed: results.length, results, errors });
 
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// SPONSOR AUDIT LOG REPORT
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * GET /sponsor/reports/audit
+ * Returns audit log entries scoped to this sponsor only.
+ * Query params: startDate=YYYY-MM-DD, endDate=YYYY-MM-DD, category=..., format=csv
+ */
+router.get("/reports/audit", async (req, res) => {
+  const sponsorId = getSponsorIdFromSession(req);
+  if (!sponsorId) return res.status(400).json({ ok: false, error: "sponsor account is not linked" });
+
+  try {
+    const { category, format } = req.query;
+
+    const conditions = ["al.sponsor_id = ?"];
+    const params = [sponsorId];
+
+    if (category && category !== "ALL") {
+      conditions.push("al.category = ?");
+      params.push(category.toUpperCase());
+    }
+    if (req.query.startDate) {
+      conditions.push("al.created_at >= ?");
+      params.push(`${req.query.startDate} 00:00:00`);
+    }
+    if (req.query.endDate) {
+      conditions.push("al.created_at <= ?");
+      params.push(`${req.query.endDate} 23:59:59`);
+    }
+
+    const where = `WHERE ${conditions.join(" AND ")}`;
+
+    const [rows] = await pool.query(
+      `SELECT
+         al.id,
+         al.created_at AS occurredAt,
+         al.category,
+         al.success,
+         al.details,
+         actor.email  AS actorEmail,
+         target.email AS targetEmail
+       FROM audit_logs al
+       LEFT JOIN users actor  ON actor.id  = al.actor_user_id
+       LEFT JOIN users target ON target.id = al.target_user_id
+       ${where}
+       ORDER BY al.created_at DESC
+       LIMIT 500`,
+      params
+    );
+
+    if (format === "csv") {
+      const header = ["Date", "Category", "Actor", "Target", "Success", "Details"];
+      const csvRows = [
+        header,
+        ...rows.map((r) => [
+          new Date(r.occurredAt).toLocaleString(),
+          r.category,
+          r.actorEmail  ?? "",
+          r.targetEmail ?? "",
+          r.success ? "Yes" : "No",
+          r.details ?? "",
+        ]),
+      ];
+      const dateLabel = new Date().toISOString().slice(0, 10);
+      const filename  = `audit-log-${dateLabel}.csv`;
+      const csv = csvRows
+        .map((row) => row.map((cell) => {
+          const raw = String(cell ?? "");
+          return /[",\n]/.test(raw) ? `"${raw.replace(/"/g, '""')}"` : raw;
+        }).join(","))
+        .join("\n");
+      res.setHeader("Content-Type", "text/csv; charset=utf-8");
+      res.setHeader("Content-Disposition", `attachment; filename="${filename}"`);
+      return res.status(200).send(csv);
+    }
+
+    return res.json({ ok: true, rows });
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({ ok: false, error: "failed to fetch audit report" });
+  }
 });
 
 

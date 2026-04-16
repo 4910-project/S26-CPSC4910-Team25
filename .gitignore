@@ -1,3 +1,40 @@
+# ── Dependencies ────────────────────────────────────────────────────────────────
 node_modules/
+
+# ── Environment / secrets ────────────────────────────────────────────────────────
 .env
+.env.*
 check-env.js
+
+# ── Build output ─────────────────────────────────────────────────────────────────
+front-end/build/
+backend/public/
+
+# ── Uploads (runtime-generated, not source) ──────────────────────────────────────
+backend/uploads/
+
+# ── Logs ────────────────────────────────────────────────────────────────────────
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# ── OS / editor junk ────────────────────────────────────────────────────────────
+.DS_Store
+Thumbs.db
+desktop.ini
+*.swp
+*.swo
+.idea/
+.vscode/
+
+# ── Claude Code (AI dev tool — personal to each developer) ───────────────────────
+CLAUDE.md
+.claude/
+
+# ── Project requirement PDFs (reference docs, not source code) ───────────────────
+projectReqs/
+
+# ── AWS Elastic Beanstalk deployment artifacts ──────────────────────────────────
+*.zip
+.elasticbeanstalk/

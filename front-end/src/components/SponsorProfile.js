@@ -52,6 +52,20 @@ export default function SponsorProfile({ token, onLogout, onChangeUsername, onAs
   const [reverseReasonInput, setReverseReasonInput] = useState({}); // { [driverId]: "reason" }
   const [reversingDriverId, setReversingDriverId] = useState(null);
   const [exportingReport, setExportingReport] = useState(false);
+
+  // ── Report filters ─────────────────────────────────────────────────────────
+  const [rptDriverId,    setRptDriverId]    = useState("");
+  const [rptStartDate,   setRptStartDate]   = useState("");
+  const [rptEndDate,     setRptEndDate]     = useState("");
+  // Audit log section
+  const [auditData,      setAuditData]      = useState(null);
+  const [auditLoading,   setAuditLoading]   = useState(false);
+  const [auditError,     setAuditError]     = useState("");
+  const [auditCategory,  setAuditCategory]  = useState("ALL");
+  const [auditStartDate, setAuditStartDate] = useState("");
+  const [auditEndDate,   setAuditEndDate]   = useState("");
+  const [auditDownloading, setAuditDownloading] = useState(false);
+
   const [probationReasonInput, setProbationReasonInput] = useState({});
   const [dropReasonInput, setDropReasonInput] = useState({});
   const [probatingDriverId, setProbatingDriverId] = useState(null);
@@ -571,12 +585,20 @@ export default function SponsorProfile({ token, onLogout, onChangeUsername, onAs
     }
   };
 
+  const buildPointsReportParams = () => {
+    const p = new URLSearchParams();
+    if (rptDriverId)  p.set("driverId",  rptDriverId);
+    if (rptStartDate) p.set("startDate", rptStartDate);
+    if (rptEndDate)   p.set("endDate",   rptEndDate);
+    return p.toString() ? `?${p.toString()}` : "";
+  };
+
   const handleExportReportPdf = async () => {
     setDriverError("");
     setDriverSuccess("");
     setExportingReport(true);
     try {
-      const res = await fetch(`${SPONSOR_API}/reports/points.pdf`, {
+      const res = await fetch(`${SPONSOR_API}/reports/points.pdf${buildPointsReportParams()}`, {
         headers: { Authorization: `Bearer ${token}` },
       });
 
@@ -613,7 +635,7 @@ export default function SponsorProfile({ token, onLogout, onChangeUsername, onAs
     setDriverSuccess("");
     setExportingReportCsv(true);
     try {
-      const res = await fetch(`${SPONSOR_API}/reports/points.csv`, {
+      const res = await fetch(`${SPONSOR_API}/reports/points.csv${buildPointsReportParams()}`, {
         headers: { Authorization: `Bearer ${token}` },
       });
 
@@ -642,6 +664,55 @@ export default function SponsorProfile({ token, onLogout, onChangeUsername, onAs
       setDriverError(err.message);
     } finally {
       setExportingReportCsv(false);
+    }
+  };
+
+  const handleFetchAuditLog = async () => {
+    setAuditLoading(true);
+    setAuditError("");
+    setAuditData(null);
+    try {
+      const p = new URLSearchParams();
+      if (auditCategory && auditCategory !== "ALL") p.set("category", auditCategory);
+      if (auditStartDate) p.set("startDate", auditStartDate);
+      if (auditEndDate)   p.set("endDate",   auditEndDate);
+      const res = await fetch(`${SPONSOR_API}/reports/audit?${p.toString()}`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Failed to load audit log");
+      setAuditData(data.rows || []);
+    } catch (err) {
+      setAuditError(err.message);
+    } finally {
+      setAuditLoading(false);
+    }
+  };
+
+  const handleDownloadAuditCsv = async () => {
+    setAuditDownloading(true);
+    try {
+      const p = new URLSearchParams({ format: "csv" });
+      if (auditCategory && auditCategory !== "ALL") p.set("category", auditCategory);
+      if (auditStartDate) p.set("startDate", auditStartDate);
+      if (auditEndDate)   p.set("endDate",   auditEndDate);
+      const res = await fetch(`${SPONSOR_API}/reports/audit?${p.toString()}`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (!res.ok) throw new Error("Failed to download CSV");
+      const blob = await res.blob();
+      const url  = window.URL.createObjectURL(blob);
+      const a    = document.createElement("a");
+      a.href     = url;
+      a.download = `audit-log-${new Date().toISOString().slice(0, 10)}.csv`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      window.URL.revokeObjectURL(url);
+    } catch (err) {
+      setAuditError(err.message);
+    } finally {
+      setAuditDownloading(false);
     }
   };
 
@@ -1524,58 +1595,142 @@ export default function SponsorProfile({ token, onLogout, onChangeUsername, onAs
         )}
 
         {/* Reports tab */}
-        {!driverLoading && activeTab === "reports" && (
-          <div
-            style={{
-              border: "1px solid #e5e7eb",
-              borderRadius: 12,
-              padding: 18,
-              background: "var(--card, #fff)",
-              maxWidth: 700,
-            }}
-          >
-            <h3 style={{ margin: "0 0 6px", fontSize: 18 }}>Sponsor Reports</h3>
-            <p style={{ margin: "0 0 16px", color: "#6b7280", fontSize: 14 }}>
-              Export your sponsor driver points summary and recent point activity as either a CSV or PDF file.
-            </p>
-            <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
-              <button
-                type="button"
-                disabled={exportingReportCsv}
-                onClick={handleExportReportCsv}
-                style={{
-                  padding: "10px 16px",
-                  borderRadius: 8,
-                  border: "1px solid #d1d5db",
-                  background: "var(--card, #fff)",
-                  color: "var(--text, #111827)",
-                  fontWeight: 700,
-                  cursor: exportingReportCsv ? "not-allowed" : "pointer",
-                  opacity: exportingReportCsv ? 0.7 : 1,
-                }}
-              >
-                {exportingReportCsv ? "Preparing CSV..." : "Export Report as CSV"}
-              </button>
-              <button
-                type="button"
-                disabled={exportingReport}
-                onClick={handleExportReportPdf}
-                style={{
-                  padding: "10px 16px",
-                  borderRadius: 8,
-                  border: "none",
-                  background: "#111827",
-                  color: "#fff",
-                  fontWeight: 700,
-                  cursor: exportingReport ? "not-allowed" : "pointer",
-                  opacity: exportingReport ? 0.7 : 1,
-                }}
-              >
-                {exportingReport ? "Preparing PDF..." : "Export Report as PDF"}
-              </button>
+        {!driverLoading && activeTab === "reports" && (() => {
+          const thStyle = { padding: "10px 12px", textAlign: "left", fontWeight: 700, fontSize: 13, borderBottom: "2px solid #e5e7eb", background: "#f9fafb", whiteSpace: "nowrap" };
+          const tdStyle = { padding: "8px 12px", fontSize: 13, borderBottom: "1px solid #f3f4f6", verticalAlign: "top" };
+          const tdAlt   = { ...tdStyle, background: "#f9fafb" };
+          const inputStyle = { padding: "6px 10px", borderRadius: 8, border: "1px solid #d1d5db", fontSize: 13, background: "var(--card,#fff)", color: "var(--text,#111)" };
+          const AUDIT_CATS = ["ALL","LOGIN_SUCCESS","LOGIN_FAIL","PASSWORD_CHANGE","POINTS_AWARDED","POINTS_REVERSED","DRIVER_APP_ACCEPTED","DRIVER_APP_REJECTED","ADMIN_ASSUME_IDENTITY","SPONSOR_ASSUME_DRIVER"];
+          const BADGE = {
+            LOGIN_SUCCESS:       { bg: "#d1fae5", color: "#065f46" },
+            LOGIN_FAIL:          { bg: "#fee2e2", color: "#991b1b" },
+            PASSWORD_CHANGE:     { bg: "#dbeafe", color: "#1e40af" },
+            POINTS_AWARDED:      { bg: "#ede9fe", color: "#4c1d95" },
+            POINTS_REVERSED:     { bg: "#fef3c7", color: "#92400e" },
+            DRIVER_APP_ACCEPTED: { bg: "#d1fae5", color: "#065f46" },
+            DRIVER_APP_REJECTED: { bg: "#fee2e2", color: "#991b1b" },
+          };
+          const badge = (cat) => {
+            const s = BADGE[cat] || { bg: "#f3f4f6", color: "#374151" };
+            return <span style={{ padding: "2px 8px", borderRadius: 10, fontSize: 11, fontWeight: 700, background: s.bg, color: s.color, whiteSpace: "nowrap" }}>{cat}</span>;
+          };
+
+          return (
+            <div style={{ maxWidth: 900 }}>
+              <h3 style={{ margin: "0 0 4px", fontSize: 18 }}>Sponsor Reports</h3>
+              <p style={{ margin: "0 0 24px", color: "#6b7280", fontSize: 14 }}>
+                Generate and export driver point tracking and audit log reports.
+              </p>
+
+              {/* ── Driver Point Tracking ──────────────────────────────────────── */}
+              <div style={{ border: "1px solid #e5e7eb", borderRadius: 12, padding: 18, marginBottom: 24, background: "var(--card,#fff)" }}>
+                <h4 style={{ margin: "0 0 4px", fontSize: 15 }}>Driver Point Tracking</h4>
+                <p style={{ margin: "0 0 14px", color: "#6b7280", fontSize: 13 }}>
+                  Export points summary and history. Filter by driver and/or date range before downloading.
+                </p>
+
+                <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginBottom: 14, alignItems: "flex-end" }}>
+                  <div>
+                    <label style={{ display: "block", fontSize: 12, fontWeight: 600, color: "#6b7280", marginBottom: 4 }}>Driver</label>
+                    <select value={rptDriverId} onChange={(e) => setRptDriverId(e.target.value)} style={inputStyle}>
+                      <option value="">All Drivers</option>
+                      {drivers.map((d) => <option key={d.driverId} value={d.userId}>{d.email || d.userId}</option>)}
+                    </select>
+                  </div>
+                  <div>
+                    <label style={{ display: "block", fontSize: 12, fontWeight: 600, color: "#6b7280", marginBottom: 4 }}>Start Date</label>
+                    <input type="date" value={rptStartDate} onChange={(e) => setRptStartDate(e.target.value)} style={inputStyle} />
+                  </div>
+                  <div>
+                    <label style={{ display: "block", fontSize: 12, fontWeight: 600, color: "#6b7280", marginBottom: 4 }}>End Date</label>
+                    <input type="date" value={rptEndDate} onChange={(e) => setRptEndDate(e.target.value)} style={inputStyle} />
+                  </div>
+                </div>
+
+                {driverError && <div style={{ padding: "8px 12px", borderRadius: 8, background: "#fef2f2", color: "#991b1b", marginBottom: 12, fontSize: 13 }}>{driverError}</div>}
+                {driverSuccess && <div style={{ padding: "8px 12px", borderRadius: 8, background: "#f0fdf4", color: "#15803d", marginBottom: 12, fontSize: 13 }}>{driverSuccess}</div>}
+
+                <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+                  <button type="button" disabled={exportingReportCsv} onClick={handleExportReportCsv}
+                    style={{ padding: "9px 18px", borderRadius: 8, border: "1px solid #d1d5db", background: "var(--card,#fff)", color: "var(--text,#111)", fontWeight: 700, fontSize: 13, cursor: exportingReportCsv ? "not-allowed" : "pointer", opacity: exportingReportCsv ? 0.7 : 1 }}>
+                    {exportingReportCsv ? "Preparing CSV…" : "⬇ Export CSV"}
+                  </button>
+                  <button type="button" disabled={exportingReport} onClick={handleExportReportPdf}
+                    style={{ padding: "9px 18px", borderRadius: 8, border: "none", background: "#111827", color: "#fff", fontWeight: 700, fontSize: 13, cursor: exportingReport ? "not-allowed" : "pointer", opacity: exportingReport ? 0.7 : 1 }}>
+                    {exportingReport ? "Preparing PDF…" : "⬇ Export PDF"}
+                  </button>
+                </div>
+              </div>
+
+              {/* ── Audit Log ─────────────────────────────────────────────────── */}
+              <div style={{ border: "1px solid #e5e7eb", borderRadius: 12, padding: 18, background: "var(--card,#fff)" }}>
+                <h4 style={{ margin: "0 0 4px", fontSize: 15 }}>Audit Log</h4>
+                <p style={{ margin: "0 0 14px", color: "#6b7280", fontSize: 13 }}>
+                  View and export audit events for your organization's drivers only.
+                </p>
+
+                <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginBottom: 14, alignItems: "flex-end" }}>
+                  <div>
+                    <label style={{ display: "block", fontSize: 12, fontWeight: 600, color: "#6b7280", marginBottom: 4 }}>Category</label>
+                    <select value={auditCategory} onChange={(e) => setAuditCategory(e.target.value)} style={inputStyle}>
+                      {AUDIT_CATS.map((c) => <option key={c} value={c}>{c}</option>)}
+                    </select>
+                  </div>
+                  <div>
+                    <label style={{ display: "block", fontSize: 12, fontWeight: 600, color: "#6b7280", marginBottom: 4 }}>Start Date</label>
+                    <input type="date" value={auditStartDate} onChange={(e) => setAuditStartDate(e.target.value)} style={inputStyle} />
+                  </div>
+                  <div>
+                    <label style={{ display: "block", fontSize: 12, fontWeight: 600, color: "#6b7280", marginBottom: 4 }}>End Date</label>
+                    <input type="date" value={auditEndDate} onChange={(e) => setAuditEndDate(e.target.value)} style={inputStyle} />
+                  </div>
+                  <div style={{ display: "flex", gap: 8 }}>
+                    <button type="button" onClick={handleFetchAuditLog} disabled={auditLoading}
+                      style={{ padding: "8px 18px", borderRadius: 8, border: "none", background: "#4f46e5", color: "#fff", fontWeight: 700, fontSize: 13, cursor: auditLoading ? "not-allowed" : "pointer", opacity: auditLoading ? 0.6 : 1 }}>
+                      {auditLoading ? "Loading…" : "Run Report"}
+                    </button>
+                    <button type="button" onClick={handleDownloadAuditCsv} disabled={auditDownloading}
+                      style={{ padding: "8px 14px", borderRadius: 8, border: "1px solid #d1d5db", background: "var(--card,#fff)", color: "var(--text,#111)", fontWeight: 600, fontSize: 13, cursor: auditDownloading ? "not-allowed" : "pointer", opacity: auditDownloading ? 0.6 : 1 }}>
+                      {auditDownloading ? "Exporting…" : "⬇ CSV"}
+                    </button>
+                  </div>
+                </div>
+
+                {auditError && <div style={{ padding: "8px 12px", borderRadius: 8, background: "#fef2f2", color: "#991b1b", marginBottom: 12, fontSize: 13 }}>{auditError}</div>}
+
+                {auditData && auditData.length === 0 && (
+                  <p style={{ color: "#6b7280", fontSize: 13 }}>No audit entries found for the selected filters.</p>
+                )}
+
+                {auditData && auditData.length > 0 && (
+                  <div style={{ overflowX: "auto", marginTop: 8 }}>
+                    <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
+                      <thead>
+                        <tr>{["Date", "Category", "Actor", "Target", "✓", "Details"].map((h) => <th key={h} style={thStyle}>{h}</th>)}</tr>
+                      </thead>
+                      <tbody>
+                        {auditData.map((r, i) => (
+                          <tr key={r.id}>
+                            <td style={i % 2 ? tdAlt : tdStyle}>{new Date(r.occurredAt).toLocaleString()}</td>
+                            <td style={i % 2 ? tdAlt : tdStyle}>{badge(r.category)}</td>
+                            <td style={i % 2 ? tdAlt : tdStyle}>{r.actorEmail ?? <span style={{ color: "#9ca3af" }}>system</span>}</td>
+                            <td style={i % 2 ? tdAlt : tdStyle}>{r.targetEmail ?? "—"}</td>
+                            <td style={i % 2 ? tdAlt : tdStyle}>{r.success ? "✅" : "❌"}</td>
+                            <td style={{ ...(i % 2 ? tdAlt : tdStyle), maxWidth: 260, wordBreak: "break-word" }}>{r.details ?? ""}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+
+                {!auditData && !auditLoading && (
+                  <p style={{ color: "#9ca3af", fontSize: 13 }}>Click <strong>Run Report</strong> to load audit entries.</p>
+                )}
+              </div>
             </div>
-          </div>
-        )}
+          );
+        })()}
 
         {/* -- Bulk Upload Tab -- */}
         {activeTab === "bulk upload" && (

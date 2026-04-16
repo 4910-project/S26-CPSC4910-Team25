@@ -90,6 +90,24 @@ export default function AdminDashboard({ token, onLogout, onAssumeUser }) {
   // Assume Identity state
   const [assumingId, setAssumingId] = useState(null);
 
+  // ── Reports state ────────────────────────────────────────────────────────────
+  const [reportSection, setReportSection] = useState("sales-by-sponsor");
+  // shared filter fields
+  const [rptSponsorId,  setRptSponsorId]  = useState("");
+  const [rptDriverId,   setRptDriverId]   = useState("");
+  const [rptStartDate,  setRptStartDate]  = useState("");
+  const [rptEndDate,    setRptEndDate]    = useState("");
+  const [rptView,       setRptView]       = useState("summary");
+  const [rptCategory,   setRptCategory]   = useState("ALL");
+  // data + status
+  const [rptData,       setRptData]       = useState(null);
+  const [rptLoading,    setRptLoading]    = useState(false);
+  const [rptError,      setRptError]      = useState("");
+  const [rptDownloading, setRptDownloading] = useState(false);
+  // sponsor + driver lists for dropdowns
+  const [rptSponsors,   setRptSponsors]   = useState([]);
+  const [rptDrivers,    setRptDrivers]    = useState([]);
+
   const fetchFeedback = useCallback(async () => {
     setLoading(true);
     setError("");
@@ -455,14 +473,90 @@ export default function AdminDashboard({ token, onLogout, onAssumeUser }) {
     }
   };
 
+  // ── Reports: load sponsor + driver lists when tab opens ─────────────────────
+  useEffect(() => {
+    if (activeTab !== "reports") return;
+    // load sponsor list for filter dropdown
+    fetch(`${ADMIN_API}/sponsors`, { headers: { Authorization: `Bearer ${token}` } })
+      .then((r) => r.json())
+      .then((d) => setRptSponsors(d.sponsors || []))
+      .catch(() => {});
+    // load driver list for filter dropdown
+    fetch(`${ADMIN_API}/drivers`, { headers: { Authorization: `Bearer ${token}` } })
+      .then((r) => r.json())
+      .then((d) => setRptDrivers(d.drivers || []))
+      .catch(() => {});
+  }, [activeTab, token]);
+
+  // Reset data when section or key filters change
+  useEffect(() => {
+    setRptData(null);
+    setRptError("");
+  }, [reportSection, rptSponsorId, rptDriverId, rptStartDate, rptEndDate, rptView, rptCategory]);
+
+  const buildRptParams = () => {
+    const p = new URLSearchParams();
+    if (rptSponsorId) p.set("sponsorId", rptSponsorId);
+    if (rptDriverId)  p.set("driverId",  rptDriverId);
+    if (rptStartDate) p.set("startDate", rptStartDate);
+    if (rptEndDate)   p.set("endDate",   rptEndDate);
+    if (rptView)      p.set("view",      rptView);
+    if (rptCategory && rptCategory !== "ALL") p.set("category", rptCategory);
+    return p;
+  };
+
+  const handleRunReport = async () => {
+    setRptLoading(true);
+    setRptError("");
+    setRptData(null);
+    try {
+      const params = buildRptParams();
+      const res = await fetch(`${ADMIN_API}/reports/${reportSection}?${params.toString()}`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Failed to load report");
+      setRptData(data);
+    } catch (err) {
+      setRptError(err.message);
+    } finally {
+      setRptLoading(false);
+    }
+  };
+
+  const handleDownloadCsv = async () => {
+    setRptDownloading(true);
+    try {
+      const params = buildRptParams();
+      params.set("format", "csv");
+      const res = await fetch(`${ADMIN_API}/reports/${reportSection}?${params.toString()}`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (!res.ok) throw new Error("Failed to download CSV");
+      const blob = await res.blob();
+      const url  = window.URL.createObjectURL(blob);
+      const a    = document.createElement("a");
+      a.href     = url;
+      a.download = `${reportSection}-${new Date().toISOString().slice(0, 10)}.csv`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      window.URL.revokeObjectURL(url);
+    } catch (err) {
+      setRptError(err.message);
+    } finally {
+      setRptDownloading(false);
+    }
+  };
+
   const totalPages = Math.ceil(total / limit);
 
   return (
-    <div style={{ maxWidth: 1000, margin: "30px auto", padding: 20 }}>
+    <div style={{ maxWidth: 1100, margin: "30px auto", padding: 20 }}>
       <h1 style={{ margin: 0, marginBottom: 4 }}>Admin Dashboard</h1>
 
-      <div style={{ display: "flex", gap: 8, marginTop: 16, marginBottom: 24 }}>
-        {["feedback", "sponsors", "drivers", "bulk upload", "settings"].map((tab) => (
+      <div style={{ display: "flex", gap: 8, marginTop: 16, marginBottom: 24, flexWrap: "wrap" }}>
+        {["feedback", "sponsors", "drivers", "bulk upload", "reports", "settings"].map((tab) => (
           <button
             key={tab}
             type="button"
@@ -486,6 +580,8 @@ export default function AdminDashboard({ token, onLogout, onAssumeUser }) {
               ? "Driver Management"
               : tab === "bulk upload"
               ? "Bulk Upload"
+              : tab === "reports"
+              ? "📊 Reports"
               : "Settings"}
           </button>
         ))}
@@ -1294,6 +1390,334 @@ export default function AdminDashboard({ token, onLogout, onAssumeUser }) {
             )}
           </div>
         )}
+
+      {/* ── Reports tab ── */}
+      {activeTab === "reports" && (() => {
+        const AUDIT_CATS = ["ALL","LOGIN_SUCCESS","LOGIN_FAIL","PASSWORD_CHANGE","POINTS_AWARDED","POINTS_REVERSED","DRIVER_APP_ACCEPTED","DRIVER_APP_REJECTED","ADMIN_ASSUME_IDENTITY","SPONSOR_ASSUME_DRIVER","BULK_UPLOAD_ROW","SPONSOR_LOCK_TOGGLE","POINT_VALUE_CHANGED"];
+        const thStyle = { padding: "10px 12px", textAlign: "left", fontWeight: 700, fontSize: 13, borderBottom: "2px solid #e5e7eb", background: "#f9fafb", whiteSpace: "nowrap" };
+        const tdStyle = { padding: "8px 12px", fontSize: 13, borderBottom: "1px solid #f3f4f6", verticalAlign: "top" };
+        const tdAlt   = { ...tdStyle, background: "#f9fafb" };
+
+        const filterCard = (
+          <div style={{ background: "var(--card,#fff)", border: "1px solid var(--border,#e5e7eb)", borderRadius: 12, padding: 18, marginBottom: 20 }}>
+            <div style={{ display: "flex", gap: 12, flexWrap: "wrap", alignItems: "flex-end" }}>
+              {/* Sponsor filter — all sections */}
+              <div>
+                <label style={{ display: "block", fontSize: 12, fontWeight: 600, color: "var(--muted,#6b7280)", marginBottom: 4 }}>Sponsor</label>
+                <select value={rptSponsorId} onChange={(e) => { setRptSponsorId(e.target.value); setRptDriverId(""); }} style={selectStyle}>
+                  <option value="">All Sponsors</option>
+                  {rptSponsors.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
+                </select>
+              </div>
+
+              {/* Driver filter — sales-by-driver only */}
+              {reportSection === "sales-by-driver" && (
+                <div>
+                  <label style={{ display: "block", fontSize: 12, fontWeight: 600, color: "var(--muted,#6b7280)", marginBottom: 4 }}>Driver</label>
+                  <select value={rptDriverId} onChange={(e) => setRptDriverId(e.target.value)} style={selectStyle}>
+                    <option value="">All Drivers</option>
+                    {rptDrivers
+                      .filter((d) => !rptSponsorId || String(d.sponsor_id) === String(rptSponsorId))
+                      .map((d) => <option key={d.user_id} value={d.user_id}>{d.email}</option>)}
+                  </select>
+                </div>
+              )}
+
+              {/* Date range */}
+              <div>
+                <label style={{ display: "block", fontSize: 12, fontWeight: 600, color: "var(--muted,#6b7280)", marginBottom: 4 }}>Start Date</label>
+                <input type="date" value={rptStartDate} onChange={(e) => setRptStartDate(e.target.value)} style={{ ...selectStyle, padding: "6px 10px" }} />
+              </div>
+              <div>
+                <label style={{ display: "block", fontSize: 12, fontWeight: 600, color: "var(--muted,#6b7280)", marginBottom: 4 }}>End Date</label>
+                <input type="date" value={rptEndDate} onChange={(e) => setRptEndDate(e.target.value)} style={{ ...selectStyle, padding: "6px 10px" }} />
+              </div>
+
+              {/* View toggle — sales sections */}
+              {(reportSection === "sales-by-sponsor" || reportSection === "sales-by-driver") && (
+                <div>
+                  <label style={{ display: "block", fontSize: 12, fontWeight: 600, color: "var(--muted,#6b7280)", marginBottom: 4 }}>View</label>
+                  <select value={rptView} onChange={(e) => setRptView(e.target.value)} style={selectStyle}>
+                    <option value="summary">Summary</option>
+                    <option value="detail">Detail</option>
+                  </select>
+                </div>
+              )}
+
+              {/* Category filter — audit section */}
+              {reportSection === "audit" && (
+                <div>
+                  <label style={{ display: "block", fontSize: 12, fontWeight: 600, color: "var(--muted,#6b7280)", marginBottom: 4 }}>Category</label>
+                  <select value={rptCategory} onChange={(e) => setRptCategory(e.target.value)} style={selectStyle}>
+                    {AUDIT_CATS.map((c) => <option key={c} value={c}>{c}</option>)}
+                  </select>
+                </div>
+              )}
+
+              <div style={{ display: "flex", gap: 8, marginLeft: "auto" }}>
+                <button type="button" onClick={handleRunReport} disabled={rptLoading}
+                  style={{ padding: "8px 20px", borderRadius: 8, border: "none", background: "#4f46e5", color: "#fff", fontWeight: 700, fontSize: 13, cursor: rptLoading ? "not-allowed" : "pointer", opacity: rptLoading ? 0.6 : 1 }}>
+                  {rptLoading ? "Loading…" : "Run Report"}
+                </button>
+                <button type="button" onClick={handleDownloadCsv} disabled={rptDownloading}
+                  style={{ padding: "8px 16px", borderRadius: 8, border: "1px solid var(--border,#d1d5db)", background: "var(--card,#fff)", color: "var(--text,#111)", fontWeight: 600, fontSize: 13, cursor: rptDownloading ? "not-allowed" : "pointer", opacity: rptDownloading ? 0.6 : 1 }}>
+                  {rptDownloading ? "Exporting…" : "⬇ CSV"}
+                </button>
+              </div>
+            </div>
+          </div>
+        );
+
+        return (
+          <div>
+            <h2 style={{ marginTop: 0, marginBottom: 4 }}>Reports</h2>
+            <p style={{ color: "var(--muted,#6b7280)", fontSize: 14, marginTop: 0, marginBottom: 20 }}>
+              Generate and export system-wide reports. All reports can be downloaded as CSV.
+            </p>
+
+            {/* Sub-section nav */}
+            <div style={{ display: "flex", gap: 6, marginBottom: 20, flexWrap: "wrap" }}>
+              {[
+                { key: "sales-by-sponsor", label: "Sales by Sponsor" },
+                { key: "sales-by-driver",  label: "Sales by Driver" },
+                { key: "invoice",          label: "Invoice" },
+                { key: "audit",            label: "Audit Log" },
+              ].map(({ key, label }) => (
+                <button key={key} type="button"
+                  onClick={() => { setReportSection(key); setRptData(null); setRptError(""); }}
+                  style={{ padding: "6px 16px", borderRadius: 20, border: `1px solid ${reportSection === key ? "#4f46e5" : "var(--border,#d1d5db)"}`, background: reportSection === key ? "#ede9fe" : "var(--card,#fff)", color: reportSection === key ? "#4f46e5" : "var(--text,#111)", fontWeight: 600, fontSize: 13, cursor: "pointer" }}>
+                  {label}
+                </button>
+              ))}
+            </div>
+
+            {filterCard}
+
+            {rptError && (
+              <div style={{ padding: "10px 14px", borderRadius: 8, background: "#fef2f2", color: "#991b1b", marginBottom: 16 }}>
+                {rptError}
+              </div>
+            )}
+
+            {/* ── Sales by Sponsor ── */}
+            {reportSection === "sales-by-sponsor" && rptData && (() => {
+              if (rptData.view === "summary") {
+                const rows = rptData.rows || [];
+                const totPurchases = rows.reduce((s, r) => s + Number(r.totalPurchases), 0);
+                const totDollars   = rows.reduce((s, r) => s + Number(r.totalDollars), 0).toFixed(2);
+                const totFee       = rows.reduce((s, r) => s + Number(r.companyFee), 0).toFixed(2);
+                return (
+                  <div>
+                    <div style={{ display: "flex", gap: 12, marginBottom: 16, flexWrap: "wrap" }}>
+                      {[["Total Sponsors", rows.length], ["Total Purchases", totPurchases], ["Total Sales", `$${totDollars}`], ["Company Fee (1%)", `$${totFee}`]].map(([label, val]) => (
+                        <div key={label} style={{ flex: 1, minWidth: 120, background: "var(--card,#fff)", border: "1px solid var(--border,#e5e7eb)", borderRadius: 10, padding: "12px 16px" }}>
+                          <div style={{ fontSize: 11, color: "var(--muted,#6b7280)", fontWeight: 600, textTransform: "uppercase", letterSpacing: 0.5 }}>{label}</div>
+                          <div style={{ fontSize: 22, fontWeight: 800, color: "var(--text,#111)", marginTop: 4 }}>{val}</div>
+                        </div>
+                      ))}
+                    </div>
+                    {rows.length === 0 ? <p style={{ color: "var(--muted,#6b7280)" }}>No purchases found for the selected filters.</p> : (
+                      <div style={{ overflowX: "auto" }}>
+                        <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
+                          <thead>
+                            <tr>
+                              {["Sponsor", "Purchases", "Points Redeemed", "Total Sales", "Company Fee (1%)"].map((h) => <th key={h} style={thStyle}>{h}</th>)}
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {rows.map((r, i) => (
+                              <tr key={r.sponsorId}>
+                                <td style={i % 2 ? tdAlt : tdStyle}><strong>{r.sponsorName}</strong></td>
+                                <td style={i % 2 ? tdAlt : tdStyle}>{r.totalPurchases}</td>
+                                <td style={i % 2 ? tdAlt : tdStyle}>{r.totalPoints?.toLocaleString()} pts</td>
+                                <td style={i % 2 ? tdAlt : tdStyle}>${Number(r.totalDollars).toFixed(2)}</td>
+                                <td style={{ ...(i % 2 ? tdAlt : tdStyle), color: "#16a34a", fontWeight: 700 }}>${Number(r.companyFee).toFixed(2)}</td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    )}
+                  </div>
+                );
+              }
+              // detail
+              const rows = rptData.rows || [];
+              return rows.length === 0 ? <p style={{ color: "var(--muted,#6b7280)" }}>No purchases found.</p> : (
+                <div style={{ overflowX: "auto" }}>
+                  <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
+                    <thead>
+                      <tr>{["Sponsor", "Driver", "Item", "Artist", "Kind", "Points", "Value", "Date"].map((h) => <th key={h} style={thStyle}>{h}</th>)}</tr>
+                    </thead>
+                    <tbody>
+                      {rows.map((r, i) => (
+                        <tr key={i}>
+                          <td style={i % 2 ? tdAlt : tdStyle}>{r.sponsorName}</td>
+                          <td style={i % 2 ? tdAlt : tdStyle}>{r.driverEmail}</td>
+                          <td style={i % 2 ? tdAlt : tdStyle}>{r.itemName}</td>
+                          <td style={i % 2 ? tdAlt : tdStyle}>{r.artist ?? "—"}</td>
+                          <td style={i % 2 ? tdAlt : tdStyle}>{r.kind ?? "—"}</td>
+                          <td style={i % 2 ? tdAlt : tdStyle}>{r.pointsCost} pts</td>
+                          <td style={i % 2 ? tdAlt : tdStyle}>${Number(r.dollarValue).toFixed(2)}</td>
+                          <td style={i % 2 ? tdAlt : tdStyle}>{new Date(r.purchasedAt).toLocaleDateString()}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              );
+            })()}
+
+            {/* ── Sales by Driver ── */}
+            {reportSection === "sales-by-driver" && rptData && (() => {
+              if (rptData.view === "summary") {
+                const rows = rptData.rows || [];
+                return rows.length === 0 ? <p style={{ color: "var(--muted,#6b7280)" }}>No purchases found.</p> : (
+                  <div style={{ overflowX: "auto" }}>
+                    <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
+                      <thead>
+                        <tr>{["Driver", "Sponsor", "Purchases", "Points Redeemed", "Total Sales"].map((h) => <th key={h} style={thStyle}>{h}</th>)}</tr>
+                      </thead>
+                      <tbody>
+                        {rows.map((r, i) => (
+                          <tr key={`${r.driverUserId}-${i}`}>
+                            <td style={i % 2 ? tdAlt : tdStyle}><strong>{r.driverEmail}</strong></td>
+                            <td style={i % 2 ? tdAlt : tdStyle}>{r.sponsorName}</td>
+                            <td style={i % 2 ? tdAlt : tdStyle}>{r.totalPurchases}</td>
+                            <td style={i % 2 ? tdAlt : tdStyle}>{r.totalPoints?.toLocaleString()} pts</td>
+                            <td style={i % 2 ? tdAlt : tdStyle}>${Number(r.totalDollars).toFixed(2)}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                );
+              }
+              const rows = rptData.rows || [];
+              return rows.length === 0 ? <p style={{ color: "var(--muted,#6b7280)" }}>No purchases found.</p> : (
+                <div style={{ overflowX: "auto" }}>
+                  <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
+                    <thead>
+                      <tr>{["Driver", "Sponsor", "Item", "Artist", "Kind", "Points", "Value", "Date"].map((h) => <th key={h} style={thStyle}>{h}</th>)}</tr>
+                    </thead>
+                    <tbody>
+                      {rows.map((r, i) => (
+                        <tr key={i}>
+                          <td style={i % 2 ? tdAlt : tdStyle}>{r.driverEmail}</td>
+                          <td style={i % 2 ? tdAlt : tdStyle}>{r.sponsorName}</td>
+                          <td style={i % 2 ? tdAlt : tdStyle}>{r.itemName}</td>
+                          <td style={i % 2 ? tdAlt : tdStyle}>{r.artist ?? "—"}</td>
+                          <td style={i % 2 ? tdAlt : tdStyle}>{r.kind ?? "—"}</td>
+                          <td style={i % 2 ? tdAlt : tdStyle}>{r.pointsCost} pts</td>
+                          <td style={i % 2 ? tdAlt : tdStyle}>${Number(r.dollarValue).toFixed(2)}</td>
+                          <td style={i % 2 ? tdAlt : tdStyle}>{new Date(r.purchasedAt).toLocaleDateString()}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              );
+            })()}
+
+            {/* ── Invoice ── */}
+            {reportSection === "invoice" && rptData && (() => {
+              const invoices = rptData.invoices || [];
+              if (invoices.length === 0) return <p style={{ color: "var(--muted,#6b7280)" }}>No purchases found for the selected filters.</p>;
+              return (
+                <div style={{ display: "flex", flexDirection: "column", gap: 24 }}>
+                  {invoices.map((inv) => (
+                    <div key={inv.sponsorId} style={{ border: "1px solid var(--border,#e5e7eb)", borderRadius: 12, overflow: "hidden" }}>
+                      <div style={{ background: "#4f46e5", color: "#fff", padding: "12px 18px", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                        <div>
+                          <div style={{ fontWeight: 800, fontSize: 16 }}>{inv.sponsorName}</div>
+                          <div style={{ fontSize: 12, opacity: 0.8, marginTop: 2 }}>Invoice — Generated {new Date().toLocaleDateString()}</div>
+                        </div>
+                        <div style={{ textAlign: "right" }}>
+                          <div style={{ fontSize: 11, opacity: 0.8 }}>Total Fee Due</div>
+                          <div style={{ fontWeight: 800, fontSize: 22 }}>${Number(inv.totalFee).toFixed(2)}</div>
+                        </div>
+                      </div>
+                      <div style={{ overflowX: "auto" }}>
+                        <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
+                          <thead>
+                            <tr>{["Driver", "Purchases", "Points Redeemed", "Driver Sales", "Fee (1%)"].map((h) => <th key={h} style={thStyle}>{h}</th>)}</tr>
+                          </thead>
+                          <tbody>
+                            {inv.drivers.map((d, i) => (
+                              <tr key={d.driverUserId}>
+                                <td style={i % 2 ? tdAlt : tdStyle}>{d.driverEmail}</td>
+                                <td style={i % 2 ? tdAlt : tdStyle}>{d.purchaseCount}</td>
+                                <td style={i % 2 ? tdAlt : tdStyle}>{d.totalPoints?.toLocaleString()} pts</td>
+                                <td style={i % 2 ? tdAlt : tdStyle}>${Number(d.driverSales).toFixed(2)}</td>
+                                <td style={{ ...(i % 2 ? tdAlt : tdStyle), color: "#16a34a", fontWeight: 700 }}>${Number(d.driverFee).toFixed(2)}</td>
+                              </tr>
+                            ))}
+                          </tbody>
+                          <tfoot>
+                            <tr style={{ background: "#f0fdf4" }}>
+                              <td colSpan={3} style={{ padding: "10px 12px", fontWeight: 700, fontSize: 13 }}>TOTAL</td>
+                              <td style={{ padding: "10px 12px", fontWeight: 700, fontSize: 13 }}>${Number(inv.totalSales).toFixed(2)}</td>
+                              <td style={{ padding: "10px 12px", fontWeight: 800, fontSize: 14, color: "#15803d" }}>${Number(inv.totalFee).toFixed(2)}</td>
+                            </tr>
+                          </tfoot>
+                        </table>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              );
+            })()}
+
+            {/* ── Audit Log ── */}
+            {reportSection === "audit" && rptData && (() => {
+              const rows = rptData.rows || [];
+              const BADGE = {
+                LOGIN_SUCCESS:        { bg: "#d1fae5", color: "#065f46" },
+                LOGIN_FAIL:           { bg: "#fee2e2", color: "#991b1b" },
+                PASSWORD_CHANGE:      { bg: "#dbeafe", color: "#1e40af" },
+                POINTS_AWARDED:       { bg: "#ede9fe", color: "#4c1d95" },
+                POINTS_REVERSED:      { bg: "#fef3c7", color: "#92400e" },
+                DRIVER_APP_ACCEPTED:  { bg: "#d1fae5", color: "#065f46" },
+                DRIVER_APP_REJECTED:  { bg: "#fee2e2", color: "#991b1b" },
+                ADMIN_ASSUME_IDENTITY:{ bg: "#f3e8ff", color: "#6b21a8" },
+                SPONSOR_ASSUME_DRIVER:{ bg: "#f3e8ff", color: "#6b21a8" },
+              };
+              const badge = (cat) => {
+                const s = BADGE[cat] || { bg: "#f3f4f6", color: "#374151" };
+                return <span style={{ padding: "2px 8px", borderRadius: 10, fontSize: 11, fontWeight: 700, background: s.bg, color: s.color, whiteSpace: "nowrap" }}>{cat}</span>;
+              };
+              return rows.length === 0 ? <p style={{ color: "var(--muted,#6b7280)" }}>No audit entries found.</p> : (
+                <div style={{ overflowX: "auto" }}>
+                  <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
+                    <thead>
+                      <tr>{["Date", "Category", "Actor", "Target", "Sponsor", "✓", "Details"].map((h) => <th key={h} style={thStyle}>{h}</th>)}</tr>
+                    </thead>
+                    <tbody>
+                      {rows.map((r, i) => (
+                        <tr key={r.id}>
+                          <td style={i % 2 ? tdAlt : tdStyle}>{new Date(r.occurredAt).toLocaleString()}</td>
+                          <td style={i % 2 ? tdAlt : tdStyle}>{badge(r.category)}</td>
+                          <td style={i % 2 ? tdAlt : tdStyle}>{r.actorEmail ?? <span style={{ color: "#9ca3af" }}>system</span>}</td>
+                          <td style={i % 2 ? tdAlt : tdStyle}>{r.targetEmail ?? "—"}</td>
+                          <td style={i % 2 ? tdAlt : tdStyle}>{r.sponsorName ?? "—"}</td>
+                          <td style={i % 2 ? tdAlt : tdStyle}>{r.success ? "✅" : "❌"}</td>
+                          <td style={{ ...(i % 2 ? tdAlt : tdStyle), maxWidth: 300, wordBreak: "break-word" }}>{r.details ?? ""}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              );
+            })()}
+
+            {!rptLoading && !rptData && !rptError && (
+              <p style={{ color: "var(--muted,#6b7280)", fontSize: 14 }}>
+                Select filters above and click <strong>Run Report</strong> to view results.
+              </p>
+            )}
+          </div>
+        );
+      })()}
 
       {/* ── Settings tab ── */}
       {activeTab === "settings" && (

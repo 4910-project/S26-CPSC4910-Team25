@@ -1409,4 +1409,381 @@ router.post("/driver/:id/assign-sponsor", async (req, res) => {
   }
 });
 
+// ─────────────────────────────────────────────────────────────────────────────
+// REPORTS
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Helper: build date-range WHERE clauses from ?startDate=YYYY-MM-DD&endDate=YYYY-MM-DD
+ */
+function buildDateRange(query, column, conditions, params) {
+  if (query.startDate) {
+    conditions.push(`${column} >= ?`);
+    params.push(`${query.startDate} 00:00:00`);
+  }
+  if (query.endDate) {
+    conditions.push(`${column} <= ?`);
+    params.push(`${query.endDate} 23:59:59`);
+  }
+}
+
+/**
+ * Helper: stream a CSV response.
+ */
+function sendCsv(res, filename, rows) {
+  const csv = rows
+    .map((row) => row.map((cell) => {
+      const raw = String(cell ?? "");
+      return /[",\n]/.test(raw) ? `"${raw.replace(/"/g, '""')}"` : raw;
+    }).join(","))
+    .join("\n");
+  res.setHeader("Content-Type", "text/csv; charset=utf-8");
+  res.setHeader("Content-Disposition", `attachment; filename="${filename}"`);
+  return res.status(200).send(csv);
+}
+
+/**
+ * GET /admin/reports/sales-by-sponsor
+ * Query params: sponsorId, startDate, endDate, view=summary|detail, format=csv
+ */
+router.get("/reports/sales-by-sponsor", async (req, res) => {
+  try {
+    const { sponsorId, view = "summary", format } = req.query;
+
+    const conditions = ["u.role = 'DRIVER'"];
+    const params = [];
+
+    if (sponsorId) {
+      const sid = parsePositiveInt(sponsorId);
+      if (!sid) return res.status(400).json({ ok: false, error: "invalid sponsorId" });
+      conditions.push("s.id = ?");
+      params.push(sid);
+    }
+    buildDateRange(req.query, "p.purchased_at", conditions, params);
+
+    const where = conditions.length ? `WHERE ${conditions.join(" AND ")}` : "";
+
+    if (view === "detail") {
+      const [rows] = await pool.query(
+        `SELECT
+           s.id   AS sponsorId,
+           s.name AS sponsorName,
+           u.email AS driverEmail,
+           p.item_name AS itemName,
+           p.artist,
+           p.kind,
+           p.cost AS pointsCost,
+           ROUND(p.cost * COALESCE(s.point_value, 0.01), 2) AS dollarValue,
+           p.purchased_at AS purchasedAt
+         FROM purchases p
+         JOIN users u ON u.id = p.user_id
+         JOIN sponsors s ON s.id = u.sponsor_id
+         ${where}
+         ORDER BY s.name ASC, p.purchased_at DESC`,
+        params
+      );
+
+      if (format === "csv") {
+        const header = ["Sponsor", "Driver Email", "Item", "Artist", "Kind", "Points Cost", "Dollar Value", "Date"];
+        const csvRows = [
+          header,
+          ...rows.map((r) => [
+            r.sponsorName, r.driverEmail, r.itemName, r.artist ?? "", r.kind ?? "",
+            r.pointsCost, `$${r.dollarValue}`,
+            new Date(r.purchasedAt).toLocaleDateString(),
+          ]),
+        ];
+        const dateLabel = new Date().toISOString().slice(0, 10);
+        return sendCsv(res, `sales-by-sponsor-detail-${dateLabel}.csv`, csvRows);
+      }
+      return res.json({ ok: true, view: "detail", rows });
+    }
+
+    // Summary view
+    const [rows] = await pool.query(
+      `SELECT
+         s.id   AS sponsorId,
+         s.name AS sponsorName,
+         COUNT(p.id)  AS totalPurchases,
+         SUM(p.cost)  AS totalPoints,
+         ROUND(SUM(p.cost * COALESCE(s.point_value, 0.01)), 2) AS totalDollars,
+         ROUND(SUM(p.cost * COALESCE(s.point_value, 0.01)) * 0.01, 2) AS companyFee
+       FROM purchases p
+       JOIN users u ON u.id = p.user_id
+       JOIN sponsors s ON s.id = u.sponsor_id
+       ${where}
+       GROUP BY s.id, s.name
+       ORDER BY totalDollars DESC`,
+      params
+    );
+
+    if (format === "csv") {
+      const header = ["Sponsor", "Total Purchases", "Total Points", "Total Sales ($)", "Company Fee (1%)"];
+      const csvRows = [
+        header,
+        ...rows.map((r) => [r.sponsorName, r.totalPurchases, r.totalPoints, `$${r.totalDollars}`, `$${r.companyFee}`]),
+      ];
+      const dateLabel = new Date().toISOString().slice(0, 10);
+      return sendCsv(res, `sales-by-sponsor-summary-${dateLabel}.csv`, csvRows);
+    }
+    return res.json({ ok: true, view: "summary", rows });
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({ ok: false, error: "failed to fetch sales-by-sponsor report" });
+  }
+});
+
+/**
+ * GET /admin/reports/sales-by-driver
+ * Query params: sponsorId, driverId, startDate, endDate, view=summary|detail, format=csv
+ */
+router.get("/reports/sales-by-driver", async (req, res) => {
+  try {
+    const { sponsorId, driverId, view = "summary", format } = req.query;
+
+    const conditions = ["u.role = 'DRIVER'"];
+    const params = [];
+
+    if (sponsorId) {
+      const sid = parsePositiveInt(sponsorId);
+      if (!sid) return res.status(400).json({ ok: false, error: "invalid sponsorId" });
+      conditions.push("s.id = ?");
+      params.push(sid);
+    }
+    if (driverId) {
+      const did = parsePositiveInt(driverId);
+      if (!did) return res.status(400).json({ ok: false, error: "invalid driverId" });
+      conditions.push("u.id = ?");
+      params.push(did);
+    }
+    buildDateRange(req.query, "p.purchased_at", conditions, params);
+
+    const where = conditions.length ? `WHERE ${conditions.join(" AND ")}` : "";
+
+    if (view === "detail") {
+      const [rows] = await pool.query(
+        `SELECT
+           s.name AS sponsorName,
+           u.id   AS driverUserId,
+           u.email AS driverEmail,
+           p.item_name AS itemName,
+           p.artist,
+           p.kind,
+           p.cost AS pointsCost,
+           ROUND(p.cost * COALESCE(s.point_value, 0.01), 2) AS dollarValue,
+           p.purchased_at AS purchasedAt
+         FROM purchases p
+         JOIN users u ON u.id = p.user_id
+         JOIN sponsors s ON s.id = u.sponsor_id
+         ${where}
+         ORDER BY u.email ASC, p.purchased_at DESC`,
+        params
+      );
+
+      if (format === "csv") {
+        const header = ["Sponsor", "Driver Email", "Item", "Artist", "Kind", "Points Cost", "Dollar Value", "Date"];
+        const csvRows = [
+          header,
+          ...rows.map((r) => [
+            r.sponsorName, r.driverEmail, r.itemName, r.artist ?? "", r.kind ?? "",
+            r.pointsCost, `$${r.dollarValue}`,
+            new Date(r.purchasedAt).toLocaleDateString(),
+          ]),
+        ];
+        const dateLabel = new Date().toISOString().slice(0, 10);
+        return sendCsv(res, `sales-by-driver-detail-${dateLabel}.csv`, csvRows);
+      }
+      return res.json({ ok: true, view: "detail", rows });
+    }
+
+    // Summary view
+    const [rows] = await pool.query(
+      `SELECT
+         s.name AS sponsorName,
+         u.id   AS driverUserId,
+         u.email AS driverEmail,
+         COUNT(p.id)  AS totalPurchases,
+         SUM(p.cost)  AS totalPoints,
+         ROUND(SUM(p.cost * COALESCE(s.point_value, 0.01)), 2) AS totalDollars
+       FROM purchases p
+       JOIN users u ON u.id = p.user_id
+       JOIN sponsors s ON s.id = u.sponsor_id
+       ${where}
+       GROUP BY s.id, s.name, u.id, u.email
+       ORDER BY u.email ASC`,
+      params
+    );
+
+    if (format === "csv") {
+      const header = ["Sponsor", "Driver Email", "Total Purchases", "Total Points", "Total Sales ($)"];
+      const csvRows = [
+        header,
+        ...rows.map((r) => [r.sponsorName, r.driverEmail, r.totalPurchases, r.totalPoints, `$${r.totalDollars}`]),
+      ];
+      const dateLabel = new Date().toISOString().slice(0, 10);
+      return sendCsv(res, `sales-by-driver-summary-${dateLabel}.csv`, csvRows);
+    }
+    return res.json({ ok: true, view: "summary", rows });
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({ ok: false, error: "failed to fetch sales-by-driver report" });
+  }
+});
+
+/**
+ * GET /admin/reports/invoice
+ * Query params: sponsorId, startDate, endDate, format=csv
+ * Groups purchases by sponsor → driver, calculates 1% company fee.
+ */
+router.get("/reports/invoice", async (req, res) => {
+  try {
+    const { sponsorId, format } = req.query;
+
+    const conditions = ["u.role = 'DRIVER'"];
+    const params = [];
+
+    if (sponsorId) {
+      const sid = parsePositiveInt(sponsorId);
+      if (!sid) return res.status(400).json({ ok: false, error: "invalid sponsorId" });
+      conditions.push("s.id = ?");
+      params.push(sid);
+    }
+    buildDateRange(req.query, "p.purchased_at", conditions, params);
+
+    const where = conditions.length ? `WHERE ${conditions.join(" AND ")}` : "";
+
+    const [rows] = await pool.query(
+      `SELECT
+         s.id   AS sponsorId,
+         s.name AS sponsorName,
+         u.id   AS driverUserId,
+         u.email AS driverEmail,
+         COUNT(p.id)  AS purchaseCount,
+         SUM(p.cost)  AS totalPoints,
+         ROUND(SUM(p.cost * COALESCE(s.point_value, 0.01)), 2) AS driverSales,
+         ROUND(SUM(p.cost * COALESCE(s.point_value, 0.01)) * 0.01, 2) AS driverFee
+       FROM purchases p
+       JOIN users u ON u.id = p.user_id
+       JOIN sponsors s ON s.id = u.sponsor_id
+       ${where}
+       GROUP BY s.id, s.name, u.id, u.email
+       ORDER BY s.name ASC, u.email ASC`,
+      params
+    );
+
+    // Aggregate totals per sponsor
+    const sponsorMap = new Map();
+    for (const row of rows) {
+      if (!sponsorMap.has(row.sponsorId)) {
+        sponsorMap.set(row.sponsorId, {
+          sponsorId: row.sponsorId,
+          sponsorName: row.sponsorName,
+          drivers: [],
+          totalSales: 0,
+          totalFee: 0,
+        });
+      }
+      const s = sponsorMap.get(row.sponsorId);
+      s.drivers.push(row);
+      s.totalSales = Math.round((s.totalSales + Number(row.driverSales)) * 100) / 100;
+      s.totalFee   = Math.round((s.totalFee   + Number(row.driverFee))   * 100) / 100;
+    }
+
+    const invoices = [...sponsorMap.values()];
+
+    if (format === "csv") {
+      const csvRows = [
+        ["Sponsor Invoice Report", `Generated: ${new Date().toLocaleString()}`],
+        [],
+      ];
+      for (const inv of invoices) {
+        csvRows.push([`Sponsor: ${inv.sponsorName}`]);
+        csvRows.push(["Driver Email", "Purchases", "Points Redeemed", "Driver Sales ($)", "Fee Due (1%)"]);
+        for (const d of inv.drivers) {
+          csvRows.push([d.driverEmail, d.purchaseCount, d.totalPoints, `$${d.driverSales}`, `$${d.driverFee}`]);
+        }
+        csvRows.push(["", "", "SPONSOR TOTAL", `$${inv.totalSales}`, `$${inv.totalFee}`]);
+        csvRows.push([]);
+      }
+      const dateLabel = new Date().toISOString().slice(0, 10);
+      return sendCsv(res, `invoice-${dateLabel}.csv`, csvRows);
+    }
+
+    return res.json({ ok: true, invoices });
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({ ok: false, error: "failed to fetch invoice report" });
+  }
+});
+
+/**
+ * GET /admin/reports/audit
+ * Query params: sponsorId, startDate, endDate, category, format=csv
+ */
+router.get("/reports/audit", async (req, res) => {
+  try {
+    const { sponsorId, category, format } = req.query;
+
+    const conditions = [];
+    const params = [];
+
+    if (sponsorId) {
+      const sid = parsePositiveInt(sponsorId);
+      if (!sid) return res.status(400).json({ ok: false, error: "invalid sponsorId" });
+      conditions.push("al.sponsor_id = ?");
+      params.push(sid);
+    }
+    if (category && category !== "ALL") {
+      conditions.push("al.category = ?");
+      params.push(category.toUpperCase());
+    }
+    buildDateRange(req.query, "al.created_at", conditions, params);
+
+    const where = conditions.length ? `WHERE ${conditions.join(" AND ")}` : "";
+
+    const [rows] = await pool.query(
+      `SELECT
+         al.id,
+         al.created_at AS occurredAt,
+         al.category,
+         al.success,
+         al.details,
+         actor.email AS actorEmail,
+         target.email AS targetEmail,
+         s.name AS sponsorName
+       FROM audit_logs al
+       LEFT JOIN users actor  ON actor.id  = al.actor_user_id
+       LEFT JOIN users target ON target.id = al.target_user_id
+       LEFT JOIN sponsors s   ON s.id      = al.sponsor_id
+       ${where}
+       ORDER BY al.created_at DESC
+       LIMIT 1000`,
+      params
+    );
+
+    if (format === "csv") {
+      const header = ["Date", "Category", "Actor", "Target", "Sponsor", "Success", "Details"];
+      const csvRows = [
+        header,
+        ...rows.map((r) => [
+          new Date(r.occurredAt).toLocaleString(),
+          r.category,
+          r.actorEmail ?? "",
+          r.targetEmail ?? "",
+          r.sponsorName ?? "",
+          r.success ? "Yes" : "No",
+          r.details ?? "",
+        ]),
+      ];
+      const dateLabel = new Date().toISOString().slice(0, 10);
+      return sendCsv(res, `audit-log-${dateLabel}.csv`, csvRows);
+    }
+
+    return res.json({ ok: true, rows });
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({ ok: false, error: "failed to fetch audit report" });
+  }
+});
+
 module.exports = router;
