@@ -376,33 +376,41 @@ router.use((req, res, next) => {
 
 /**
  * GET /api/driver/points
- * Returns current points for the authenticated driver.
+ * RC2: Returns the driver's points balance for their active sponsor.
+ * Falls back to users.points for backwards compatibility when no active sponsor is set.
  */
 router.get("/driver/points", async (req, res) => {
   try {
-    // Your JWT middleware sets: req.user = { id: payload.userId, role: payload.role }
     const userId = parsePositiveInt(req.user?.id);
     if (!userId) return res.status(401).json({ ok: false, error: "invalid user" });
 
-    const [driverRows] = await pool.query(
-      `SELECT status
-      FROM drivers
-      WHERE user_id = ?
-      ORDER BY id DESC
-      LIMIT 1`,
+    // Fetch user's active_sponsor_id and legacy points in one query
+    const [[user]] = await pool.query(
+      "SELECT points, active_sponsor_id FROM users WHERE id = ? LIMIT 1",
       [userId]
     );
-    const onProbation = driverRows[0]?.status === "PROBATION";
+    if (!user) return res.status(404).json({ ok: false, error: "User not found" });
 
-    // If your points are stored somewhere else later, swap this query
-    const [rows] = await pool.query(
-      "SELECT points FROM users WHERE id = ? LIMIT 1",
-      [userId]
-    );
+    // RC2: if an active sponsor is set, return the per-sponsor balance from drivers table
+    if (user.active_sponsor_id) {
+      const [[driverRow]] = await pool.query(
+        `SELECT points_balance, status
+         FROM drivers
+         WHERE user_id = ? AND sponsor_id = ?
+         LIMIT 1`,
+        [userId, user.active_sponsor_id]
+      );
+      if (driverRow) {
+        return res.json({
+          points: driverRow.points_balance ?? 0,
+          sponsorScoped: true,
+          activeSponsorId: user.active_sponsor_id,
+        });
+      }
+    }
 
-    if (!rows.length) return res.status(404).json({ ok: false, error: "User not found" });
-
-    return res.json({ points: rows[0].points ?? 0 });
+    // Fallback: legacy global points on users table
+    return res.json({ points: user.points ?? 0, sponsorScoped: false });
   } catch (e) {
     console.error(e);
     return res.status(500).json({ ok: false, error: "Server error" });
@@ -568,6 +576,60 @@ router.post("/driver/sponsors/:sponsorId/review", async (req, res) => {
   } catch (err) {
     console.error(err);
     return res.status(500).json({ ok: false, error: "failed to save review" });
+  }
+});
+
+/**
+ * POST /api/driver/apply/:sponsorId
+ * RC2 — Driver applies to join an additional sponsor.
+ * Creates a driver_applications row with status PENDING.
+ */
+router.post("/driver/apply/:sponsorId", async (req, res) => {
+  const driverUserId = parsePositiveInt(req.user?.id);
+  if (!driverUserId) return res.status(401).json({ ok: false, error: "invalid session" });
+
+  const sponsorId = parsePositiveInt(req.params.sponsorId);
+  if (!sponsorId) return res.status(400).json({ ok: false, error: "invalid sponsorId" });
+
+  try {
+    // Verify sponsor exists and is accepting drivers
+    const [[sponsor]] = await pool.query(
+      "SELECT id, accepting_drivers FROM sponsors WHERE id = ? AND status = 'ACTIVE' LIMIT 1",
+      [sponsorId]
+    );
+    if (!sponsor) return res.status(404).json({ ok: false, error: "Sponsor not found" });
+    if (!sponsor.accepting_drivers) {
+      return res.status(400).json({ ok: false, error: "This sponsor is not currently accepting drivers" });
+    }
+
+    // Already an active/probation member?
+    const [[existing]] = await pool.query(
+      "SELECT status FROM drivers WHERE user_id = ? AND sponsor_id = ? LIMIT 1",
+      [driverUserId, sponsorId]
+    );
+    if (existing && ["ACTIVE", "PROBATION"].includes(existing.status)) {
+      return res.status(409).json({ ok: false, error: "You are already a member of this sponsor" });
+    }
+
+    // Already have a pending application?
+    const [[pending]] = await pool.query(
+      "SELECT id FROM driver_applications WHERE driver_user_id = ? AND sponsor_id = ? AND status = 'PENDING' LIMIT 1",
+      [driverUserId, sponsorId]
+    );
+    if (pending) {
+      return res.status(409).json({ ok: false, error: "You already have a pending application with this sponsor" });
+    }
+
+    await pool.query(
+      `INSERT INTO driver_applications (driver_user_id, sponsor_id, status, applied_at)
+       VALUES (?, ?, 'PENDING', NOW())`,
+      [driverUserId, sponsorId]
+    );
+
+    return res.status(201).json({ ok: true, message: "Application submitted successfully" });
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({ ok: false, error: "Failed to submit application" });
   }
 });
 

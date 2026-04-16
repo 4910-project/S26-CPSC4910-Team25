@@ -1248,6 +1248,94 @@ router.get("/drivers/:driverId/rate", async (req, res) => {
 
 
 /**
+ * POST /sponsor/drivers/:driverId/award-points
+ * RC2 — Sponsor awards points to a specific driver.
+ * Writes to drivers.points_balance (per-sponsor) and keeps users.points in sync.
+ * Body: { points: number, reason: string }
+ */
+router.post("/drivers/:driverId/award-points", async (req, res) => {
+  const sponsorId = getSponsorIdFromSession(req);
+  if (!sponsorId) return res.status(400).json({ ok: false, error: "sponsor account is not linked" });
+
+  const driverId = parsePositiveInt(req.params.driverId);
+  if (!driverId) return res.status(400).json({ ok: false, error: "invalid driverId" });
+
+  const points = parsePositiveInt(req.body?.points);
+  if (!points) return res.status(400).json({ ok: false, error: "points must be a positive integer" });
+
+  const reason = String(req.body?.reason || "").trim();
+  if (!reason) return res.status(400).json({ ok: false, error: "reason is required" });
+
+  try {
+    // Verify driver belongs to this sponsor and is ACTIVE
+    const [[driver]] = await pool.query(
+      `SELECT d.id, d.user_id, d.status, d.points_balance
+       FROM drivers d
+       WHERE d.id = ? AND d.sponsor_id = ?
+       LIMIT 1`,
+      [driverId, sponsorId]
+    );
+    if (!driver) return res.status(404).json({ ok: false, error: "Driver not found under your organization" });
+    if (driver.status === "PROBATION") {
+      return res.status(400).json({ ok: false, error: "Cannot award points to a driver on probation" });
+    }
+    if (driver.status !== "ACTIVE") {
+      return res.status(400).json({ ok: false, error: `Driver must be ACTIVE to receive points (current: ${driver.status})` });
+    }
+
+    const driverUserId = driver.user_id;
+    const newBalance = (driver.points_balance || 0) + points;
+
+    const conn = await pool.getConnection();
+    try {
+      await conn.beginTransaction();
+
+      // Update per-sponsor balance on the drivers row
+      await conn.query(
+        "UPDATE drivers SET points_balance = ? WHERE id = ? LIMIT 1",
+        [newBalance, driverId]
+      );
+
+      // Keep legacy users.points in sync for backwards-compat endpoints
+      await conn.query(
+        "UPDATE users SET points = points + ? WHERE id = ? LIMIT 1",
+        [points, driverUserId]
+      );
+
+      // Log to driver_points_history for audit trail / report
+      if (await tableExists("driver_points_history")) {
+        await conn.query(
+          `INSERT INTO driver_points_history (driver_user_id, sponsor_id, points_change, reason, created_at)
+           VALUES (?, ?, ?, ?, NOW())`,
+          [driverUserId, sponsorId, points, reason]
+        );
+      }
+
+      await writeAudit({
+        category: "POINTS_AWARDED",
+        actorUserId: req.user.id,
+        targetUserId: driverUserId,
+        sponsorId,
+        success: 1,
+        details: `awarded ${points} pts to driverId=${driverId}; reason=${reason}`,
+        conn,
+      });
+
+      await conn.commit();
+      return res.json({ ok: true, awarded: points, newBalance });
+    } catch (err) {
+      await conn.rollback();
+      throw err;
+    } finally {
+      conn.release();
+    }
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({ ok: false, error: "Failed to award points" });
+  }
+});
+
+/**
  * GET /sponsor/catalog/hidden
  * Returns all hidden product IDs and their full details for this sponsor.
  */

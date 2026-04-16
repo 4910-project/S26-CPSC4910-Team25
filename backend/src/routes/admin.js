@@ -1282,4 +1282,131 @@ router.post("/bulk-upload", upload.single("file"), async (req, res) => {
 
 });
 
+// ─────────────────────────────────────────────────────────────────────────────
+// RC2 — Multiple Sponsors: admin endpoints
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * GET /admin/driver/:id/sponsors
+ * Returns all sponsor relationships for a given driver user ID.
+ * Includes per-sponsor points balance, status, and join date.
+ */
+router.get("/driver/:id/sponsors", async (req, res) => {
+  const driverUserId = parsePositiveInt(req.params.id);
+  if (!driverUserId) return res.status(400).json({ ok: false, error: "invalid driver id" });
+
+  try {
+    // Verify user exists and is a driver
+    const [[user]] = await pool.query(
+      "SELECT id, email, active_sponsor_id FROM users WHERE id = ? AND role = 'DRIVER' LIMIT 1",
+      [driverUserId]
+    );
+    if (!user) return res.status(404).json({ ok: false, error: "Driver not found" });
+
+    // Fetch all sponsor relationships from the drivers join table
+    const [sponsors] = await pool.query(
+      `SELECT
+         d.id             AS driverRowId,
+         s.id             AS sponsorId,
+         s.name           AS sponsorName,
+         s.status         AS sponsorStatus,
+         d.status         AS membershipStatus,
+         d.points_balance AS pointsBalance,
+         d.joined_on      AS joinedOn,
+         d.dropped_reason AS droppedReason
+       FROM drivers d
+       JOIN sponsors s ON s.id = d.sponsor_id
+       WHERE d.user_id = ?
+       ORDER BY d.joined_on DESC`,
+      [driverUserId]
+    );
+
+    return res.json({
+      ok: true,
+      email: user.email,
+      activeSponsorId: user.active_sponsor_id,
+      sponsors,
+    });
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({ ok: false, error: "Failed to fetch driver sponsors" });
+  }
+});
+
+/**
+ * POST /admin/driver/:id/assign-sponsor
+ * Body: { sponsorId }
+ * Admin assigns a driver to an additional sponsor (or re-activates a dropped one).
+ * Auto-accepts — no approval step needed for admin-initiated assignments.
+ */
+router.post("/driver/:id/assign-sponsor", async (req, res) => {
+  const driverUserId = parsePositiveInt(req.params.id);
+  if (!driverUserId) return res.status(400).json({ ok: false, error: "invalid driver id" });
+
+  const sponsorId = parsePositiveInt(req.body?.sponsorId);
+  if (!sponsorId) return res.status(400).json({ ok: false, error: "sponsorId is required" });
+
+  try {
+    // Verify driver exists
+    const [[driver]] = await pool.query(
+      "SELECT id, email FROM users WHERE id = ? AND role = 'DRIVER' LIMIT 1",
+      [driverUserId]
+    );
+    if (!driver) return res.status(404).json({ ok: false, error: "Driver not found" });
+
+    // Verify sponsor exists
+    const [[sponsor]] = await pool.query(
+      "SELECT id, name FROM sponsors WHERE id = ? LIMIT 1",
+      [sponsorId]
+    );
+    if (!sponsor) return res.status(404).json({ ok: false, error: "Sponsor not found" });
+
+    // Check for an existing drivers row
+    const [[existing]] = await pool.query(
+      "SELECT id, status FROM drivers WHERE user_id = ? AND sponsor_id = ? LIMIT 1",
+      [driverUserId, sponsorId]
+    );
+
+    if (existing) {
+      if (existing.status === "ACTIVE") {
+        return res.status(409).json({ ok: false, error: "Driver is already an active member of this sponsor" });
+      }
+      // Re-activate a dropped/blocked driver
+      await pool.query(
+        "UPDATE drivers SET status = 'ACTIVE', joined_on = NOW(), dropped_reason = NULL, dropped_at = NULL WHERE id = ? LIMIT 1",
+        [existing.id]
+      );
+    } else {
+      // Create a new driver-sponsor relationship
+      await pool.query(
+        "INSERT INTO drivers (user_id, sponsor_id, status, joined_on) VALUES (?, ?, 'ACTIVE', NOW())",
+        [driverUserId, sponsorId]
+      );
+    }
+
+    // If driver has no active sponsor yet, set this one
+    await pool.query(
+      "UPDATE users SET active_sponsor_id = ? WHERE id = ? AND active_sponsor_id IS NULL LIMIT 1",
+      [sponsorId, driverUserId]
+    );
+
+    await writeAudit({
+      category: "ADMIN_ASSIGN_SPONSOR",
+      actorUserId: req.user.id,
+      targetUserId: driverUserId,
+      sponsorId,
+      success: 1,
+      details: `admin assigned driverUserId=${driverUserId} to sponsorId=${sponsorId} (${sponsor.name})`,
+    });
+
+    return res.status(201).json({
+      ok: true,
+      message: `Driver ${driver.email} assigned to ${sponsor.name} successfully`,
+    });
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({ ok: false, error: "Failed to assign driver to sponsor" });
+  }
+});
+
 module.exports = router;
