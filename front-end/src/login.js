@@ -158,6 +158,11 @@ export default function Login({ onLogin }) {
               {showPassword ? "Hide" : "Show"}
             </button>
           </div>
+          {isRegister && (
+            <p style={{ fontSize: "0.75rem", color: "#6b7280", marginTop: "-8px" }}>
+              Min 8 chars · 1 uppercase · 1 lowercase · 1 number · 1 special character
+            </p>
+          )}
 
           {error && <p className="error">{error}</p>}
 

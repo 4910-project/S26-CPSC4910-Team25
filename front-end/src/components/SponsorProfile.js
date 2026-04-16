@@ -14,7 +14,7 @@ const CAT_CATEGORIES = [
   { label: "TV",     media: "tvShow",   entity: "tvEpisode" },
 ];
 
-export default function SponsorProfile({ token, onLogout, onChangeUsername }) {
+export default function SponsorProfile({ token, onLogout, onChangeUsername, onAssumeUser }) {
   // ─── Org photo state ────────────────────────────────────────────────────────
   const [orgPhotoUrl,       setOrgPhotoUrl]       = useState(null);
   const [orgPhotoUploading, setOrgPhotoUploading] = useState(false);
@@ -58,6 +58,9 @@ export default function SponsorProfile({ token, onLogout, onChangeUsername }) {
   const [droppingDriverId, setDroppingDriverId] = useState(null);
   const [exportingReportCsv, setExportingReportCsv] = useState(false);
 
+  // ─── Assume driver identity state ──────────────────────────────────────────
+  const [assumingDriverId, setAssumingDriverId] = useState(null);
+
   // ─── Catalog hide/unhide state ──────────────────────────────────────────────
   const [hiddenIds,      setHiddenIds]      = useState(new Set());
   const [hiddenProducts, setHiddenProducts] = useState({});   // { productId: fullDetails }
@@ -88,6 +91,18 @@ export default function SponsorProfile({ token, onLogout, onChangeUsername }) {
       });
       const data = await res.json();
       if (res.ok) {
+        // Also fetch point_value from dedicated endpoint
+        let pointValue = "0.01";
+        try {
+          const pvRes = await fetch(`${SPONSOR_API}/point-value`, {
+            headers: { Authorization: `Bearer ${token}` },
+          });
+          if (pvRes.ok) {
+            const pvData = await pvRes.json();
+            pointValue = String(pvData.point_value ?? "0.01");
+          }
+        } catch (_) { /* keep default */ }
+
         setProfile({
           company_name: data.sponsorName || "",
           contact_name: data.contactName || "",
@@ -96,7 +111,7 @@ export default function SponsorProfile({ token, onLogout, onChangeUsername }) {
           city: "",
           state: "",
           zip_code: "",
-          point_value: "0.01"
+          point_value: pointValue,
         });
         setOrgPhotoUrl(data.orgPhotoUrl || null);
         setIsEditing(false);
@@ -159,6 +174,17 @@ export default function SponsorProfile({ token, onLogout, onChangeUsername }) {
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || data.message || "Failed to save profile");
+
+      // Save point_value separately
+      const pv = parseFloat(profile.point_value);
+      if (!isNaN(pv) && pv >= 0 && pv <= 1) {
+        await fetch(`${SPONSOR_API}/point-value`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+          body: JSON.stringify({ point_value: pv }),
+        });
+      }
+
       setSuccess(data.message);
       setIsEditing(false);
       await fetchProfile();
@@ -221,7 +247,7 @@ export default function SponsorProfile({ token, onLogout, onChangeUsername }) {
         body: formData,
       });
       const data = await res.json();
-      if (!res.ok) throw new error(data.error || "Bulk upload failed");
+      if (!res.ok) throw new Error(data.error || "Bulk upload failed");
       setBulkUploadResult(data);
       if (data.processed > 0) fetchDrivers();
     } catch (err) {
@@ -655,6 +681,25 @@ export default function SponsorProfile({ token, onLogout, onChangeUsername }) {
   };
 
 
+  const handleAssumeDriver = async (driverUserId, driverEmail) => {
+    if (!window.confirm(`View the app as driver "${driverEmail}"? You will be redirected to their dashboard.`)) return;
+    setAssumingDriverId(driverUserId);
+    setDriverError("");
+    try {
+      const res = await fetch(`${SPONSOR_API}/assume-driver/${driverUserId}`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Failed to assume driver identity");
+      if (onAssumeUser) onAssumeUser(data.token, data.user?.role);
+    } catch (err) {
+      setDriverError(err.message);
+    } finally {
+      setAssumingDriverId(null);
+    }
+  };
+
   // ─── Status badge helper ────────────────────────────────────────────────────
   const StatusBadge = ({ status }) => {
     const colors = {
@@ -1004,6 +1049,28 @@ export default function SponsorProfile({ token, onLogout, onChangeUsername }) {
                         </div>
                       </td>
                       <td style={{ padding: "10px 12px" }}>
+                        {d.userId && (
+                          <button
+                            type="button"
+                            disabled={assumingDriverId === d.userId}
+                            onClick={() => handleAssumeDriver(d.userId, d.email)}
+                            style={{
+                              padding: "4px 10px",
+                              borderRadius: 6,
+                              border: "1px solid #a78bfa",
+                              background: "#ede9fe",
+                              color: "#5b21b6",
+                              fontWeight: 600,
+                              fontSize: 11,
+                              cursor: assumingDriverId === d.userId ? "not-allowed" : "pointer",
+                              opacity: assumingDriverId === d.userId ? 0.6 : 1,
+                              marginBottom: 6,
+                              display: "block",
+                            }}
+                          >
+                            {assumingDriverId === d.userId ? "Switching..." : "👤 View as Driver"}
+                          </button>
+                        )}
                         {!d.driverId ? (
                           <span style={{ color: "#9ca3af", fontSize: 12 }}>Pending application</span>
                         ) : d.status?.toLowerCase() === "dropped" ? (
@@ -1512,22 +1579,26 @@ export default function SponsorProfile({ token, onLogout, onChangeUsername }) {
 
         {/* -- Bulk Upload Tab -- */}
         {activeTab === "bulk upload" && (
-          <div style={{ maxWidth: 600 }}>
+          <div style={{ maxWidth: 640 }}>
             <h3 style={{ margin: "0 0 6px", fontSize: 18 }}>Bulk Upload</h3>
             <p style={{ margin: "0 0 16px", color: "#6b7280", fontSize: 14 }}>
-              Upload a pipe-delimited text file to bulk create drivers or sponsors
-              Use <strong>D</strong> for drivers and <strong>S</strong> for sponsors
+              Upload a pipe-delimited (<code>|</code>) text file to create drivers or sponsor users in bulk.
+              One record per line.
             </p>
             <div style={{
               background: "#f8fafc", border: "1px solid #e5e7eb",
-              borderRadius: 10, padding: 14, marginBottom: 16, fontSize: 13, color: "#374151"
+              borderRadius: 10, padding: 14, marginBottom: 16, fontSize: 13, color: "#374151",
+              lineHeight: 1.7,
             }}>
-              <strong>File format:</strong><br />
-              <code>D||firstName|lastName|email|points (optional)|reason (optional)</code><br />
-              <code>S||firstName|lastName|email</code><br />
-              <span style={{ color: "6b7280", marginTop: 6, display: "block" }}>
-                Leave organization name blank
-              </span>
+              <strong>File format</strong> (one record per line):<br />
+              <code style={{ display: "block", marginTop: 6 }}>D|firstName|lastName|email|points (optional)|reason (required if points given)</code>
+              <code style={{ display: "block" }}>S|firstName|lastName|email</code>
+              <ul style={{ margin: "8px 0 0 16px", padding: 0, color: "#6b7280", fontSize: 12 }}>
+                <li><strong>D</strong> — create a driver and auto-accept into your organization</li>
+                <li><strong>S</strong> — create a sponsor user linked to your organization (no points allowed)</li>
+                <li>If the driver already exists, points are added to their balance</li>
+                <li>O (organization) type is not allowed for sponsors</li>
+              </ul>
             </div>
 
             <label style={{
@@ -1539,7 +1610,7 @@ export default function SponsorProfile({ token, onLogout, onChangeUsername }) {
               {bulkUploading ? "Uploading..." : "Choose File & Upload"}
               <input
                 type="file"
-                accept=".txt,.csv"
+                accept=".txt,.csv,.tsv"
                 style={{ display: "none" }}
                 onChange={handleBulkUpload}
                 disabled={bulkUploading}
@@ -1553,13 +1624,33 @@ export default function SponsorProfile({ token, onLogout, onChangeUsername }) {
                   background: "#d1fae5", color: "#065f46",
                   marginBottom: 12, fontWeight: 600
                 }}>
-                  {bulkUploadResult.processed} row{bulkUploadResult.processed !== 1 ? "s" : ""} processed successfully
+                  ✅ {bulkUploadResult.processed} row{bulkUploadResult.processed !== 1 ? "s" : ""} processed successfully
                 </div>
+
+                {/* Successful rows */}
+                {bulkUploadResult.results && bulkUploadResult.results.length > 0 && (
+                  <div style={{ marginBottom: 16 }}>
+                    <p style={{ fontWeight: 700, color: "#065f46", marginBottom: 8 }}>Processed rows:</p>
+                    <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                      {bulkUploadResult.results.map((r, i) => (
+                        <div key={i} style={{
+                          padding: "6px 12px", borderRadius: 8,
+                          background: "#ecfdf5", color: "#065f46",
+                          border: "1px solid #6ee7b7", fontSize: 13,
+                          display: "flex", justifyContent: "space-between", alignItems: "center"
+                        }}>
+                          <span><strong>Line {r.line}:</strong> [{r.type}] {r.email}</span>
+                          {r.warning && <span style={{ color: "#92400e", fontSize: 11 }}>⚠ {r.warning}</span>}
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
 
                 {bulkUploadResult.errors.length > 0 && (
                   <div>
                     <p style={{ fontWeight: 700, color: "#991b1b", marginBottom: 8 }}>
-                      {bulkUploadResult.errors.length} issue{bulkUploadResult.errors.length !== 1 ? "s" : ""} found:
+                      ⚠ {bulkUploadResult.errors.length} issue{bulkUploadResult.errors.length !== 1 ? "s" : ""} found:
                     </p>
                     <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
                       {bulkUploadResult.errors.map((e, i) => (

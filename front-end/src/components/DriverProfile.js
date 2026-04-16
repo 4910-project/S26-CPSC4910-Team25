@@ -74,6 +74,14 @@ export default function DriverProfile({ token, onLogout, onChangePassword, onCha
   const [dismissedIds, setDismissedIds] = useState([]);
   const [droppedDismissed, setDroppedDismissed] = useState(false);
 
+  // In-app notifications from backend
+  const [inAppNotifications, setInAppNotifications] = useState([]);
+
+  // Sponsor switcher (RC2)
+  const [mySponsors, setMySponsors] = useState([]);
+  const [activeSponsorId, setActiveSponsorId] = useState(null);
+  const [switchingSponsor, setSwitchingSponsor] = useState(false);
+
   // Wishlist tab state
   const [wishlistItems,   setWishlistItems]   = useState([]);
   const [wishlistLoading, setWishlistLoading] = useState(false);
@@ -386,6 +394,77 @@ export default function DriverProfile({ token, onLogout, onChangePassword, onCha
   
 
 
+  // ── In-app notifications fetch ────────────────────────────────────────────
+  const fetchInAppNotifications = useCallback(async () => {
+    if (!token) return;
+    try {
+      const res = await fetch(`${API_BASE}/driver/notifications`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      const data = await res.json();
+      if (res.ok) setInAppNotifications(data.notifications || []);
+    } catch (_) { /* silently ignore */ }
+  }, [token]);
+
+  useEffect(() => {
+    fetchInAppNotifications();
+  }, [fetchInAppNotifications]);
+
+  const handleDismissNotification = async (notifId) => {
+    try {
+      await fetch(`${API_BASE}/driver/notifications/${notifId}/read`, {
+        method: "PATCH",
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      setInAppNotifications((prev) => prev.filter((n) => n.id !== notifId));
+    } catch (_) { /* ignore */ }
+  };
+
+  // ── My sponsors fetch (RC2 sponsor switcher) ──────────────────────────────
+  const fetchMySponsors = useCallback(async () => {
+    if (!token) return;
+    try {
+      const res = await fetch(`${API_BASE}/driver/my-sponsors`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      const data = await res.json();
+      if (res.ok) {
+        setMySponsors(data.sponsors || []);
+        setActiveSponsorId(data.activeSponsorId || null);
+      }
+    } catch (_) { /* ignore */ }
+  }, [token]);
+
+  useEffect(() => {
+    fetchMySponsors();
+  }, [fetchMySponsors]);
+
+  const handleSwitchSponsor = async (sponsorId) => {
+    setSwitchingSponsor(true);
+    try {
+      const res = await fetch(`${API_BASE}/driver/active-sponsor`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ sponsorId }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Failed to switch sponsor");
+      setActiveSponsorId(sponsorId);
+      // Refresh points to reflect new sponsor's balance
+      const pRes = await fetch(`${API_BASE}/driver/points`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (pRes.ok) {
+        const pData = await pRes.json();
+        setPoints(typeof pData.points === "number" ? pData.points : 0);
+      }
+    } catch (e) {
+      setSponsorError(e.message);
+    } finally {
+      setSwitchingSponsor(false);
+    }
+  };
+
   const timelineEvents = [...pointHistory].sort(
     (a, b) => new Date(a.occurredAt) - new Date(b.occurredAt)
   );
@@ -543,6 +622,76 @@ export default function DriverProfile({ token, onLogout, onChangePassword, onCha
                 </div>
               )}
             </>
+          )}
+
+          {/* ── In-app notifications from backend (DROPPED = non-dismissible) ── */}
+          {inAppNotifications.map((n) => {
+            const isNonDismissible = !n.is_dismissible;
+            return (
+              <div
+                key={n.id}
+                style={{
+                  background: "#fef2f2",
+                  border: "1px solid #fca5a5",
+                  borderRadius: 10,
+                  padding: "12px 16px",
+                  marginBottom: 12,
+                  display: "flex",
+                  justifyContent: "space-between",
+                  alignItems: "center",
+                }}
+              >
+                <div style={{ fontWeight: 600, color: "#991b1b", fontSize: 14 }}>
+                  🔔 {n.message}
+                </div>
+                {!isNonDismissible && (
+                  <button
+                    type="button"
+                    onClick={() => handleDismissNotification(n.id)}
+                    style={{
+                      background: "none", border: "none",
+                      fontSize: 18, cursor: "pointer",
+                      color: "#991b1b", lineHeight: 1, padding: "0 4px",
+                    }}
+                  >
+                    ×
+                  </button>
+                )}
+              </div>
+            );
+          })}
+
+          {/* ── Sponsor switcher (RC2 — shown when driver has multiple sponsors) ── */}
+          {mySponsors.length > 1 && (
+            <div style={{ background: "var(--card)", border: "1px solid var(--border, #e5e7eb)", borderRadius: 12, padding: 16, marginBottom: 16 }}>
+              <div style={{ fontWeight: 700, fontSize: 14, marginBottom: 10 }}>Active Sponsor</div>
+              <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                {mySponsors.map((s) => (
+                  <button
+                    key={s.sponsorId}
+                    type="button"
+                    disabled={switchingSponsor || activeSponsorId === s.sponsorId}
+                    onClick={() => handleSwitchSponsor(s.sponsorId)}
+                    style={{
+                      padding: "8px 16px",
+                      borderRadius: 8,
+                      border: activeSponsorId === s.sponsorId ? "2px solid #4f46e5" : "1px solid var(--border, #d1d5db)",
+                      background: activeSponsorId === s.sponsorId ? "#ede9fe" : "var(--card)",
+                      color: activeSponsorId === s.sponsorId ? "#4f46e5" : "inherit",
+                      fontWeight: activeSponsorId === s.sponsorId ? 700 : 400,
+                      cursor: switchingSponsor || activeSponsorId === s.sponsorId ? "not-allowed" : "pointer",
+                    }}
+                  >
+                    {s.sponsorName}
+                    {activeSponsorId === s.sponsorId && " ✓"}
+                    <span style={{ fontSize: 12, color: "#6b7280", display: "block" }}>
+                      {s.points_balance != null ? `${Number(s.points_balance).toLocaleString()} pts` : ""}
+                    </span>
+                  </button>
+                ))}
+              </div>
+              {switchingSponsor && <p style={{ fontSize: 13, color: "var(--muted)", marginTop: 8 }}>Switching…</p>}
+            </div>
           )}
 
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(260px, 1fr))", gap: 14 }}>

@@ -34,21 +34,21 @@ export default function ChangePassword({ token, onClose }) {
   };
 
   const validatePassword = () => {
-    if (formData.newPassword.length < 8) {
-      setError("New password must be at least 8 characters long");
-      return false;
-    }
+    const p = formData.newPassword;
+    if (p.length < 8)              { setError("Password must be at least 8 characters"); return false; }
+    if (!/[A-Z]/.test(p))          { setError("Password must contain at least one uppercase letter"); return false; }
+    if (!/[a-z]/.test(p))          { setError("Password must contain at least one lowercase letter"); return false; }
+    if (!/[0-9]/.test(p))          { setError("Password must contain at least one number"); return false; }
+    if (!/[^A-Za-z0-9]/.test(p))  { setError("Password must contain at least one special character"); return false; }
 
-    if (formData.newPassword !== formData.confirmPassword) {
+    if (p !== formData.confirmPassword) {
       setError("New passwords do not match");
       return false;
     }
-
-    if (formData.currentPassword === formData.newPassword) {
+    if (formData.currentPassword === p) {
       setError("New password must be different from current password");
       return false;
     }
-
     return true;
   };
 
@@ -167,7 +167,9 @@ export default function ChangePassword({ token, onClose }) {
                 {showPasswords.new ? "👁️" : "👁️‍🗨️"}
               </button>
             </div>
-            <small className="password-hint">Must be at least 8 characters</small>
+            <small className="password-hint">
+              Min 8 chars · 1 uppercase · 1 lowercase · 1 number · 1 special character
+            </small>
           </div>
 
           <div className="form-group">

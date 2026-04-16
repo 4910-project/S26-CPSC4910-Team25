@@ -16,6 +16,29 @@ const router = express.Router();
 router.use(requireActiveSession);
 
 /**
+ * Password complexity validator — same rules as auth.js.
+ * Returns an error string, or null if valid.
+ */
+function validatePasswordComplexity(password) {
+  if (!password || password.length < 8)  return "Password must be at least 8 characters";
+  if (!/[A-Z]/.test(password))           return "Password must contain at least one uppercase letter";
+  if (!/[a-z]/.test(password))           return "Password must contain at least one lowercase letter";
+  if (!/[0-9]/.test(password))           return "Password must contain at least one number";
+  if (!/[^A-Za-z0-9]/.test(password))   return "Password must contain at least one special character (!@#$%^&* etc.)";
+  return null;
+}
+
+async function writeAudit({ category, actorUserId = null, targetUserId = null, success = 0, details = "" }) {
+  try {
+    await pool.query(
+      `INSERT INTO audit_logs (category, actor_user_id, target_user_id, success, details)
+       VALUES (?, ?, ?, ?, ?)`,
+      [category, actorUserId, targetUserId, success ? 1 : 0, details]
+    );
+  } catch (_) { /* never crash the request over an audit failure */ }
+}
+
+/**
  * POST /api/profile/change-username
  * Body: { newUsername: string }
  */
@@ -65,8 +88,11 @@ router.post("/change-password", async (req, res) => {
     if (!currentPassword || !newPassword) {
       return res.status(400).json({ ok: false, message: "Both current and new password are required" });
     }
-    if (newPassword.length < 8) {
-      return res.status(400).json({ ok: false, message: "New password must be at least 8 characters" });
+
+    // Full complexity enforcement (not just length)
+    const complexityError = validatePasswordComplexity(newPassword);
+    if (complexityError) {
+      return res.status(400).json({ ok: false, message: complexityError });
     }
 
     const [rows] = await pool.query(
@@ -77,6 +103,7 @@ router.post("/change-password", async (req, res) => {
 
     const valid = await bcrypt.compare(currentPassword, rows[0].password_hash);
     if (!valid) {
+      await writeAudit({ category: "PASSWORD_CHANGE_FAIL", actorUserId: userId, targetUserId: userId, success: 0, details: "incorrect current password" });
       return res.status(401).json({ ok: false, message: "Current password is incorrect" });
     }
 
@@ -86,12 +113,11 @@ router.post("/change-password", async (req, res) => {
       [newHash, userId]
     );
 
+    await writeAudit({ category: "PASSWORD_CHANGE", actorUserId: userId, targetUserId: userId, success: 1, details: `password changed by userId=${userId}` });
+
     const notification = {
       type: "success",
-      message:
-        req.user?.role === "DRIVER"
-          ? "Notification sent: your password change was successful."
-          : "Notification sent: your password change was successful.",
+      message: "Notification sent: your password change was successful.",
     };
 
     return res.json({

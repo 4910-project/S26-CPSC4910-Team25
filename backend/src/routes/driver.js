@@ -1193,6 +1193,124 @@ router.delete("/driver/wishlist/:itemId", async (req, res) => {
   }
 });
 
+// ─────────────────────────────────────────────────────────────────────────────
+// RC2 — Multiple Sponsors: switch active sponsor
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * GET /api/driver/my-sponsors
+ * Returns all active sponsor relationships for this driver (RC2).
+ */
+router.get("/driver/my-sponsors", async (req, res) => {
+  const driverUserId = parsePositiveInt(req.user?.id);
+  if (!driverUserId) return res.status(401).json({ ok: false, error: "invalid session" });
+
+  try {
+    const [rows] = await pool.query(
+      `SELECT
+         d.id          AS driverRowId,
+         d.sponsor_id  AS sponsorId,
+         s.name        AS sponsorName,
+         s.status      AS sponsorStatus,
+         d.status      AS membershipStatus,
+         d.points_balance AS pointsBalance,
+         d.joined_on   AS joinedOn
+       FROM drivers d
+       JOIN sponsors s ON s.id = d.sponsor_id
+       WHERE d.user_id = ? AND d.status IN ('ACTIVE', 'PROBATION')
+       ORDER BY s.name ASC`,
+      [driverUserId]
+    );
+
+    // fetch current active_sponsor_id
+    const [[user]] = await pool.query("SELECT active_sponsor_id FROM users WHERE id = ? LIMIT 1", [driverUserId]);
+
+    return res.json({ ok: true, sponsors: rows, activeSponsorId: user?.active_sponsor_id ?? null });
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({ ok: false, error: "failed to fetch sponsor list" });
+  }
+});
+
+/**
+ * PATCH /api/driver/active-sponsor
+ * Body: { sponsorId }
+ * Switches the driver's active sponsor (RC2 catalog/points view).
+ */
+router.patch("/driver/active-sponsor", async (req, res) => {
+  const driverUserId = parsePositiveInt(req.user?.id);
+  if (!driverUserId) return res.status(401).json({ ok: false, error: "invalid session" });
+
+  const sponsorId = parsePositiveInt(req.body?.sponsorId);
+  if (!sponsorId) return res.status(400).json({ ok: false, error: "sponsorId required" });
+
+  try {
+    // Verify the driver actually belongs to this sponsor
+    const [dRows] = await pool.query(
+      "SELECT id FROM drivers WHERE user_id = ? AND sponsor_id = ? AND status IN ('ACTIVE','PROBATION') LIMIT 1",
+      [driverUserId, sponsorId]
+    );
+    if (!dRows[0]) return res.status(403).json({ ok: false, error: "not a member of that sponsor" });
+
+    await pool.query("UPDATE users SET active_sponsor_id = ? WHERE id = ? LIMIT 1", [sponsorId, driverUserId]);
+
+    return res.json({ ok: true, activeSponsorId: sponsorId });
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({ ok: false, error: "failed to switch active sponsor" });
+  }
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Notifications
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * GET /api/driver/notifications
+ * Returns unread (and recent read) notifications for the driver.
+ */
+router.get("/driver/notifications", async (req, res) => {
+  const userId = parsePositiveInt(req.user?.id);
+  if (!userId) return res.status(401).json({ ok: false, error: "invalid session" });
+
+  try {
+    const [rows] = await pool.query(
+      `SELECT id, type, message, is_dismissible, read_at, created_at
+       FROM notifications
+       WHERE user_id = ?
+       ORDER BY created_at DESC
+       LIMIT 50`,
+      [userId]
+    );
+    return res.json({ ok: true, notifications: rows });
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({ ok: false, error: "failed to fetch notifications" });
+  }
+});
+
+/**
+ * PATCH /api/driver/notifications/:id/read
+ * Marks a dismissible notification as read.
+ */
+router.patch("/driver/notifications/:id/read", async (req, res) => {
+  const userId = parsePositiveInt(req.user?.id);
+  const notifId = parsePositiveInt(req.params.id);
+  if (!userId) return res.status(401).json({ ok: false, error: "invalid session" });
+  if (!notifId) return res.status(400).json({ ok: false, error: "invalid id" });
+
+  try {
+    await pool.query(
+      "UPDATE notifications SET read_at = NOW() WHERE id = ? AND user_id = ? AND is_dismissible = 1 AND read_at IS NULL",
+      [notifId, userId]
+    );
+    return res.json({ ok: true });
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({ ok: false, error: "failed to mark notification read" });
+  }
+});
+
 /**
  * GET /api/driver/photo
  * Returns the current profile photo URL for the authenticated driver.

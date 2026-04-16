@@ -2,6 +2,7 @@ const express = require("express");
 const path = require("path");
 const fs = require("fs");
 const multer = require("multer");
+const jwt = require("jsonwebtoken");
 const upload = multer({ storage: multer.memoryStorage() });
 const bcrypt = require("bcryptjs");
 const pool = require("../db");
@@ -1323,6 +1324,99 @@ router.post("/catalog/unhide", async (req, res) => {
   }
 });
 
+/**
+ * GET /sponsor/point-value
+ * Returns this sponsor's dollar-per-point value.
+ */
+router.get("/point-value", async (req, res) => {
+  const sponsorId = getSponsorIdFromSession(req);
+  if (!sponsorId) return res.status(400).json({ ok: false, error: "sponsor account is not linked" });
+
+  try {
+    const [[row]] = await pool.query("SELECT point_value FROM sponsors WHERE id = ? LIMIT 1", [sponsorId]);
+    if (!row) return res.status(404).json({ ok: false, error: "sponsor not found" });
+    return res.json({ ok: true, pointValue: parseFloat(row.point_value) });
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({ ok: false, error: "failed to fetch point value" });
+  }
+});
+
+/**
+ * PATCH /sponsor/point-value
+ * Body: { pointValue: number }  — dollar value per point (e.g. 0.01 = $0.01/pt)
+ */
+router.patch("/point-value", async (req, res) => {
+  const sponsorId = getSponsorIdFromSession(req);
+  if (!sponsorId) return res.status(400).json({ ok: false, error: "sponsor account is not linked" });
+
+  const raw = parseFloat(req.body?.pointValue);
+  if (isNaN(raw) || raw < 0 || raw > 1) {
+    return res.status(400).json({ ok: false, error: "pointValue must be a number between 0 and 1 (e.g. 0.01 = $0.01 per point)" });
+  }
+
+  try {
+    await pool.query("UPDATE sponsors SET point_value = ? WHERE id = ? LIMIT 1", [raw, sponsorId]);
+    await writeAudit({
+      category: "POINT_VALUE_CHANGED",
+      actorUserId: req.user.id,
+      sponsorId,
+      success: 1,
+      details: `sponsor set point_value=${raw}`,
+    });
+    return res.json({ ok: true, pointValue: raw });
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({ ok: false, error: "failed to update point value" });
+  }
+});
+
+/**
+ * POST /sponsor/assume-driver/:driverUserId
+ * Sponsor assumes the identity of one of their own drivers.
+ * Returns a short-lived JWT scoped to that driver.
+ */
+router.post("/assume-driver/:driverUserId", async (req, res) => {
+  const sponsorId = getSponsorIdFromSession(req);
+  if (!sponsorId) return res.status(400).json({ ok: false, error: "sponsor account is not linked" });
+
+  const driverUserId = parsePositiveInt(req.params.driverUserId);
+  if (!driverUserId) return res.status(400).json({ ok: false, error: "invalid driverUserId" });
+
+  try {
+    // Confirm this driver actually belongs to this sponsor
+    const [dRows] = await pool.query(
+      "SELECT d.user_id, u.email, u.role, u.status, u.sponsor_id FROM drivers d JOIN users u ON u.id = d.user_id WHERE d.user_id = ? AND d.sponsor_id = ? AND d.status IN ('ACTIVE','PROBATION') LIMIT 1",
+      [driverUserId, sponsorId]
+    );
+    if (!dRows[0]) return res.status(404).json({ ok: false, error: "driver not found under your sponsor" });
+
+    const target = dRows[0];
+    const JWT_SECRET = process.env.JWT_SECRET;
+    if (!JWT_SECRET) return res.status(500).json({ ok: false, error: "JWT_SECRET not configured" });
+
+    const token = jwt.sign(
+      { id: target.user_id, role: "DRIVER", sponsor_id: sponsorId, assumed_by: req.user.id, assumed_by_role: "SPONSOR" },
+      JWT_SECRET,
+      { expiresIn: "1h" }
+    );
+
+    await writeAudit({
+      category: "SPONSOR_ASSUME_DRIVER",
+      actorUserId: req.user.id,
+      targetUserId: target.user_id,
+      sponsorId,
+      success: 1,
+      details: `sponsor userId=${req.user.id} assumed identity of driverUserId=${target.user_id}`,
+    });
+
+    return res.json({ ok: true, token, user: { id: target.user_id, email: target.email, role: "DRIVER" } });
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({ ok: false, error: "failed to assume driver identity" });
+  }
+});
+
 //GET /api/settings/notifications
 router.get("/settings/notifications", async(req, res) => {
   const [rows] = await pool.query(
@@ -1560,6 +1654,15 @@ router.post("/drivers/:driverId/drop", async (req, res) => {
       conn,
     });
 
+    // Non-dismissible in-app notification — required by spec
+    try {
+      await conn.query(
+        `INSERT INTO notifications (user_id, type, message, is_dismissible)
+         VALUES (?, 'DROPPED', ?, 0)`,
+        [dRows[0].user_id, `You have been dropped by your sponsor. Reason: ${reason}`]
+      );
+    } catch (_) { /* notifications table may not exist yet — never block the drop */ }
+
     await conn.commit();
     return res.json({ ok: true, message: "Driver dropped successfully" });
   } catch (err) {
@@ -1595,47 +1698,42 @@ router.post("/bulk-upload", upload.single("file"), async (req, res) => {
     const type = parts[0]?.trim().toUpperCase();
 
     if (type === "O") {
-      errors.push({ line: lineNum, error: "Sponsors cannot use the O type" });
+      errors.push({ line: lineNum, error: "Sponsors cannot use the O (organization) type" });
       continue;
     }
-    if (type !=="D" && type != "S") {
-      errors.push({ line: lineNum, error: "Invalid type, must be D or S" });
+    if (type !== "D" && type !== "S") {
+      errors.push({ line: lineNum, error: "Invalid type — must be D (driver) or S (sponsor user)" });
       continue;
     }
 
-    const orgName = parts[1]?.trim();
-    const firstName = parts[2]?.trim();
-    const lastName = parts[3]?.trim();
-    const email = parts[4]?.trim();
-    // points optional
-    const points = parts[5]?.trim();
-    const reason = parts[6]?.trim();
+    // Sponsor file format: TYPE|firstName|lastName|email|points|reason  (6 fields, no org column)
+    const firstName = parts[1]?.trim();
+    const lastName  = parts[2]?.trim();
+    const email     = parts[3]?.trim();
+    const points    = parts[4]?.trim();
+    const reason    = parts[5]?.trim();
 
-    if (orgName) {
-      errors.push({ line: lineNum, error: "Organization name must be blank for sponsors" });
-      continue;
-    }
     if (!email) {
-      errors.push({ line: lineNum, error: "Email is required"});
-      continue;
-    }
-    if (type === "S" && points) {
-      errors.push({ line: lineNum, error: "Points cant be assigned on this line"});
+      errors.push({ line: lineNum, error: "Email is required" });
       continue;
     }
     if (points && !reason) {
-      errors.push({ line: lineNum, error: "Must provide reason since points have been assigned"});
+      errors.push({ line: lineNum, error: "A reason is required when points are provided" });
       continue;
+    }
+
+    // Track whether S type had points (warn but still create)
+    let sPointsWarning = null;
+    if (type === "S" && points) {
+      sPointsWarning = "Sponsor users cannot receive points — user created without points";
     }
 
     const conn = await pool.getConnection();
     try {
       await conn.beginTransaction();
+
       const [existingUsers] = await conn.query(
-        `SELECT id
-        FROM users
-        WHERE email = ?
-        LIMIT 1`,
+        `SELECT id FROM users WHERE email = ? LIMIT 1`,
         [email]
       );
       let userId;
@@ -1645,26 +1743,23 @@ router.post("/bulk-upload", upload.single("file"), async (req, res) => {
         const tempPassword = await bcrypt.hash(Math.random().toString(36) + Date.now(), 10);
         const role = type === "D" ? "DRIVER" : "SPONSOR";
         const [newUser] = await conn.query(
-          `INSERT INTO users (email, password_hash, role, points)
-          VALUES (?, ?, ?, 0)`,
-          [email, tempPassword, role]
+          `INSERT INTO users (email, password_hash, role, points, first_name, last_name)
+           VALUES (?, ?, ?, 0, ?, ?)`,
+          [email, tempPassword, role, firstName || null, lastName || null]
         );
         userId = newUser.insertId;
       }
 
       if (type === "D") {
-        const [existingDriver] = await conn.query (
-          `SELECT id
-          From drivers
-          WHERE user_id = ? AND sponsor_id = ?
-          LIMIT 1`,
+        const [existingDriver] = await conn.query(
+          `SELECT id FROM drivers WHERE user_id = ? AND sponsor_id = ? LIMIT 1`,
           [userId, sponsorId]
         );
         if (!existingDriver[0]) {
           await conn.query(
             `INSERT INTO drivers (user_id, sponsor_id, status, joined_on)
-            VALUES (?, ?, 'ACTIVE', NOW())
-            ON DUPLICATE KEY UPDATE status = 'ACTIVE', joined_on = NOW()`,
+             VALUES (?, ?, 'ACTIVE', NOW())
+             ON DUPLICATE KEY UPDATE status = 'ACTIVE', joined_on = NOW()`,
             [userId, sponsorId]
           );
         }
@@ -1672,34 +1767,28 @@ router.post("/bulk-upload", upload.single("file"), async (req, res) => {
         if (points && reason) {
           const pointsInt = parseNonNegativeInt(points);
           if (pointsInt === null) {
-            errors.push({ line: lineNum, error: "Invalid points value"});
+            errors.push({ line: lineNum, error: "Invalid points value — must be a non-negative integer" });
+            await conn.rollback();
+            conn.release();
             continue;
-          } else {
-            await conn.query (
-              `UPDATE users
-              SET points = points + ?
-              WHERE id = ?
-              LIMIT 1`,
-              [pointsInt, userId]
+          }
+          await conn.query(
+            `UPDATE users SET points = points + ? WHERE id = ? LIMIT 1`,
+            [pointsInt, userId]
+          );
+          if (await tableExists("driver_points_history", conn)) {
+            await conn.query(
+              `INSERT INTO driver_points_history (driver_user_id, points_change, reason, created_at)
+               VALUES (?, ?, ?, NOW())`,
+              [userId, pointsInt, reason]
             );
-
-            if (await tableExists("driver_points_history", conn)) {
-              await conn.query(
-                `INSERT INTo driver_points_history (driver_user_id, points_change, reason, created_at)
-                VALUES (?, ?, ?, NOW())`,
-                [userId, pointsInt, reason]
-              );
-            }
           }
         }
       }
 
       if (type === "S") {
         await conn.query(
-          `UPDATE users
-          SET sponsor_id = ?
-          WHERE id = ? AND sponsor_id IS NULL
-          LIMIT 1`,
+          `UPDATE users SET sponsor_id = ? WHERE id = ? AND sponsor_id IS NULL LIMIT 1`,
           [sponsorId, userId]
         );
       }
@@ -1715,16 +1804,23 @@ router.post("/bulk-upload", upload.single("file"), async (req, res) => {
       });
 
       await conn.commit();
-      results.push({ line: lineNum, email, type, status: "ok" });
+      conn.release();
+
+      const resultEntry = { line: lineNum, email, type, status: "ok" };
+      if (sPointsWarning) resultEntry.warning = sPointsWarning;
+      results.push(resultEntry);
+
+      if (sPointsWarning) {
+        errors.push({ line: lineNum, error: sPointsWarning });
+      }
     } catch (err) {
       await conn.rollback();
-      errors.push({ line: lineNum, error: `Database error: ${err.message}` });
-    } finally {
       conn.release();
+      errors.push({ line: lineNum, error: `Database error: ${err.message}` });
     }
   }
-  
-  return res.json({ ok: true, processed: results.length, errors });
+
+  return res.json({ ok: true, processed: results.length, results, errors });
 
 });
 

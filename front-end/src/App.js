@@ -209,6 +209,7 @@ export default function App() {
             onLogout={handleLogout}
             onChangePassword={() => setShowChangePassword(true)}
             onChangeUsername={() => setShowChangeUsername(true)}
+            onAssumeUser={handleLogin}
           />
           {showChangePassword && (
             <ChangePassword token={token} onClose={() => setShowChangePassword(false)} />
@@ -222,7 +223,7 @@ export default function App() {
       {/* Admin dashboard */}
       <Route path="/admin" element={
         <AuthLayout userRole={userRole} onLogout={handleLogout} dark={dark} onToggleDark={toggleDark}>
-          <AdminDashboard token={token} onLogout={handleLogout} />
+          <AdminDashboard token={token} onLogout={handleLogout} onAssumeUser={handleLogin} />
         </AuthLayout>
       } />
  

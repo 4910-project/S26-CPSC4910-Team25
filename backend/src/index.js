@@ -127,6 +127,11 @@ async function addColumnIfMissing(table, column, definition) {
 
     await addColumnIfMissing("users",    "profile_photo_url", "VARCHAR(500) NULL DEFAULT NULL");
     await addColumnIfMissing("sponsors", "org_photo_url",     "VARCHAR(500) NULL DEFAULT NULL");
+    await addColumnIfMissing("users",    "first_name",        "VARCHAR(100) NULL DEFAULT NULL");
+    await addColumnIfMissing("users",    "last_name",         "VARCHAR(100) NULL DEFAULT NULL");
+    await addColumnIfMissing("users",    "active_sponsor_id", "INT NULL DEFAULT NULL");
+    await addColumnIfMissing("sponsors", "point_value",       "DECIMAL(10,4) NOT NULL DEFAULT 0.0100");
+    await addColumnIfMissing("drivers",  "points_balance",    "INT NOT NULL DEFAULT 0");
 
     // Ensure driver cart table exists
     await pool.query(`
@@ -144,6 +149,23 @@ async function addColumnIfMissing(table, column, definition) {
         UNIQUE KEY uq_cart_driver_track (driver_id, itunes_track_id),
         CONSTRAINT fk_cart_driver
           FOREIGN KEY (driver_id) REFERENCES users(id) ON DELETE CASCADE
+      )
+    `);
+
+    // Notifications table for in-app alerts
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS notifications (
+        id             INT          NOT NULL AUTO_INCREMENT,
+        user_id        INT          NOT NULL,
+        type           VARCHAR(50)  NOT NULL,
+        message        VARCHAR(500) NOT NULL,
+        is_dismissible TINYINT(1)  NOT NULL DEFAULT 1,
+        read_at        DATETIME     NULL,
+        created_at     DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        PRIMARY KEY (id),
+        KEY idx_notifications_user_unread (user_id, read_at),
+        CONSTRAINT fk_notifications_user
+          FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
       )
     `);
 

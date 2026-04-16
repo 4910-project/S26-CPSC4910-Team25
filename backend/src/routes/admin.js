@@ -1,5 +1,6 @@
 const express = require("express");
 const bcrypt = require("bcryptjs");
+const jwt = require("jsonwebtoken");
 const pool = require("../db");
 const multer = require("multer")
 const upload = multer({ storage: multer.memoryStorage() });
@@ -611,6 +612,53 @@ router.post("/sandboxes", async (req, res) => {
 });
 
 /**
+ * POST /admin/assume-user/:userId
+ * Admin assumes the identity of any user (driver or sponsor).
+ * Returns a short-lived JWT scoped to that user. The frontend should
+ * store this separately so the admin can "exit" back to their own session.
+ */
+router.post("/assume-user/:userId", async (req, res) => {
+  const targetUserId = parsePositiveInt(req.params.userId);
+  if (!targetUserId) return res.status(400).json({ ok: false, error: "invalid userId" });
+
+  try {
+    const [rows] = await pool.query(
+      "SELECT id, email, role, sponsor_id, status FROM users WHERE id = ? LIMIT 1",
+      [targetUserId]
+    );
+    if (!rows[0]) return res.status(404).json({ ok: false, error: "user not found" });
+
+    const target = rows[0];
+    if (target.status !== "ACTIVE") {
+      return res.status(400).json({ ok: false, error: `Cannot assume identity of ${target.status} account` });
+    }
+
+    const JWT_SECRET = process.env.JWT_SECRET;
+    if (!JWT_SECRET) return res.status(500).json({ ok: false, error: "JWT_SECRET not configured" });
+
+    // Short-lived assumed token; includes assumed_by so audit trail is preserved
+    const token = jwt.sign(
+      { id: target.id, role: target.role, sponsor_id: target.sponsor_id, assumed_by: req.user.id, assumed_by_role: "ADMIN" },
+      JWT_SECRET,
+      { expiresIn: "1h" }
+    );
+
+    await writeAudit({
+      category: "ADMIN_ASSUME_IDENTITY",
+      actorUserId: req.user.id,
+      targetUserId: target.id,
+      success: 1,
+      details: `admin userId=${req.user.id} assumed identity of userId=${target.id} role=${target.role}`,
+    });
+
+    return res.json({ ok: true, token, user: { id: target.id, email: target.email, role: target.role } });
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({ ok: false, error: "failed to assume identity" });
+  }
+});
+
+/**
  * GET /admin/feedback
  * List all feedback submissions with submitter info.
  * Query params: ?status=open|reviewed|resolved&category=...&page=1&limit=20
@@ -1069,7 +1117,7 @@ router.post("/bulk-upload", upload.single("file"), async (req, res) => {
         );
         if (existing[0]) {
           sessionOrgs.set(orgName.toLowerCase(), existing[0].id);
-          results.push({ line: lineNum, error: "Organization already exists" });
+          errors.push({ line: lineNum, error: `Organization "${orgName}" already exists — will be used for subsequent D/S rows` });
         } else {
           const [ins] = await pool.query(
             `INSERT INTO sponsors (name, status)
@@ -1150,9 +1198,9 @@ router.post("/bulk-upload", upload.single("file"), async (req, res) => {
         const tempPassword = await bcrypt.hash(Math.random().toString(36) + Date.now(), 10);
         const role = type === "D" ? "DRIVER" : "SPONSOR";
         const [newUser] = await conn.query(
-          `INSERT INTO users (email, password_hash, role, points)
-          VALUES (?, ?, ?, 0)`,
-          [email, tempPassword, role]
+          `INSERT INTO users (email, password_hash, role, points, first_name, last_name)
+          VALUES (?, ?, ?, 0, ?, ?)`,
+          [email, tempPassword, role, firstName || null, lastName || null]
         );
         userId = newUser.insertId;
       }
@@ -1184,34 +1232,28 @@ router.post("/bulk-upload", upload.single("file"), async (req, res) => {
         if (points && reason) {
           const pointsInt = parsePositiveInt(points);
           if (!pointsInt) {
-            errors.push({ line: lineNum, error: "Invalid points value"});
+            errors.push({ line: lineNum, error: "Invalid points value — must be a positive integer" });
+            await conn.rollback();
+            conn.release();
             continue;
-          } else {
-            await conn.query (
-              `UPDATE users
-              SET points = points + ?
-              WHERE id = ?
-              LIMIT 1`,
-              [pointsInt, userId]
+          }
+          await conn.query(
+            `UPDATE users SET points = points + ? WHERE id = ? LIMIT 1`,
+            [pointsInt, userId]
+          );
+          if (await tableExists("driver_points_history", conn)) {
+            await conn.query(
+              `INSERT INTO driver_points_history (driver_user_id, points_change, reason, created_at)
+               VALUES (?, ?, ?, NOW())`,
+              [userId, pointsInt, reason]
             );
-
-            if (await tableExists("driver_points_history", conn)) {
-              await conn.query(
-                `INSERT INTo driver_points_history (driver_user_id, points_change, reason, created_at)
-                VALUES (?, ?, ?, NOW())`,
-                [userId, pointsInt, reason]
-              );
-            }
           }
         }
       }
 
       if (type === "S") {
         await conn.query(
-          `UPDATE users
-          SET sponsor_id = ?
-          WHERE id = ? AND sponsor_id IS NULL
-          LIMIT 1`,
+          `UPDATE users SET sponsor_id = ? WHERE id = ? AND sponsor_id IS NULL LIMIT 1`,
           [sponsorId, userId]
         );
       }
@@ -1227,16 +1269,16 @@ router.post("/bulk-upload", upload.single("file"), async (req, res) => {
       });
 
       await conn.commit();
+      conn.release();
       results.push({ line: lineNum, email, type, status: "ok" });
     } catch (err) {
       await conn.rollback();
-      errors.push({ line: lineNum, error: `Database error: ${err.message}` });
-    } finally {
       conn.release();
+      errors.push({ line: lineNum, error: `Database error: ${err.message}` });
     }
   }
-  
-  return res.json({ ok: true, processed: results.length, errors });
+
+  return res.json({ ok: true, processed: results.length, results, errors });
 
 });
 

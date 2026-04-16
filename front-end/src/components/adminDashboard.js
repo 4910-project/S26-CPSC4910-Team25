@@ -38,7 +38,7 @@ function StatusBadge({ status }) {
   );
 }
 
-export default function AdminDashboard({ token, onLogout }) {
+export default function AdminDashboard({ token, onLogout, onAssumeUser }) {
   const [feedback, setFeedback] = useState([]);
   const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(false);
@@ -86,6 +86,9 @@ export default function AdminDashboard({ token, onLogout }) {
   // Bulk Upload State
   const [bulkUploadResult, setBulkUploadResult] = useState(null);
   const [bulkUploading, setBulkUploading] = useState(false);
+
+  // Assume Identity state
+  const [assumingId, setAssumingId] = useState(null);
 
   const fetchFeedback = useCallback(async () => {
     setLoading(true);
@@ -431,6 +434,26 @@ export default function AdminDashboard({ token, onLogout }) {
     }
   };
   
+
+  const handleAssumeIdentity = async (userId, displayName) => {
+    if (!window.confirm(`Assume the identity of "${displayName}"? You will be redirected to their dashboard.`)) return;
+    setAssumingId(userId);
+    try {
+      const res = await fetch(`${ADMIN_API}/assume-user/${userId}`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Failed to assume identity");
+      // Switch session to the assumed user — handleLogin in App.js sets token + role
+      if (onAssumeUser) onAssumeUser(data.token, data.user?.role);
+    } catch (err) {
+      setSponsorError(err.message);
+      setDriverError(err.message);
+    } finally {
+      setAssumingId(null);
+    }
+  };
 
   const totalPages = Math.ceil(total / limit);
 
@@ -896,6 +919,25 @@ export default function AdminDashboard({ token, onLogout }) {
                       >
                         {lockingId === s.id ? "Saving..." : s.accepting_drivers ? "🔒 Lock" : "🔓 Unlock"}
                       </button>
+
+                      <button
+                        type="button"
+                        disabled={assumingId === s.user_id}
+                        onClick={() => handleAssumeIdentity(s.user_id, s.name)}
+                        style={{
+                          padding: "7px 16px",
+                          borderRadius: 8,
+                          border: "1px solid #a78bfa",
+                          background: "#ede9fe",
+                          color: "#5b21b6",
+                          fontWeight: 600,
+                          fontSize: 13,
+                          cursor: assumingId === s.user_id ? "not-allowed" : "pointer",
+                          opacity: assumingId === s.user_id ? 0.6 : 1,
+                        }}
+                      >
+                        {assumingId === s.user_id ? "Switching..." : "👤 Assume"}
+                      </button>
                     </div>
                   </div>
 
@@ -1081,6 +1123,25 @@ export default function AdminDashboard({ token, onLogout }) {
                       >
                         {driverFlaggingId === d.driver_id ? "Saving..." : !!d.flagged ? "🚩 Unflag" : "🚩 Flag"}
                       </button>
+
+                      <button
+                        type="button"
+                        disabled={assumingId === d.user_id}
+                        onClick={() => handleAssumeIdentity(d.user_id, d.email)}
+                        style={{
+                          padding: "7px 16px",
+                          borderRadius: 8,
+                          border: "1px solid #a78bfa",
+                          background: "#ede9fe",
+                          color: "#5b21b6",
+                          fontWeight: 600,
+                          fontSize: 13,
+                          cursor: assumingId === d.user_id ? "not-allowed" : "pointer",
+                          opacity: assumingId === d.user_id ? 0.6 : 1,
+                        }}
+                      >
+                        {assumingId === d.user_id ? "Switching..." : "👤 Assume"}
+                      </button>
                     </div>
                   </div>
 
@@ -1140,23 +1201,27 @@ export default function AdminDashboard({ token, onLogout }) {
   
       {/* -- Bulk Upload Tab -- */}
       {activeTab === "bulk upload" && (
-        <div style={{ maxWidth: 600 }}>
+        <div style={{ maxWidth: 640 }}>
           <h2 style={{ marginTop: 0, marginBottom: 4}}>Bulk Upload</h2>
             <p style={{ color: "var(--muted)", fontSize: 14, marginTop: 0, marginBottom: 16 }}>
-              Upload a pip-delimited text file to bulk create organizations, drivers, or sponsors
+              Upload a pipe-delimited (<code>|</code>) text file to bulk create organizations, drivers, or sponsor users.
+              One record per line.
             </p>
 
             <div style={{
               background: "var(--card)", border: "1px solid var(--border, #e5e7eb)",
-              borderRadius: 10, padding: 14, marginBottom: 16, fontSize: 13
+              borderRadius: 10, padding: 14, marginBottom: 16, fontSize: 13, lineHeight: 1.7,
             }}>
-              <strong>File format:</strong><br />
-              <code>O|Organization Name</code><br />
-              <code>D|firstName|lastName|email|points (optional)|reason (optional)</code><br />
-              <code>S|firstName|lastName|email</code><br />
-              <span style={{ color: "var(--muted)", marginTop: 6, display: "block" }}>
-                Organization must already exist in the system or created in the file
-              </span>
+              <strong>File format</strong> (one record per line):<br />
+              <code style={{ display: "block", marginTop: 6 }}>O|Organization Name</code>
+              <code style={{ display: "block" }}>D|orgName|firstName|lastName|email|points (optional)|reason (required if points given)</code>
+              <code style={{ display: "block" }}>S|orgName|firstName|lastName|email</code>
+              <ul style={{ margin: "8px 0 0 16px", padding: 0, color: "var(--muted)", fontSize: 12 }}>
+                <li><strong>O</strong> — create a new sponsor organization</li>
+                <li><strong>D</strong> — create or update a driver (auto-accepted); org must exist or appear earlier in file</li>
+                <li><strong>S</strong> — create a sponsor user (no points allowed); org must exist or appear earlier in file</li>
+                <li>If driver already exists, their points are updated</li>
+              </ul>
             </div>
 
             <label style={{
@@ -1168,7 +1233,7 @@ export default function AdminDashboard({ token, onLogout }) {
               {bulkUploading ? "Uploading..." : "Choose File & Upload"}
               <input
                 type="file"
-                accept=".txt,.csv"
+                accept=".txt,.csv,.tsv"
                 style={{ display: "none" }}
                 onChange={handleAdminBulkUpload}
                 disabled={bulkUploading}
@@ -1182,18 +1247,40 @@ export default function AdminDashboard({ token, onLogout }) {
                   background: "#d1fae5", color: "#065f46",
                   marginBottom: 12, fontWeight: 600
                 }}>
-                  {bulkUploadResult.processed} row{bulkUploadResult.processed !== 1 ? "s" : ""} processed successfully
+                  ✅ {bulkUploadResult.processed} row{bulkUploadResult.processed !== 1 ? "s" : ""} processed successfully
                 </div>
+
+                {/* Successful rows */}
+                {bulkUploadResult.results && bulkUploadResult.results.length > 0 && (
+                  <div style={{ marginBottom: 16 }}>
+                    <p style={{ fontWeight: 700, color: "#065f46", marginBottom: 8 }}>Processed rows:</p>
+                    <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                      {bulkUploadResult.results.map((r, i) => (
+                        <div key={i} style={{
+                          padding: "6px 12px", borderRadius: 8,
+                          background: "#ecfdf5", color: "#065f46",
+                          border: "1px solid #6ee7b7", fontSize: 13,
+                          display: "flex", justifyContent: "space-between", alignItems: "center",
+                        }}>
+                          <span>
+                            <strong>Line {r.line}:</strong> [{r.type}]{" "}
+                            {r.type === "O" ? r.orgName : r.email}
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
 
                 {bulkUploadResult.errors.length > 0 && (
                   <div>
-                    <p style={{ fontweight: 700, color: "#991b1b", marginBottom: 8 }}>
-                      {bulkUploadResult.errors.length} issue{bulkUploadResult.errors.length !== 1 ? "s" : ""} found:
+                    <p style={{ fontWeight: 700, color: "#991b1b", marginBottom: 8 }}>
+                      ⚠ {bulkUploadResult.errors.length} issue{bulkUploadResult.errors.length !== 1 ? "s" : ""} found:
                     </p>
                     <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
                       {bulkUploadResult.errors.map((e, i) => (
                         <div key={i} style={{
-                          padding: "8px 12px", borderRdaius: 8,
+                          padding: "8px 12px", borderRadius: 8,
                           background: "#fef2f2", color: "#991b1b",
                           border: "1px solid #fca5a5", fontSize: 13
                         }}>

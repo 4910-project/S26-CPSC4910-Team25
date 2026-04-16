@@ -21,6 +21,32 @@ function requireEnv(name) {
 }
 
 /**
+ * Password complexity validator.
+ * Returns an error string, or null if the password passes all rules.
+ */
+function validatePasswordComplexity(password) {
+  if (!password || password.length < 8)  return "Password must be at least 8 characters";
+  if (!/[A-Z]/.test(password))           return "Password must contain at least one uppercase letter";
+  if (!/[a-z]/.test(password))           return "Password must contain at least one lowercase letter";
+  if (!/[0-9]/.test(password))           return "Password must contain at least one number";
+  if (!/[^A-Za-z0-9]/.test(password))   return "Password must contain at least one special character (!@#$%^&* etc.)";
+  return null;
+}
+
+/**
+ * Safely write an audit log entry without crashing the request.
+ */
+async function writeAudit({ category, actorUserId = null, targetUserId = null, success = 0, details = "" }) {
+  try {
+    await pool.query(
+      `INSERT INTO audit_logs (category, actor_user_id, target_user_id, success, details)
+       VALUES (?, ?, ?, ?, ?)`,
+      [category, actorUserId, targetUserId, success ? 1 : 0, details]
+    );
+  } catch (_) { /* never crash the request over an audit failure */ }
+}
+
+/**
  * REGISTER
  * POST /auth/register
  */
@@ -36,17 +62,26 @@ router.post("/register", async (req, res) => {
       return res.status(400).json({ ok: false, error: "Missing email or password" });
     }
 
+    // Password complexity enforcement
+    const complexityError = validatePasswordComplexity(password);
+    if (complexityError) {
+      return res.status(400).json({ ok: false, error: complexityError });
+    }
+
     const [existing] = await pool.query("SELECT id FROM users WHERE email = ? LIMIT 1", [email]);
     if (existing.length) {
+      await writeAudit({ category: "REGISTER_FAIL", success: 0, details: `duplicate email: ${email}` });
       return res.status(409).json({ ok: false, error: "Email already exists" });
     }
 
     const password_hash = await bcrypt.hash(password, 10);
 
-    await pool.query(
+    const [ins] = await pool.query(
       "INSERT INTO users (email, password_hash, role, status) VALUES (?, ?, ?, 'ACTIVE')",
       [email, password_hash, role]
     );
+
+    await writeAudit({ category: "REGISTER", targetUserId: ins.insertId, success: 1, details: `registered email=${email} role=${role}` });
 
     return res.json({ ok: true, status: "ok" });
   } catch (err) {
@@ -89,17 +124,20 @@ router.post("/login", async (req, res) => {
     );
 
     if (!rows.length) {
+      await writeAudit({ category: "LOGIN_FAIL", success: 0, details: `user not found: ${email}` });
       return res.status(401).json({ ok: false, error: "Invalid credentials" });
     }
 
     const user = rows[0];
 
     if (user.status !== "ACTIVE") {
+      await writeAudit({ category: "LOGIN_FAIL", targetUserId: user.id, success: 0, details: `account not active: status=${user.status}` });
       return res.status(403).json({ ok: false, error: `Account is ${user.status}` });
     }
 
     const okPw = await bcrypt.compare(password, user.password_hash);
     if (!okPw) {
+      await writeAudit({ category: "LOGIN_FAIL", targetUserId: user.id, success: 0, details: `invalid password for email=${email}` });
       return res.status(401).json({ ok: false, error: "Invalid credentials" });
     }
 
@@ -136,6 +174,8 @@ router.post("/login", async (req, res) => {
       JWT_SECRET,
       { expiresIn: JWT_EXPIRES_IN }
     );
+
+    await writeAudit({ category: "LOGIN_SUCCESS", targetUserId: user.id, success: 1, details: `login email=${user.email} role=${user.role}` });
 
     return res.json({
       ok: true,
