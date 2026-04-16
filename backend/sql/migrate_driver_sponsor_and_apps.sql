@@ -149,3 +149,29 @@ SET @sql = IF(
 PREPARE stmt FROM @sql;
 EXECUTE stmt;
 DEALLOCATE PREPARE stmt;
+
+
+-- Points balance per driver
+CREATE TABLE IF NOT EXISTS driver_points (
+  user_id    INT      NOT NULL PRIMARY KEY,
+  points     INT      NOT NULL DEFAULT 0,
+  updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  CONSTRAINT chk_points_positive CHECK (points >= 0)
+);
+ 
+
+-- Add awarded by if point trans was made without it
+SET @sql = IF(
+  (
+    SELECT COUNT(*)
+    FROM information_schema.COLUMNS
+    WHERE TABLE_SCHEMA = @db_name
+      AND TABLE_NAME   = 'point_transactions'
+      AND COLUMN_NAME  = 'awarded_by'
+  ) = 0,
+  'ALTER TABLE point_transactions ADD COLUMN awarded_by INT NULL',
+  'SELECT ''point_transactions.awarded_by already exists'''
+);
+PREPARE stmt FROM @sql;
+EXECUTE stmt;
+DEALLOCATE PREPARE stmt;
