@@ -254,6 +254,62 @@ router.post("/forgot-username", async (req, res) => {
 });
 
 /**
+ * FORGOT PASSWORD
+ * POST /auth/forgot-password
+ *
+ * Called by ForgotPassword.js. Generates a password-reset token and stores it
+ * in password_reset_tokens. Returns the token directly (no email service yet).
+ * Always returns 200 so callers cannot enumerate which emails exist.
+ */
+router.post("/forgot-password", async (req, res) => {
+  const email = normalizeEmail(req.body?.email);
+  if (!email) return res.status(400).json({ ok: false, error: "Email is required" });
+
+  try {
+    const [[user]] = await pool.query(
+      "SELECT id FROM users WHERE email = ? AND status = 'ACTIVE' LIMIT 1",
+      [email]
+    );
+
+    if (!user) {
+      return res.json({ ok: true, message: "If that email is registered, a reset token has been generated." });
+    }
+
+    // Expire existing tokens
+    await pool.query(
+      "UPDATE password_reset_tokens SET used = 1 WHERE user_id = ? AND used = 0",
+      [user.id]
+    );
+
+    const rawToken = crypto.randomBytes(32).toString("hex");
+    const expiresAt = new Date(Date.now() + 30 * 60 * 1000); // 30 minutes
+
+    await pool.query(
+      `INSERT INTO password_reset_tokens (user_id, token, expires_at, used)
+       VALUES (?, ?, ?, 0)`,
+      [user.id, rawToken, expiresAt]
+    );
+
+    await writeAudit({
+      category: "PASSWORD_RESET_REQUEST",
+      targetUserId: user.id,
+      success: 1,
+      details: `forgot-password token generated for email=${email}`,
+    });
+
+    // In production replace with: await sendEmail(email, rawToken)
+    return res.json({
+      ok: true,
+      message: "Reset token generated.",
+      token: rawToken,
+    });
+  } catch (err) {
+    console.error("POST /auth/forgot-password error:", err);
+    return res.status(500).json({ ok: false, error: "Server error" });
+  }
+});
+
+/**
  * CHANGE USERNAME
  * PATCH /auth/users/:userId/username
  */
