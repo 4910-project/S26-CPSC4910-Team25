@@ -2057,4 +2057,160 @@ router.get("/reports/audit", async (req, res) => {
 
 
 
+/**
+ * POST /sponsor/drivers/:driverId/purchase
+ * Story 10771 — Sponsor purchases a product on behalf of an active driver.
+ *
+ * Body: {
+ *   trackId:      string,   // iTunes track/collection ID used as purchase ID
+ *   itemName:     string,
+ *   artist:       string | null,
+ *   kind:         string | null,
+ *   artworkUrl:   string | null,
+ *   trackViewUrl: string | null,
+ *   usdPrice:     number,   // from iTunes — will be converted to points using sponsor's point_value
+ * }
+ *
+ * Flow:
+ *   1. Verify driver belongs to sponsor and is ACTIVE.
+ *   2. Convert usdPrice → points using sponsors.point_value.
+ *   3. Check driver has enough points in drivers.points_balance.
+ *   4. Deduct from drivers.points_balance + sync users.points.
+ *   5. Insert into purchases (purchased_by_sponsor=1).
+ *   6. Audit log.
+ */
+router.post("/drivers/:driverId/purchase", async (req, res) => {
+  const sponsorId = getSponsorIdFromSession(req);
+  if (!sponsorId) return res.status(400).json({ ok: false, error: "sponsor account is not linked" });
+
+  const driverId = parsePositiveInt(req.params.driverId);
+  if (!driverId) return res.status(400).json({ ok: false, error: "invalid driverId" });
+
+  const {
+    trackId,
+    itemName,
+    artist    = null,
+    kind      = null,
+    artworkUrl    = null,
+    trackViewUrl  = null,
+    usdPrice,
+  } = req.body || {};
+
+  if (!itemName || !String(itemName).trim()) {
+    return res.status(400).json({ ok: false, error: "itemName is required" });
+  }
+  const usd = parseFloat(usdPrice);
+  if (isNaN(usd) || usd <= 0) {
+    return res.status(400).json({ ok: false, error: "usdPrice must be a positive number" });
+  }
+
+  const conn = await pool.getConnection();
+  try {
+    await conn.beginTransaction();
+
+    // 1. Verify driver belongs to this sponsor and is ACTIVE
+    const [[driver]] = await conn.query(
+      `SELECT d.id, d.user_id, d.status, d.points_balance
+       FROM drivers d
+       WHERE d.id = ? AND d.sponsor_id = ?
+       LIMIT 1 FOR UPDATE`,
+      [driverId, sponsorId]
+    );
+    if (!driver) {
+      await conn.rollback();
+      return res.status(404).json({ ok: false, error: "Driver not found under your organization" });
+    }
+    if (driver.status !== "ACTIVE") {
+      await conn.rollback();
+      return res.status(400).json({ ok: false, error: `Driver must be ACTIVE to make purchases (current: ${driver.status})` });
+    }
+
+    // 2. Convert USD → points using sponsor's point_value
+    const [[sponsorRow]] = await conn.query(
+      "SELECT point_value FROM sponsors WHERE id = ? LIMIT 1",
+      [sponsorId]
+    );
+    const pointValue = parseFloat(sponsorRow?.point_value ?? 0.01) || 0.01;
+    const costInPoints = Math.round(usd / pointValue);
+    if (costInPoints <= 0) {
+      await conn.rollback();
+      return res.status(400).json({ ok: false, error: "Item cost too low to convert to points" });
+    }
+
+    // 3. Check sufficient balance
+    const currentBalance = Number(driver.points_balance || 0);
+    if (currentBalance < costInPoints) {
+      await conn.rollback();
+      return res.status(400).json({
+        ok: false,
+        error: "Driver does not have enough points for this purchase",
+        currentBalance,
+        costInPoints,
+      });
+    }
+
+    // 4. Deduct points
+    const newBalance = currentBalance - costInPoints;
+    await conn.query(
+      "UPDATE drivers SET points_balance = ? WHERE id = ? LIMIT 1",
+      [newBalance, driverId]
+    );
+    // Keep users.points in sync
+    await conn.query(
+      "UPDATE users SET points = GREATEST(0, points - ?) WHERE id = ? LIMIT 1",
+      [costInPoints, driver.user_id]
+    );
+
+    // 5. Record purchase
+    const purchaseId = trackId
+      ? String(trackId)
+      : `sponsor-${sponsorId}-${driver.user_id}-${Date.now()}`;
+
+    await conn.query(
+      `INSERT INTO purchases
+         (id, user_id, purchased_at, item_name, artist, kind, artwork_url, cost,
+          points_after, track_view_url, purchased_by_sponsor, sponsor_id)
+       VALUES (?, ?, NOW(), ?, ?, ?, ?, ?, ?, ?, 1, ?)
+       ON DUPLICATE KEY UPDATE item_name = item_name`,
+      [
+        purchaseId,
+        driver.user_id,
+        String(itemName).trim(),
+        artist  ? String(artist).trim()  : null,
+        kind    ? String(kind).trim()    : null,
+        artworkUrl   ? String(artworkUrl).trim()   : null,
+        usd,
+        newBalance,
+        trackViewUrl ? String(trackViewUrl).trim() : null,
+        sponsorId,
+      ]
+    );
+
+    // 6. Audit
+    await writeAudit({
+      category: "SPONSOR_PURCHASE_FOR_DRIVER",
+      actorUserId: req.user.id,
+      targetUserId: driver.user_id,
+      sponsorId,
+      success: 1,
+      details: `sponsor purchased "${String(itemName).trim()}" for driverId=${driverId}; cost=${costInPoints} pts (USD ${usd}); newBalance=${newBalance}`,
+      conn,
+    });
+
+    await conn.commit();
+    return res.json({
+      ok: true,
+      message: `Purchase complete. ${costInPoints} points deducted. New balance: ${newBalance} pts.`,
+      costInPoints,
+      newBalance,
+    });
+  } catch (err) {
+    await conn.rollback();
+    console.error("POST /sponsor/drivers/:driverId/purchase error:", err);
+    return res.status(500).json({ ok: false, error: "Failed to complete purchase" });
+  } finally {
+    conn.release();
+  }
+});
+
 module.exports = router;

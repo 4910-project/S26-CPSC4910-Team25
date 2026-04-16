@@ -27,6 +27,7 @@ const sponsorRoutes = require("./routes/sponsor");
 const profileRoutes = require("./routes/profile");
 const driverAppsRoutes = require("./routes/driverApps");
 const catalogueRoutes = require("./routes/catalogue");
+const passwordResetRoutes = require("./routes/passwordReset");
 
 const app = express();
 
@@ -84,6 +85,9 @@ app.use("/api", mfaRoutes);
 // because driverRoutes has a global DRIVER-only middleware that blocks all /api/* requests
 app.use("/api/profile", profileRoutes);
 
+// Password reset — unauthenticated; must be BEFORE driverRoutes which installs DRIVER-only middleware
+app.use("/api/password-reset", passwordResetRoutes);
+
 // Driver routes 
 app.use("/api", driverRoutes);
 
@@ -132,6 +136,44 @@ async function addColumnIfMissing(table, column, definition) {
     await addColumnIfMissing("users",    "active_sponsor_id", "INT NULL DEFAULT NULL");
     await addColumnIfMissing("sponsors", "point_value",       "DECIMAL(10,4) NOT NULL DEFAULT 0.0100");
     await addColumnIfMissing("drivers",  "points_balance",    "INT NOT NULL DEFAULT 0");
+    // Ensure purchases table exists before adding columns to it
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS purchases (
+        id             VARCHAR(100) NOT NULL,
+        user_id        INT          NOT NULL,
+        purchased_at   DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        item_name      VARCHAR(500) NOT NULL,
+        artist         VARCHAR(500) NULL,
+        kind           VARCHAR(100) NULL,
+        artwork_url    VARCHAR(1000) NULL,
+        cost           DECIMAL(10,2) NOT NULL DEFAULT 0.00,
+        points_after   INT          NULL,
+        track_view_url VARCHAR(1000) NULL,
+        PRIMARY KEY (id),
+        KEY idx_purchases_user (user_id),
+        CONSTRAINT fk_purchases_user
+          FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+      )
+    `);
+    await addColumnIfMissing("purchases", "purchased_by_sponsor", "TINYINT(1) NOT NULL DEFAULT 0");
+    await addColumnIfMissing("purchases", "sponsor_id",           "INT NULL DEFAULT NULL");
+
+    // Password reset tokens table
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS password_reset_tokens (
+        id         INT          NOT NULL AUTO_INCREMENT,
+        user_id    INT          NOT NULL,
+        token      VARCHAR(255) NOT NULL,
+        expires_at DATETIME     NOT NULL,
+        used       TINYINT(1)   NOT NULL DEFAULT 0,
+        created_at DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        PRIMARY KEY (id),
+        UNIQUE KEY uq_token (token),
+        KEY idx_prt_user (user_id),
+        CONSTRAINT fk_prt_user
+          FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+      )
+    `);
 
     // Ensure driver cart table exists
     await pool.query(`

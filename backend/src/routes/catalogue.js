@@ -44,6 +44,29 @@ async function getOrCreateBalance(conn, userId)
 }
 
 router.get("/points", auth, async (req, res) => {
+  // RC2: if the driver has an active_sponsor_id set, read from drivers.points_balance
+  // for that sponsor. Fall back to the legacy driver_points table otherwise.
+  try {
+    const [[userRow]] = await db.query(
+      "SELECT active_sponsor_id FROM users WHERE id = ? LIMIT 1",
+      [req.user.id]
+    );
+    const activeSponsorId = userRow?.active_sponsor_id;
+
+    if (activeSponsorId) {
+      const [[driverRow]] = await db.query(
+        "SELECT points_balance FROM drivers WHERE user_id = ? AND sponsor_id = ? LIMIT 1",
+        [req.user.id, activeSponsorId]
+      );
+      const points = driverRow ? Number(driverRow.points_balance) : 0;
+      return res.json({ points });
+    }
+  } catch (err) {
+    console.error("GET /points RC2 lookup error:", err);
+    // Fall through to legacy path on error
+  }
+
+  // Legacy path — driver_points table
   const conn = await db.getConnection();
   try
   {
@@ -73,6 +96,65 @@ router.post("/points/deduct", auth, async (req, res) =>
     return res.status(400).json({ error: "Invalid amount" });
   }
 
+  // RC2: if the driver has an active_sponsor_id, deduct from drivers.points_balance
+  // for that sponsor and keep users.points in sync. Fall back to legacy path otherwise.
+  try {
+    const [[userRow]] = await db.query(
+      "SELECT active_sponsor_id FROM users WHERE id = ? LIMIT 1",
+      [req.user.id]
+    );
+    const activeSponsorId = userRow?.active_sponsor_id;
+
+    if (activeSponsorId) {
+      const conn = await db.getConnection();
+      try {
+        await conn.beginTransaction();
+
+        const [[driverRow]] = await conn.query(
+          "SELECT id, points_balance FROM drivers WHERE user_id = ? AND sponsor_id = ? LIMIT 1 FOR UPDATE",
+          [req.user.id, activeSponsorId]
+        );
+
+        if (!driverRow) {
+          await conn.rollback();
+          return res.status(404).json({ error: "Driver record not found for active sponsor" });
+        }
+
+        const currentPoints = Number(driverRow.points_balance);
+        if (currentPoints < amount) {
+          await conn.rollback();
+          return res.status(400).json({ error: "Insufficient points", currentPoints });
+        }
+
+        const remaining = currentPoints - amount;
+
+        await conn.query(
+          "UPDATE drivers SET points_balance = ? WHERE id = ? LIMIT 1",
+          [remaining, driverRow.id]
+        );
+
+        // Keep legacy users.points in sync
+        await conn.query(
+          "UPDATE users SET points = GREATEST(0, points - ?) WHERE id = ? LIMIT 1",
+          [amount, req.user.id]
+        );
+
+        await conn.commit();
+        return res.json({ success: true, remainingPoints: remaining, deducted: amount });
+      } catch (err) {
+        await conn.rollback();
+        console.error("POST /points/deduct RC2 error:", err);
+        return res.status(500).json({ error: "Failed to deduct points" });
+      } finally {
+        conn.release();
+      }
+    }
+  } catch (err) {
+    console.error("POST /points/deduct RC2 lookup error:", err);
+    // Fall through to legacy path
+  }
+
+  // Legacy path — driver_points table
   const conn = await db.getConnection();
   try
   {

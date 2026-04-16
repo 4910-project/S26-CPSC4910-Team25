@@ -72,6 +72,17 @@ export default function SponsorProfile({ token, onLogout, onChangeUsername, onAs
   const [droppingDriverId, setDroppingDriverId] = useState(null);
   const [exportingReportCsv, setExportingReportCsv] = useState(false);
 
+  // ─── Shop for Driver (Story 10771) ────────────────────────────────────────
+  const [shopModal,          setShopModal]          = useState(null);   // { driverId, driverEmail, currentPoints } | null
+  const [shopCat,            setShopCat]            = useState(CAT_CATEGORIES[0]);
+  const [shopInput,          setShopInput]          = useState("");
+  const [shopResults,        setShopResults]        = useState([]);
+  const [shopLoading,        setShopLoading]        = useState(false);
+  const [shopSelected,       setShopSelected]       = useState(null);   // selected iTunes item
+  const [shopConfirming,     setShopConfirming]     = useState(false);  // waiting for backend
+  const [shopError,          setShopError]          = useState("");
+  const [shopSuccess,        setShopSuccess]        = useState("");
+
   // ─── Assume driver identity state ──────────────────────────────────────────
   const [assumingDriverId, setAssumingDriverId] = useState(null);
 
@@ -716,6 +727,77 @@ export default function SponsorProfile({ token, onLogout, onChangeUsername, onAs
     }
   };
 
+  // ─── Shop for Driver handlers ──────────────────────────────────────────────
+
+  const openShopModal = (d) => {
+    setShopModal({ driverId: d.driverId, driverEmail: d.email, currentPoints: d.currentPoints ?? 0 });
+    setShopInput("");
+    setShopResults([]);
+    setShopSelected(null);
+    setShopError("");
+    setShopSuccess("");
+    setShopCat(CAT_CATEGORIES[0]);
+  };
+
+  const closeShopModal = () => {
+    setShopModal(null);
+    setShopSelected(null);
+    setShopResults([]);
+    setShopError("");
+    setShopSuccess("");
+  };
+
+  const handleShopSearch = async () => {
+    if (!shopInput.trim()) return;
+    setShopLoading(true);
+    setShopResults([]);
+    setShopSelected(null);
+    setShopError("");
+    try {
+      const url = `${ITUNES_API}?term=${encodeURIComponent(shopInput.trim())}&media=${shopCat.media}&entity=${shopCat.entity}&limit=24&country=US`;
+      const res  = await fetch(url);
+      const data = await res.json();
+      setShopResults(data.results || []);
+    } catch {
+      setShopError("Catalog search failed. Please try again.");
+    }
+    setShopLoading(false);
+  };
+
+  const handleShopConfirm = async () => {
+    if (!shopSelected || !shopModal) return;
+    setShopConfirming(true);
+    setShopError("");
+    setShopSuccess("");
+    try {
+      const usdPrice = shopSelected.trackPrice ?? shopSelected.collectionPrice ?? shopSelected.price ?? 0;
+      const res = await fetch(`${SPONSOR_API}/drivers/${shopModal.driverId}/purchase`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+        body: JSON.stringify({
+          trackId:     String(shopSelected.trackId || shopSelected.collectionId || ""),
+          itemName:    shopSelected.trackName || shopSelected.collectionName || "Unknown",
+          artist:      shopSelected.artistName || null,
+          kind:        shopSelected.kind || null,
+          artworkUrl:  shopSelected.artworkUrl100 || null,
+          trackViewUrl: shopSelected.trackViewUrl || null,
+          usdPrice,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Purchase failed");
+      setShopSuccess(data.message);
+      setShopSelected(null);
+      setShopResults([]);
+      // Refresh driver list so the updated points show immediately
+      fetchDrivers();
+    } catch (err) {
+      setShopError(err.message);
+    } finally {
+      setShopConfirming(false);
+    }
+  };
+
   const handleApplicationAction = async (appId, action) => {
     setDriverError("");
     setDriverSuccess("");
@@ -1140,6 +1222,26 @@ export default function SponsorProfile({ token, onLogout, onChangeUsername, onAs
                             }}
                           >
                             {assumingDriverId === d.userId ? "Switching..." : "👤 View as Driver"}
+                          </button>
+                        )}
+                        {d.driverId && d.status?.toLowerCase() === "active" && (
+                          <button
+                            type="button"
+                            onClick={() => openShopModal(d)}
+                            style={{
+                              padding: "4px 10px",
+                              borderRadius: 6,
+                              border: "1px solid #34d399",
+                              background: "#d1fae5",
+                              color: "#065f46",
+                              fontWeight: 600,
+                              fontSize: 11,
+                              cursor: "pointer",
+                              marginBottom: 6,
+                              display: "block",
+                            }}
+                          >
+                            🛒 Shop for Driver
                           </button>
                         )}
                         {!d.driverId ? (
@@ -1831,6 +1933,168 @@ export default function SponsorProfile({ token, onLogout, onChangeUsername, onAs
         )}
 
       </div>
+
+      {/* ── Shop for Driver Modal (Story 10771) ──────────────────────────────── */}
+      {shopModal && (
+        <div
+          style={{
+            position: "fixed", inset: 0, zIndex: 1000,
+            background: "rgba(0,0,0,0.55)",
+            display: "flex", alignItems: "center", justifyContent: "center",
+          }}
+          onClick={(e) => { if (e.target === e.currentTarget) closeShopModal(); }}
+        >
+          <div style={{
+            background: "#fff", borderRadius: 14, padding: 28,
+            width: "min(720px, 95vw)", maxHeight: "90vh",
+            overflowY: "auto", boxShadow: "0 20px 60px rgba(0,0,0,0.25)",
+          }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 16 }}>
+              <div>
+                <h3 style={{ margin: 0, fontSize: 18 }}>🛒 Shop for Driver</h3>
+                <p style={{ margin: "4px 0 0", color: "#6b7280", fontSize: 13 }}>
+                  {shopModal.driverEmail} &mdash; balance: <strong>{Number(shopModal.currentPoints).toLocaleString()} pts</strong>
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={closeShopModal}
+                style={{ background: "none", border: "none", fontSize: 22, cursor: "pointer", color: "#9ca3af", lineHeight: 1 }}
+              >
+                ✕
+              </button>
+            </div>
+
+            {/* Search bar */}
+            <div style={{ display: "flex", gap: 8, marginBottom: 10, flexWrap: "wrap" }}>
+              <input
+                type="text"
+                placeholder="Search iTunes catalog…"
+                value={shopInput}
+                onChange={(e) => setShopInput(e.target.value)}
+                onKeyDown={(e) => e.key === "Enter" && handleShopSearch()}
+                style={{ flex: 1, padding: "7px 10px", borderRadius: 7, border: "1px solid #d1d5db", fontSize: 13, minWidth: 180 }}
+              />
+              <select
+                value={shopCat.label}
+                onChange={(e) => setShopCat(CAT_CATEGORIES.find((c) => c.label === e.target.value))}
+                style={{ padding: "7px 10px", borderRadius: 7, border: "1px solid #d1d5db", fontSize: 13 }}
+              >
+                {CAT_CATEGORIES.map((c) => <option key={c.label}>{c.label}</option>)}
+              </select>
+              <button
+                type="button"
+                onClick={handleShopSearch}
+                disabled={shopLoading}
+                style={{ padding: "7px 16px", borderRadius: 7, border: "none", background: "#4f46e5", color: "#fff", fontWeight: 700, fontSize: 13, cursor: shopLoading ? "not-allowed" : "pointer", opacity: shopLoading ? 0.7 : 1 }}
+              >
+                {shopLoading ? "Searching…" : "Search"}
+              </button>
+            </div>
+
+            {shopError && (
+              <div style={{ padding: "8px 12px", borderRadius: 8, background: "#fef2f2", color: "#991b1b", marginBottom: 10, fontSize: 13 }}>
+                {shopError}
+              </div>
+            )}
+            {shopSuccess && (
+              <div style={{ padding: "8px 12px", borderRadius: 8, background: "#f0fdf4", color: "#15803d", marginBottom: 10, fontSize: 13 }}>
+                {shopSuccess}
+              </div>
+            )}
+
+            {/* Confirm panel */}
+            {shopSelected && (
+              <div style={{
+                border: "2px solid #4f46e5", borderRadius: 10, padding: 14, marginBottom: 14,
+                background: "#f5f3ff", display: "flex", gap: 12, alignItems: "flex-start",
+              }}>
+                {shopSelected.artworkUrl100 && (
+                  <img src={shopSelected.artworkUrl100} alt="" style={{ width: 56, height: 56, borderRadius: 6, flexShrink: 0 }} />
+                )}
+                <div style={{ flex: 1 }}>
+                  <p style={{ margin: "0 0 2px", fontWeight: 700, fontSize: 14 }}>
+                    {shopSelected.trackName || shopSelected.collectionName}
+                  </p>
+                  <p style={{ margin: "0 0 6px", color: "#6b7280", fontSize: 12 }}>
+                    {shopSelected.artistName} &bull; {shopSelected.kind || shopCat.label}
+                  </p>
+                  <p style={{ margin: "0 0 8px", color: "#374151", fontSize: 13 }}>
+                    Price: <strong>${(shopSelected.trackPrice ?? shopSelected.collectionPrice ?? shopSelected.price ?? 0).toFixed(2)}</strong>
+                    {" "}&rarr; will be converted to points using your sponsor rate
+                  </p>
+                  <div style={{ display: "flex", gap: 8 }}>
+                    <button
+                      type="button"
+                      disabled={shopConfirming}
+                      onClick={handleShopConfirm}
+                      style={{
+                        padding: "7px 18px", borderRadius: 7, border: "none",
+                        background: "#059669", color: "#fff", fontWeight: 700,
+                        fontSize: 13, cursor: shopConfirming ? "not-allowed" : "pointer",
+                        opacity: shopConfirming ? 0.7 : 1,
+                      }}
+                    >
+                      {shopConfirming ? "Processing…" : "✓ Confirm Purchase"}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setShopSelected(null)}
+                      style={{ padding: "7px 14px", borderRadius: 7, border: "1px solid #d1d5db", background: "#fff", fontWeight: 600, fontSize: 13, cursor: "pointer" }}
+                    >
+                      Cancel
+                    </button>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* Results grid */}
+            {shopResults.length > 0 && !shopSelected && (
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(150px,1fr))", gap: 10, maxHeight: 380, overflowY: "auto" }}>
+                {shopResults.map((item) => {
+                  const id   = item.trackId || item.collectionId;
+                  const name = item.trackName || item.collectionName || "Unknown";
+                  const price = item.trackPrice ?? item.collectionPrice ?? item.price ?? 0;
+                  return (
+                    <button
+                      key={id}
+                      type="button"
+                      onClick={() => setShopSelected(item)}
+                      style={{
+                        background: "#fff", border: "1px solid #e5e7eb",
+                        borderRadius: 10, padding: 10, cursor: "pointer",
+                        textAlign: "left", transition: "box-shadow 0.15s",
+                        display: "flex", flexDirection: "column", gap: 6,
+                      }}
+                      onMouseOver={(e) => e.currentTarget.style.boxShadow = "0 2px 10px rgba(79,70,229,0.18)"}
+                      onMouseOut={(e)  => e.currentTarget.style.boxShadow = "none"}
+                    >
+                      {item.artworkUrl100 && (
+                        <img src={item.artworkUrl100} alt="" style={{ width: "100%", borderRadius: 6 }} />
+                      )}
+                      <span style={{ fontWeight: 600, fontSize: 12, color: "#111827", lineHeight: 1.3 }}>
+                        {name.length > 40 ? name.slice(0, 40) + "…" : name}
+                      </span>
+                      <span style={{ fontSize: 11, color: "#6b7280" }}>{item.artistName}</span>
+                      <span style={{ fontSize: 12, fontWeight: 700, color: "#059669" }}>
+                        ${price.toFixed(2)}
+                      </span>
+                    </button>
+                  );
+                })}
+              </div>
+            )}
+
+            {shopResults.length === 0 && !shopLoading && (
+              <p style={{ color: "#9ca3af", fontSize: 13, textAlign: "center", paddingTop: 16 }}>
+                Search for an item above to get started.
+              </p>
+            )}
+          </div>
+        </div>
+      )}
+
     </div>
   );
 }
