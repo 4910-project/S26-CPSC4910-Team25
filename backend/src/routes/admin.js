@@ -1178,4 +1178,372 @@ router.patch("/catalog/:id/status", async (req, res) => {
   }
 });
 
+/**
+ * NEW STORY — Admin can assign multiple sponsors to a driver account
+/**
+ * GET /admin/drivers/:driverId/sponsors
+ * Returns all sponsors assigned to a driver through driver_sponsors
+ */
+router.get("/drivers/:driverId/sponsors", async (req, res) => {
+  const driverId = parsePositiveInt(req.params.driverId);
+  if (!driverId) {
+    return res.status(400).json({ ok: false, error: "invalid driverId" });
+  }
+
+  try {
+    const [driverRows] = await pool.query(
+      `
+      SELECT d.id, d.user_id, u.email
+      FROM drivers d
+      JOIN users u ON u.id = d.user_id
+      WHERE d.id = ?
+      LIMIT 1
+      `,
+      [driverId]
+    );
+
+    if (!driverRows[0]) {
+      return res.status(404).json({ ok: false, error: "driver not found" });
+    }
+
+    const [rows] = await pool.query(
+      `
+      SELECT
+        ds.id AS driver_sponsor_id,
+        ds.driver_id,
+        ds.sponsor_id,
+        ds.assigned_at,
+        s.name AS sponsor_name,
+        s.status AS sponsor_status,
+        s.accepting_drivers,
+        s.flagged
+      FROM driver_sponsors ds
+      JOIN sponsors s ON s.id = ds.sponsor_id
+      WHERE ds.driver_id = ?
+      ORDER BY s.name ASC
+      `,
+      [driverId]
+    );
+
+    return res.json({
+      ok: true,
+      driver: driverRows[0],
+      sponsors: rows,
+    });
+  } catch (err) {
+    console.error("GET /admin/drivers/:driverId/sponsors error:", err);
+    return res.status(500).json({ ok: false, error: "failed to fetch driver sponsors" });
+  }
+});
+
+/**
+ * POST /admin/assign-sponsor
+ * Body: { driverId, sponsorId }
+ * Assigns a sponsor to a driver using the driver_sponsors join table
+ */
+router.post("/assign-sponsor", async (req, res) => {
+  const driverId = parsePositiveInt(req.body?.driverId);
+  const sponsorId = parsePositiveInt(req.body?.sponsorId);
+
+  if (!driverId || !sponsorId) {
+    return res.status(400).json({
+      ok: false,
+      error: "valid driverId and sponsorId are required",
+    });
+  }
+
+  const conn = await pool.getConnection();
+  try {
+    await conn.beginTransaction();
+
+    const [driverRows] = await conn.query(
+      `
+      SELECT d.id, d.user_id, d.status, u.email
+      FROM drivers d
+      JOIN users u ON u.id = d.user_id
+      WHERE d.id = ?
+      LIMIT 1
+      `,
+      [driverId]
+    );
+    const driver = driverRows[0];
+
+    if (!driver) {
+      await writeAudit({
+        category: "ASSIGN_SPONSOR_TO_DRIVER",
+        actorUserId: req.user.id,
+        sponsorId,
+        success: 0,
+        details: `failed: driverId ${driverId} not found`,
+        conn,
+      });
+      await conn.rollback();
+      return res.status(404).json({ ok: false, error: "driver not found" });
+    }
+
+    const [sponsorRows] = await conn.query(
+      `
+      SELECT id, name, status, accepting_drivers
+      FROM sponsors
+      WHERE id = ?
+      LIMIT 1
+      `,
+      [sponsorId]
+    );
+    const sponsor = sponsorRows[0];
+
+    if (!sponsor) {
+      await writeAudit({
+        category: "ASSIGN_SPONSOR_TO_DRIVER",
+        actorUserId: req.user.id,
+        targetUserId: driver.user_id,
+        sponsorId,
+        success: 0,
+        details: `failed: sponsorId ${sponsorId} not found`,
+        conn,
+      });
+      await conn.rollback();
+      return res.status(404).json({ ok: false, error: "sponsor not found" });
+    }
+
+    if (sponsor.status !== "ACTIVE") {
+      await writeAudit({
+        category: "ASSIGN_SPONSOR_TO_DRIVER",
+        actorUserId: req.user.id,
+        targetUserId: driver.user_id,
+        sponsorId,
+        success: 0,
+        details: `failed: sponsorId ${sponsorId} not ACTIVE (status=${sponsor.status})`,
+        conn,
+      });
+      await conn.rollback();
+      return res.status(400).json({ ok: false, error: "sponsor is not ACTIVE" });
+    }
+
+    if (sponsor.accepting_drivers === 0 || sponsor.accepting_drivers === false) {
+      await writeAudit({
+        category: "ASSIGN_SPONSOR_TO_DRIVER",
+        actorUserId: req.user.id,
+        targetUserId: driver.user_id,
+        sponsorId,
+        success: 0,
+        details: `failed: sponsorId ${sponsorId} is not accepting drivers`,
+        conn,
+      });
+      await conn.rollback();
+      return res.status(400).json({ ok: false, error: "sponsor is not accepting drivers" });
+    }
+
+    const [insertResult] = await conn.query(
+      `
+      INSERT INTO driver_sponsors (driver_id, sponsor_id)
+      VALUES (?, ?)
+      `,
+      [driverId, sponsorId]
+    );
+
+    await writeAudit({
+      category: "ASSIGN_SPONSOR_TO_DRIVER",
+      actorUserId: req.user.id,
+      targetUserId: driver.user_id,
+      sponsorId,
+      success: 1,
+      details: `assigned sponsorId=${sponsorId} to driverId=${driverId}; linkId=${insertResult.insertId}`,
+      conn,
+    });
+
+    await conn.commit();
+    return res.status(201).json({
+      ok: true,
+      message: "sponsor assigned to driver successfully",
+      assignmentId: insertResult.insertId,
+    });
+  } catch (err) {
+    await conn.rollback();
+
+    if (err && err.code === "ER_DUP_ENTRY") {
+      await writeAudit({
+        category: "ASSIGN_SPONSOR_TO_DRIVER",
+        actorUserId: req.user.id,
+        sponsorId,
+        success: 0,
+        details: `failed: sponsorId=${sponsorId} already assigned to driverId=${driverId}`,
+      });
+      return res.status(409).json({
+        ok: false,
+        error: "this sponsor is already assigned to this driver",
+      });
+    }
+
+    console.error("POST /admin/assign-sponsor error:", err);
+
+    await writeAudit({
+      category: "ASSIGN_SPONSOR_TO_DRIVER",
+      actorUserId: req.user.id,
+      sponsorId,
+      success: 0,
+      details: `failed: ${err.message}`,
+    });
+
+    return res.status(500).json({ ok: false, error: "failed to assign sponsor" });
+  } finally {
+    conn.release();
+  }
+});
+
+/**
+ * DELETE /admin/remove-sponsor
+ * Body: { driverId, sponsorId }
+ * Removes a sponsor assignment from a driver
+ */
+router.delete("/remove-sponsor", async (req, res) => {
+  const driverId = parsePositiveInt(req.body?.driverId);
+  const sponsorId = parsePositiveInt(req.body?.sponsorId);
+
+  if (!driverId || !sponsorId) {
+    return res.status(400).json({
+      ok: false,
+      error: "valid driverId and sponsorId are required",
+    });
+  }
+
+  const conn = await pool.getConnection();
+  try {
+    await conn.beginTransaction();
+
+    const [driverRows] = await conn.query(
+      `SELECT id, user_id FROM drivers WHERE id = ? LIMIT 1`,
+      [driverId]
+    );
+    const driver = driverRows[0];
+
+    if (!driver) {
+      await writeAudit({
+        category: "REMOVE_SPONSOR_FROM_DRIVER",
+        actorUserId: req.user.id,
+        sponsorId,
+        success: 0,
+        details: `failed: driverId ${driverId} not found`,
+        conn,
+      });
+      await conn.rollback();
+      return res.status(404).json({ ok: false, error: "driver not found" });
+    }
+
+    const [result] = await conn.query(
+      `
+      DELETE FROM driver_sponsors
+      WHERE driver_id = ? AND sponsor_id = ?
+      LIMIT 1
+      `,
+      [driverId, sponsorId]
+    );
+
+    if (!result.affectedRows) {
+      await writeAudit({
+        category: "REMOVE_SPONSOR_FROM_DRIVER",
+        actorUserId: req.user.id,
+        targetUserId: driver.user_id,
+        sponsorId,
+        success: 0,
+        details: `failed: no assignment found for driverId=${driverId} sponsorId=${sponsorId}`,
+        conn,
+      });
+      await conn.rollback();
+      return res.status(404).json({ ok: false, error: "sponsor assignment not found" });
+    }
+
+    await writeAudit({
+      category: "REMOVE_SPONSOR_FROM_DRIVER",
+      actorUserId: req.user.id,
+      targetUserId: driver.user_id,
+      sponsorId,
+      success: 1,
+      details: `removed sponsorId=${sponsorId} from driverId=${driverId}`,
+      conn,
+    });
+
+    await conn.commit();
+    return res.json({
+      ok: true,
+      message: "sponsor removed from driver successfully",
+    });
+  } catch (err) {
+    await conn.rollback();
+    console.error("DELETE /admin/remove-sponsor error:", err);
+
+    await writeAudit({
+      category: "REMOVE_SPONSOR_FROM_DRIVER",
+      actorUserId: req.user.id,
+      sponsorId,
+      success: 0,
+      details: `failed: ${err.message}`,
+    });
+
+    return res.status(500).json({ ok: false, error: "failed to remove sponsor" });
+  } finally {
+    conn.release();
+  }
+});
+
+/**
+ * GET /admin/driver-sponsor-links
+ * Optional query params: driverId, sponsorId, limit
+ * Helpful for admin UI / debugging
+ */
+router.get("/driver-sponsor-links", async (req, res) => {
+  const driverId = req.query?.driverId ? parsePositiveInt(req.query.driverId) : null;
+  const sponsorId = req.query?.sponsorId ? parsePositiveInt(req.query.sponsorId) : null;
+  const lim = parseLimit(req.query?.limit, 200);
+
+  const conditions = [];
+  const params = [];
+
+  if (req.query?.driverId && !driverId) {
+    return res.status(400).json({ ok: false, error: "invalid driverId" });
+  }
+  if (req.query?.sponsorId && !sponsorId) {
+    return res.status(400).json({ ok: false, error: "invalid sponsorId" });
+  }
+
+  if (driverId) {
+    conditions.push("ds.driver_id = ?");
+    params.push(driverId);
+  }
+  if (sponsorId) {
+    conditions.push("ds.sponsor_id = ?");
+    params.push(sponsorId);
+  }
+
+  const where = conditions.length ? `WHERE ${conditions.join(" AND ")}` : "";
+
+  try {
+    const [rows] = await pool.query(
+      `
+      SELECT
+        ds.id,
+        ds.driver_id,
+        ds.sponsor_id,
+        ds.assigned_at,
+        u.email AS driver_email,
+        s.name AS sponsor_name,
+        s.status AS sponsor_status
+      FROM driver_sponsors ds
+      JOIN drivers d ON d.id = ds.driver_id
+      JOIN users u ON u.id = d.user_id
+      JOIN sponsors s ON s.id = ds.sponsor_id
+      ${where}
+      ORDER BY ds.assigned_at DESC
+      LIMIT ${lim}
+      `,
+      params
+    );
+
+    return res.json({ ok: true, assignments: rows });
+  } catch (err) {
+    console.error("GET /admin/driver-sponsor-links error:", err);
+    return res.status(500).json({ ok: false, error: "failed to fetch sponsor assignments" });
+  }
+});
+
 module.exports = router;

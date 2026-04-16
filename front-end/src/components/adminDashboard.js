@@ -13,7 +13,6 @@ const CATEGORIES = [
   "Other",
 ];
 
-
 const STATUS_COLORS = {
   open: { bg: "#dbeafe", color: "#1e40af" },
   reviewed: { bg: "#fef3c7", color: "#92400e" },
@@ -22,6 +21,7 @@ const STATUS_COLORS = {
 
 function StatusBadge({ status }) {
   const s = STATUS_COLORS[status] || { bg: "#f3f4f6", color: "#374151" };
+
   return (
     <span
       style={{
@@ -45,19 +45,17 @@ export default function AdminDashboard({ token, onLogout }) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
 
-  // Filters
   const [filterStatus, setFilterStatus] = useState("");
   const [filterCategory, setFilterCategory] = useState("");
   const [page, setPage] = useState(1);
   const limit = 20;
 
-  // Expanded row for admin note editing
   const [expanded, setExpanded] = useState(null);
   const [noteText, setNoteText] = useState("");
   const [updating, setUpdating] = useState({});
 
-  // Sponsors state
   const [activeTab, setActiveTab] = useState("feedback");
+
   const [sponsors, setSponsors] = useState([]);
   const [sponsorLoading, setSponsorLoading] = useState(false);
   const [sponsorError, setSponsorError] = useState("");
@@ -65,20 +63,22 @@ export default function AdminDashboard({ token, onLogout }) {
   const [flaggingId, setFlaggingId] = useState(null);
   const [sponsorWarningId, setSponsorWarningId] = useState(null);
 
-  // Drivers state
   const [drivers, setDrivers] = useState([]);
   const [driverLoading, setDriverLoading] = useState(false);
   const [driverError, setDriverError] = useState("");
   const [driverFlaggingId, setDriverFlaggingId] = useState(null);
   const [driverWarningId, setDriverWarningId] = useState(null);
 
-  // Settings state
+  const [driverSponsors, setDriverSponsors] = useState({});
+  const [selectedSponsors, setSelectedSponsors] = useState({});
+  const [assigning, setAssigning] = useState(null);
+  const [removing, setRemoving] = useState(null);
+
   const [notificationsEnabled, setNotificationsEnabled] = useState(true);
   const [settingsLoading, setSettingsLoading] = useState(false);
   const [settingsError, setSettingsError] = useState("");
   const [settingsToggling, setSettingsToggling] = useState(false);
 
-    // Catalog state
   const [catalogItems, setCatalogItems] = useState([]);
   const [catalogLoading, setCatalogLoading] = useState(false);
   const [catalogError, setCatalogError] = useState("");
@@ -98,14 +98,17 @@ export default function AdminDashboard({ token, onLogout }) {
   const fetchFeedback = useCallback(async () => {
     setLoading(true);
     setError("");
+
     try {
       const params = new URLSearchParams({
         page: String(page),
         limit: String(limit),
       });
+
       if (filterStatus) params.set("status", filterStatus);
-      if (filterCategory && filterCategory !== "All")
+      if (filterCategory && filterCategory !== "All") {
         params.set("category", filterCategory);
+      }
 
       const res = await fetch(`${ADMIN_API}/feedback?${params.toString()}`, {
         headers: { Authorization: `Bearer ${token}` },
@@ -130,6 +133,7 @@ export default function AdminDashboard({ token, onLogout }) {
   const fetchSponsors = useCallback(async () => {
     setSponsorLoading(true);
     setSponsorError("");
+
     try {
       const res = await fetch(`${ADMIN_API}/sponsors`, {
         headers: { Authorization: `Bearer ${token}` },
@@ -137,6 +141,7 @@ export default function AdminDashboard({ token, onLogout }) {
 
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "Failed to fetch sponsors");
+
       setSponsors(data.sponsors || []);
     } catch (err) {
       setSponsorError(err?.message || "Unknown error");
@@ -146,40 +151,76 @@ export default function AdminDashboard({ token, onLogout }) {
   }, [token]);
 
   useEffect(() => {
-    if (activeTab === "sponsors") fetchSponsors();
+    if (activeTab === "sponsors") {
+      fetchSponsors();
+    }
   }, [activeTab, fetchSponsors]);
+
+  const fetchDriverSponsors = useCallback(
+    async (driverId) => {
+      try {
+        const res = await fetch(`${ADMIN_API}/drivers/${driverId}/sponsors`, {
+          headers: { Authorization: `Bearer ${token}` },
+        });
+
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || "Failed to fetch driver sponsors");
+
+        setDriverSponsors((prev) => ({
+          ...prev,
+          [driverId]: data.sponsors || [],
+        }));
+      } catch (err) {
+        console.error("Failed to fetch driver sponsors:", err);
+      }
+    },
+    [token]
+  );
 
   const fetchDrivers = useCallback(async () => {
     setDriverLoading(true);
     setDriverError("");
+
     try {
       const res = await fetch(`${ADMIN_API}/drivers`, {
         headers: { Authorization: `Bearer ${token}` },
       });
+
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "Failed to fetch drivers");
-      setDrivers(data.drivers || []);
+
+      const driverList = data.drivers || [];
+      setDrivers(driverList);
+
+      driverList.forEach((driver) => {
+        fetchDriverSponsors(driver.driver_id);
+      });
     } catch (err) {
       setDriverError(err?.message || "Unknown error");
     } finally {
       setDriverLoading(false);
     }
-  }, [token]);
+  }, [token, fetchDriverSponsors]);
 
   useEffect(() => {
-    if (activeTab === "drivers") fetchDrivers();
-  }, [activeTab, fetchDrivers]);
+    if (activeTab === "drivers") {
+      fetchDrivers();
+      fetchSponsors();
+    }
+  }, [activeTab, fetchDrivers, fetchSponsors]);
 
-  // Fetch notification setting when settings tab opens
   const fetchSettings = useCallback(async () => {
     setSettingsLoading(true);
     setSettingsError("");
+
     try {
       const res = await fetch(`${ADMIN_API}/settings/notifications`, {
         headers: { Authorization: `Bearer ${token}` },
       });
+
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "Failed to fetch settings");
+
       setNotificationsEnabled(data.notifications_enabled);
     } catch (err) {
       setSettingsError(err?.message || "Unknown error");
@@ -189,12 +230,15 @@ export default function AdminDashboard({ token, onLogout }) {
   }, [token]);
 
   useEffect(() => {
-    if (activeTab === "settings") fetchSettings();
+    if (activeTab === "settings") {
+      fetchSettings();
+    }
   }, [activeTab, fetchSettings]);
 
   const handleNotificationsToggle = async () => {
     setSettingsToggling(true);
     setSettingsError("");
+
     try {
       const res = await fetch(`${ADMIN_API}/settings/notifications`, {
         method: "PATCH",
@@ -204,8 +248,10 @@ export default function AdminDashboard({ token, onLogout }) {
         },
         body: JSON.stringify({ notifications_enabled: !notificationsEnabled }),
       });
+
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "Failed to update setting");
+
       setNotificationsEnabled(data.notifications_enabled);
     } catch (err) {
       setSettingsError(err?.message || "Unknown error");
@@ -216,6 +262,7 @@ export default function AdminDashboard({ token, onLogout }) {
 
   const handleLockToggle = async (sponsorId, currentValue) => {
     setLockingId(sponsorId);
+
     try {
       const res = await fetch(`${ADMIN_API}/sponsors/${sponsorId}/lock`, {
         method: "PATCH",
@@ -228,6 +275,7 @@ export default function AdminDashboard({ token, onLogout }) {
 
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "Failed to update sponsor");
+
       await fetchSponsors();
     } catch (err) {
       setSponsorError(err?.message || "Unknown error");
@@ -238,6 +286,7 @@ export default function AdminDashboard({ token, onLogout }) {
 
   const handleFlagToggle = async (sponsorId, currentValue) => {
     setFlaggingId(sponsorId);
+
     try {
       const res = await fetch(`${ADMIN_API}/sponsors/${sponsorId}/flag`, {
         method: "PATCH",
@@ -250,6 +299,7 @@ export default function AdminDashboard({ token, onLogout }) {
 
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "Failed to flag sponsor");
+
       await fetchSponsors();
     } catch (err) {
       setSponsorError(err?.message || "Unknown error");
@@ -270,6 +320,7 @@ export default function AdminDashboard({ token, onLogout }) {
 
     setSponsorWarningId(sponsorId);
     setSponsorError("");
+
     try {
       const res = await fetch(`${ADMIN_API}/sponsors/${sponsorId}/warn`, {
         method: "POST",
@@ -279,8 +330,10 @@ export default function AdminDashboard({ token, onLogout }) {
         },
         body: JSON.stringify({ reason }),
       });
+
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "Failed to issue sponsor warning");
+
       await fetchSponsors();
       window.alert("Sponsor warning issued.");
     } catch (err) {
@@ -292,6 +345,7 @@ export default function AdminDashboard({ token, onLogout }) {
 
   const handleDriverFlagToggle = async (driverId, currentValue) => {
     setDriverFlaggingId(driverId);
+
     try {
       const res = await fetch(`${ADMIN_API}/drivers/${driverId}/flag`, {
         method: "PATCH",
@@ -301,8 +355,10 @@ export default function AdminDashboard({ token, onLogout }) {
         },
         body: JSON.stringify({ flagged: !currentValue }),
       });
+
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "Failed to flag driver");
+
       await fetchDrivers();
     } catch (err) {
       setDriverError(err?.message || "Unknown error");
@@ -323,6 +379,7 @@ export default function AdminDashboard({ token, onLogout }) {
 
     setDriverWarningId(driverId);
     setDriverError("");
+
     try {
       const res = await fetch(`${ADMIN_API}/drivers/${driverId}/warn`, {
         method: "POST",
@@ -332,8 +389,10 @@ export default function AdminDashboard({ token, onLogout }) {
         },
         body: JSON.stringify({ reason }),
       });
+
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "Failed to issue driver warning");
+
       await fetchDrivers();
       window.alert("Driver warning issued.");
     } catch (err) {
@@ -343,8 +402,70 @@ export default function AdminDashboard({ token, onLogout }) {
     }
   };
 
+  const handleAssignSponsor = async (driverId) => {
+    const sponsorId = selectedSponsors[driverId];
+
+    if (!sponsorId) {
+      setDriverError("Please select a sponsor");
+      return;
+    }
+
+    setAssigning(driverId);
+    setDriverError("");
+
+    try {
+      const res = await fetch(`${ADMIN_API}/assign-sponsor`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({ driverId, sponsorId }),
+      });
+
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Failed to assign sponsor");
+
+      await fetchDriverSponsors(driverId);
+      setSelectedSponsors((prev) => ({
+        ...prev,
+        [driverId]: "",
+      }));
+    } catch (err) {
+      setDriverError(err?.message || "Unknown error");
+    } finally {
+      setAssigning(null);
+    }
+  };
+
+  const handleRemoveSponsor = async (driverId, sponsorId) => {
+    setRemoving(`${driverId}-${sponsorId}`);
+    setDriverError("");
+
+    try {
+      const res = await fetch(`${ADMIN_API}/remove-sponsor`, {
+        method: "DELETE",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({ driverId, sponsorId }),
+      });
+
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Failed to remove sponsor");
+
+      await fetchDriverSponsors(driverId);
+    } catch (err) {
+      setDriverError(err?.message || "Unknown error");
+    } finally {
+      setRemoving(null);
+    }
+  };
+
   const handleUpdate = async (id, updates) => {
     setUpdating((prev) => ({ ...prev, [id]: true }));
+
     try {
       const res = await fetch(`${ADMIN_API}/feedback/${id}`, {
         method: "PATCH",
@@ -367,7 +488,7 @@ export default function AdminDashboard({ token, onLogout }) {
     }
   };
 
-    const fetchCatalogItems = useCallback(async () => {
+  const fetchCatalogItems = useCallback(async () => {
     setCatalogLoading(true);
     setCatalogError("");
     setCatalogMessage("");
@@ -389,7 +510,9 @@ export default function AdminDashboard({ token, onLogout }) {
   }, [token]);
 
   useEffect(() => {
-    if (activeTab === "catalog") fetchCatalogItems();
+    if (activeTab === "catalog") {
+      fetchCatalogItems();
+    }
   }, [activeTab, fetchCatalogItems]);
 
   const handleEditCatalogItem = (item) => {
@@ -525,7 +648,6 @@ export default function AdminDashboard({ token, onLogout }) {
         ))}
       </div>
 
-      {/* ── Feedback tab ── */}
       {activeTab === "feedback" && (
         <>
           <div
@@ -595,6 +717,7 @@ export default function AdminDashboard({ token, onLogout }) {
             <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
               {feedback.map((item) => {
                 const isOpen = expanded === item.id;
+
                 return (
                   <div
                     key={item.id}
@@ -730,7 +853,14 @@ export default function AdminDashboard({ token, onLogout }) {
                           paddingTop: 12,
                         }}
                       >
-                        <label style={{ fontWeight: 600, fontSize: 13, display: "block", marginBottom: 6 }}>
+                        <label
+                          style={{
+                            fontWeight: 600,
+                            fontSize: 13,
+                            display: "block",
+                            marginBottom: 6,
+                          }}
+                        >
                           Admin Note
                         </label>
 
@@ -806,7 +936,6 @@ export default function AdminDashboard({ token, onLogout }) {
         </>
       )}
 
-      {/* ── Sponsors tab ── */}
       {activeTab === "sponsors" && (
         <div>
           {sponsorError && (
@@ -865,6 +994,7 @@ export default function AdminDashboard({ token, onLogout }) {
                       </span>
                     )}
                   </div>
+
                   <div style={{ fontSize: 12, color: "var(--muted)", marginTop: 3 }}>
                     Status: {s.status} · {s.accepting_drivers ? "✅ Accepting drivers" : "🔒 Locked"}
                   </div>
@@ -933,7 +1063,6 @@ export default function AdminDashboard({ token, onLogout }) {
         </div>
       )}
 
-      {/* ── Drivers tab ── */}
       {activeTab === "drivers" && (
         <div>
           {driverError && (
@@ -969,9 +1098,10 @@ export default function AdminDashboard({ token, onLogout }) {
                   display: "flex",
                   justifyContent: "space-between",
                   alignItems: "center",
+                  gap: 20,
                 }}
               >
-                <div>
+                <div style={{ flex: 1 }}>
                   <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
                     <span style={{ fontWeight: 700, fontSize: 15 }}>{d.email}</span>
                     {!!d.flagged && (
@@ -992,8 +1122,107 @@ export default function AdminDashboard({ token, onLogout }) {
                       </span>
                     )}
                   </div>
+
                   <div style={{ fontSize: 12, color: "var(--muted)", marginTop: 3 }}>
-                    Sponsor: {d.sponsor_name || "—"} · Status: {d.driver_status}
+                    Status: {d.driver_status}
+                  </div>
+
+                  <div style={{ marginTop: 10 }}>
+                    <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 6 }}>
+                      Assigned Sponsors
+                    </div>
+
+                    {driverSponsors[d.driver_id]?.length > 0 ? (
+                      <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+                        {driverSponsors[d.driver_id].map((s) => (
+                          <div
+                            key={s.sponsor_id}
+                            style={{
+                              display: "flex",
+                              alignItems: "center",
+                              gap: 6,
+                              padding: "5px 10px",
+                              borderRadius: 999,
+                              background: "#eef2ff",
+                              color: "#3730a3",
+                              fontSize: 12,
+                              fontWeight: 600,
+                            }}
+                          >
+                            <span>{s.sponsor_name}</span>
+                            <button
+                              type="button"
+                              onClick={() => handleRemoveSponsor(d.driver_id, s.sponsor_id)}
+                              disabled={removing === `${d.driver_id}-${s.sponsor_id}`}
+                              style={{
+                                border: "none",
+                                background: "transparent",
+                                color: "#b91c1c",
+                                cursor:
+                                  removing === `${d.driver_id}-${s.sponsor_id}`
+                                    ? "not-allowed"
+                                    : "pointer",
+                                fontWeight: 700,
+                                padding: 0,
+                              }}
+                            >
+                              {removing === `${d.driver_id}-${s.sponsor_id}` ? "..." : "×"}
+                            </button>
+                          </div>
+                        ))}
+                      </div>
+                    ) : (
+                      <div style={{ fontSize: 12, color: "var(--muted)" }}>
+                        No sponsors assigned
+                      </div>
+                    )}
+                  </div>
+
+                  <div
+                    style={{
+                      marginTop: 12,
+                      display: "flex",
+                      gap: 8,
+                      alignItems: "center",
+                      flexWrap: "wrap",
+                    }}
+                  >
+                    <select
+                      value={selectedSponsors[d.driver_id] || ""}
+                      onChange={(e) =>
+                        setSelectedSponsors((prev) => ({
+                          ...prev,
+                          [d.driver_id]: e.target.value,
+                        }))
+                      }
+                      style={selectStyle}
+                    >
+                      <option value="">Select Sponsor</option>
+                      {sponsors.map((s) => (
+                        <option key={s.id} value={s.id}>
+                          {s.name}
+                        </option>
+                      ))}
+                    </select>
+
+                    <button
+                      type="button"
+                      onClick={() => handleAssignSponsor(d.driver_id)}
+                      disabled={assigning === d.driver_id}
+                      style={{
+                        padding: "7px 16px",
+                        borderRadius: 8,
+                        border: "none",
+                        background: "#4f46e5",
+                        color: "#fff",
+                        fontWeight: 600,
+                        fontSize: 13,
+                        cursor: assigning === d.driver_id ? "not-allowed" : "pointer",
+                        opacity: assigning === d.driver_id ? 0.6 : 1,
+                      }}
+                    >
+                      {assigning === d.driver_id ? "Assigning..." : "Assign Sponsor"}
+                    </button>
                   </div>
                 </div>
 
@@ -1041,7 +1270,6 @@ export default function AdminDashboard({ token, onLogout }) {
         </div>
       )}
 
-            {/* ── Catalog tab ── */}
       {activeTab === "catalog" && (
         <div>
           <h2 style={{ marginTop: 0, marginBottom: 4 }}>Catalog Management</h2>
@@ -1273,7 +1501,6 @@ export default function AdminDashboard({ token, onLogout }) {
         </div>
       )}
 
-      {/* ── Settings tab ── */}
       {activeTab === "settings" && (
         <div>
           <h2 style={{ marginTop: 0, marginBottom: 4 }}>System Settings</h2>
@@ -1330,6 +1557,7 @@ export default function AdminDashboard({ token, onLogout }) {
                     </span>
                   )}
                 </div>
+
                 <div style={{ fontSize: 13, color: "var(--muted)", marginTop: 4 }}>
                   {notificationsEnabled
                     ? "Drivers can currently see rejection and dropped status alerts on their dashboard."
